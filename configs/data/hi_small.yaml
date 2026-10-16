@@ -1,0 +1,9 @@
+name: HI-Small          # development, debugging, SOTA reproduction checks
+raw_dir: data/raw/hi_small
+parquet_dir: data/parquet/hi_small
+views_dir: data/views/hi_small
+alerts_dir: data/alerts/hi_small
+n_banks: 30             # largest banks by transaction count
+# HI-Small: check the real date range, then split in the same proportions as HI-Medium (9/3/4 of 16 days).
+split_days: null
+evidence_window_hours: 72

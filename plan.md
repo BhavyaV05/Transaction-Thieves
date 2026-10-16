@@ -20,7 +20,7 @@
 9. [Metrics and statistics](#9-metrics-and-statistics)
 10. [Safety](#10-safety)
 11. [Compute budget](#11-compute-budget)
-12. [Team streams](#12-team-streams)
+12. [Team streams and hardware](#12-team-streams-and-hardware)
 13. [Timeline and gates](#13-timeline-and-gates)
 14. [Scope tiers and cut order](#14-scope-tiers-and-cut-order)
 15. [Risks](#15-risks)
@@ -43,7 +43,7 @@
 
 **Data.** IBM AMLworld (HI-Medium for main results, HI-Small for development). Every transaction is labelled, so every number is computed by code against ground truth.
 
-**Hardware.** One RTX 5070 Ti (16 GB), 32 GB RAM, $0 by default.
+**Hardware.** Four personal machines, $0 by default: an RTX 5070 Ti PC (16 GB VRAM, 32 GB RAM; the reference machine), an RTX 3070 Ti laptop (8 GB), an RTX 3050 Ti laptop (4 GB), and one machine with no GPU. Work is assigned to streams by what each machine can run (§12). Per-stream instructions are in `tracks.md`.
 
 ---
 
@@ -70,6 +70,7 @@
 | Component-level SOTA comparisons (fast model, evidence selection, injection defences) | §7.3 |
 | Gap closed reported against **both** upper limits (GFP and best SOTA) | §9 |
 | Compute, timeline, tiers and risks updated | §11–§15 |
+| **Streams re-assigned to the team's actual hardware** (one 16 GB GPU, one 8 GB, one 4 GB, one CPU-only). C11 moves to S1, Group C ports move to S4, fusion stays in S4. Detailed instructions per stream in `tracks.md` | §12–§13, §15, §16 |
 
 ---
 
@@ -159,7 +160,7 @@ Primary hypotheses are tested in the order H1 → H2 → H3 → H4 → H9 with H
 | Gradient-boosted trees | LightGBM / XGBoost |
 | GNNs | PyTorch + PyTorch Geometric (Multi-GNN, FraudGT, MEGA-GNN, edge scorer) |
 | PCST | `pcst_fast` |
-| LLM serving | vLLM (4-bit), OpenAI-compatible endpoint |
+| LLM serving | vLLM (4-bit), OpenAI-compatible endpoint. On Windows machines this runs under WSL2 or Docker; the 5070 Ti (Blackwell) needs a CUDA 12.8+ build of PyTorch/vLLM. Checked in week 0 |
 | Fine-tuning | Unsloth + QLoRA (Qwen3-8B planner, Qwen3-4B fast model) |
 | Prompt optimisation baseline | DSPy (ReAct + MIPROv2) |
 | Multi-agent baseline | AutoGen / AG2 |
@@ -210,6 +211,8 @@ Transaction-Thieves/
 - Fixed seeds; at least 3 seeds for anything trained.
 - **The test split is locked.** A test-loader guard raises an error unless `FTM_FINAL_RUN=1` is set, and that only happens at G5.
 - Pre-registration files in `prereg/` are committed (and the hash sent to the TA) before the final run.
+- Large derived artifacts (bank views, calibrated scores, alert sets, back-test cache) are rebuilt deterministically from scripts. Shared copies carry a hash manifest so every stream can check it holds the same file (§16, decision 6).
+- Every run log follows one schema (agreed in week 1 by S2 and S4) so the eval code reads results from any machine.
 
 ---
 
@@ -355,7 +358,7 @@ Each component lists **what it does**, **how we build it**, and **done when** (a
 - **Done when:** 100% of disallowed actions in a hand-written test suite are blocked, and citation accuracy is measured on 100 labelled cases.
 - **Ablation:** whole corpus in the prompt vs retrieved rules.
 
-### 6.8 C7: Back-testing engine [Core, S2 + S4]
+### 6.8 C7: Back-testing engine [Core, S2; statistical review by S4]
 - **What:** before a question can affect a decision, measure its likelihood ratio (LR) on past alerts with known labels.
 - **Realistic mode (main results):**
   - labels only from the **home bank's own** past alerts (training period)
@@ -416,7 +419,7 @@ All choose questions under the same budget and stop rule:
   4. Compare planner vs teacher.
 - **Done when:** ≥95% of outputs parse into valid DSL on validation, and the end-to-end loop runs at 8–20 s per alert.
 
-### 6.12 C11: Evidence retriever (graph RAG) [Secondary, S3]
+### 6.12 C11: Evidence retriever (graph RAG) [Secondary, S1]
 - **Edge scorer:** a small GNN/MLP in the style of SubgraphRAG [25] over edge features. It is trained on the training period to predict "edge belongs to a laundering attempt" (from the pattern file).
 - **Connecting step:** prize-collecting Steiner tree in the style of G-Retriever [26], with prizes = scores.
   - Restricted to **time-respecting** paths (timestamps monotone along the trail, all ≤ alert time).
@@ -434,7 +437,7 @@ All choose questions under the same budget and stop rule:
 
 ### 6.14 C13: System 1 fast model + conformal cascade [Secondary: own 4B; Stretch: SemIf, Laya, cascade; S3]
 - **Decision types** (20–50 per alert): worth-asking (bool), typology (multi-class), rule-applies (bool), injection-present (bool), stop (bool).
-- **Labels** (≈50k examples, from the simulator):
+- **Labels** (≈50k examples, from the simulator; the dataset is built by S2, the models by S3):
   - worth-asking = account is in a real laundering attempt
   - typology = pattern type
   - stop = no library question would change the final call
@@ -481,7 +484,7 @@ class Investigator(Protocol):
   - Each verdict is scored **end-to-end** (its own probability) and **questions-only** (its collected answers through C8).
 - **Done when:** ReAct runs end-to-end through the harness on 50 validation alerts (G3), and a test proves budgets and the gate can't be bypassed.
 
-### 6.17 C17: External systems [tiers in §14; S1 for A/B, S3 for D, S2 for C]
+### 6.17 C17: External systems [tiers in §14; S1 for A/B; S4 for Group C core (Torres, Sharma) and the lighter Group D ports (debate/AutoGen, UoT, BED-LLM); S2 for Group C secondary (Co-Investigator, FinFRE-RAG); S3 for Group D core and heavy frameworks (ReAct, Reflexion, ReWOO, LATS, LLMCompiler, DSPy)]
 See §7.1 for the list. How we build them:
 - **Group A (SOTA detection models):** see §6.2.
 - **Group B (federated):**
@@ -652,7 +655,7 @@ All tuning happens on validation. There is **one** final test run (G5), and it r
 
 ## 11. Compute budget
 
-Hardware: 1× RTX 5070 Ti (16 GB), 32 GB RAM. Default cost is $0.
+Hardware: four machines (§12.1); default cost is $0. Estimates below are in **reference-hours** (one RTX 5070 Ti). Laptop hours are converted with a fixed benchmark run in week 0. Expect the 3070 Ti laptop to deliver roughly half the LLM throughput of the reference machine (lower memory bandwidth) and the 3050 Ti far less; neither can serve the 8B model at the reference context length without checking first.
 
 | Item | Estimate | Notes |
 |---|---|---|
@@ -664,48 +667,80 @@ Hardware: 1× RTX 5070 Ti (16 GB), 32 GB RAM. Default cost is $0.
 | **External agents (new)** | 40–70 GPU-h | 1k subset × ~10 systems; top 2–3 on full test; LATS/debate token-capped |
 | **Total GPU** | 160–325 h; **expected ≈175–225 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
 
-Tracking: log GPU-hours per stream weekly. At G4, if the projected total is over 250 h, apply the cut order.
+**Where the hours run:**
+
+| Machine | Main GPU jobs |
+|---|---|
+| 5070 Ti PC (S3) | QLoRA (8B, 4B), gpt-oss-20b teacher, Qwen3-8B serving for all LLM agents, DSPy tuning, final-run LLM jobs, HI-Medium see-everything GNN runs that do not fit elsewhere |
+| 3070 Ti laptop (S1) | Multi-GNN / FraudGT / MEGA-GNN, edge scorer, DP-FedAvg; second 8B server if it fits; half of the G5 LLM runs |
+| 3050 Ti laptop (S2) | Small-model dev and tests; ModernBERT/DeBERTa baselines. CPU: back-testing shards |
+| CPU-only (S4) | None. Evaluation, bootstrap, gate, CI, port development against shared servers |
+
+The final test run (G5) is about 62–155 reference-hours of LLM investigation for our system alone (≈28k investigations × 8–20 s), plus the external agents. It is split across the S3 and S1 machines using the same checkpoint and serving stack, scheduled in week 13 buffer plus week 14.
+
+Back-testing is CPU work that splits by question. Any machine can run shards, with results cached by canonical form + ε.
+
+Tracking: log GPU-hours per machine weekly. At G4, if the projected total is over 250 h, apply the cut order.
 
 ---
 
-## 12. Team streams
+## 12. Team streams and hardware
 
-Four streams, one owner each (names to be assigned in the first team meeting). Each stream owner reviews another stream's PRs.
+Four streams, one owner each. Assignment follows the hardware: the 16 GB machine takes everything that needs an 8B-class LLM, the 8 GB laptop takes GNN work, and the CPU-only work sits with the machines that have little or no GPU. Full per-stream instructions are in [`tracks.md`](tracks.md); this section is the summary.
+
+### 12.1 People and machines
+
+| Stream | Owner | Machine | What the machine can do |
+|---|---|---|---|
+| **S1: Data, detection models & retrieval** | Abhishek | RTX 3070 Ti laptop (8 GB VRAM) | GNN training with neighbour sampling; DP-FedAvg (one client on GPU at a time); Qwen3-8B 4-bit inference at short context (marginal, verified in week 0); 4B QLoRA at short sequences (backup only) |
+| **S2: Banks, questions & back-testing** | Bhavya | RTX 3050 Ti laptop (4 GB VRAM) | Almost all her work is CPU. GPU for Qwen3-1.7B / 4B-4bit smoke tests and fine-tuning ≤400M-parameter classifiers (ModernBERT/DeBERTa) |
+| **S3: LLM planner, fine-tuning & LLM-agent frameworks** | Akshat | RTX 5070 Ti PC (16 GB VRAM, 32 GB RAM) | Qwen3-8B serving, QLoRA of 8B and 4B, gpt-oss-20b teacher. **Reference machine** and host of the final run |
+| **S4: Rules, safety, evaluation & domain agents** | Shreyas | No GPU | CPU only. All LLM calls go to the shared servers (S3, and S1 when it fits) |
+
+RAM and CPU of the three non-reference machines are **not yet known**; they are collected in week 0 (§16, decision 5). Heavy full-graph CPU jobs (see-everything GFP on HI-Medium) default to Akshat's 32 GB PC unless the owner's machine can hold them.
+
+### 12.2 What each stream owns
 
 | Stream | Owns |
 |---|---|
-| **S1: Data & baselines** | §5 pipeline, C1, C1b (SOTA GNNs), C2 conformal intake, Group A + Group B (federated) |
-| **S2: Simulated banks & planners** | C3 banks, C4 DSL, C5 privacy, C7 back-testing (with S4), C9 non-LLM planners, C15 orchestrator, **C16 harness**, Group C ports |
-| **S3: LLM, fine-tuning & retrieval** | C10 planner + distillation, C11 retriever, C12 library, C13 fast model, **Group D frameworks**, DSPy tuning |
-| **S4: Rules, tests, stats & write-up** | C6 gate + regulatory RAG, C8 fusion, C14 decision, §10 safety, §9 eval code, pre-registration, CI, TA communication, report |
+| **S1** | §5 data pipeline, C1 (GFP+GBT), C1b (SOTA GNNs), C2 conformal intake, **C11 evidence retriever** (edge scorer, PCST, views, explainer comparisons), Group A + Group B (federated) |
+| **S2** | C3 banks, C4 DSL, C5 privacy, C7 back-testing engine, C9 non-LLM planners, C15 orchestrator, **C16 harness**, small-decision dataset (labels), raw-sharing baseline, Group C secondary ports (Co-Investigator, FinFRE-RAG), fast-model classifier baselines (ModernBERT/DeBERTa, RouteLLM-style) |
+| **S3** | C10 planner + distillation, C12 strategy library, C13 fast model (own 4B, SemIf, Laya, cascade), **Group D core and heavy frameworks** (ReAct, Reflexion, ReWOO, LATS, LLMCompiler, DSPy-tuned ReAct), shared LLM serving, final-run host |
+| **S4** | C6 gate + regulatory RAG, C8 fusion, C14 decision, §10 safety, §9 eval code, pre-registration, CI, TA communication, report, **Group C core ports (Torres [6], Sharma [3])**, Group D lighter ports (debate/AutoGen, UoT, BED-LLM), external-agent table assembly |
 
-Weekly: a 30-min sync, a one-line status per stream in `STATUS.md`, and a GPU-hour log.
+### 12.3 Hardware rules
 
----
+- **Reference machine.** Akshat's PC. All timing numbers (latency, GPU-seconds) are measured there. Accuracy and Brier numbers may come from any machine that uses the identical model checkpoint, serving stack and sampling settings.
+- **Shared LLM server.** Akshat serves Qwen3-8B (4-bit) over a private network (Tailscale or similar, with an API key; never exposed to the public internet). Abhishek's laptop is a second server if the week-0 test shows 8B fits in 8 GB. Shreyas and Bhavya use these for real runs and a mock/small model for development.
+- **One workload per GPU.** Training and serving do not share a GPU. When Akshat runs QLoRA or the gpt-oss-20b teacher, the 8B server on that machine is down; other LLM jobs move to Abhishek's server or wait. Block these jobs in the GPU calendar.
+- **Fixed context cap.** The harness `max_tokens` limit is set so a prompt fits every machine that will serve it, so no system gets a longer prompt than another.
+- **Cost accounting.** Report tokens and LLM calls as the primary cost; GPU-seconds come from replaying a sample on the reference machine. GPU-hours are logged per machine, weekly. Laptop hours are converted to reference-hours using a fixed benchmark run in week 0, not an assumption.
+- **Review pairs.** S1 ↔ S2 (shared data and bank views) and S3 ↔ S4 (shared harness and agents). Each owner reviews the other's PRs.
+- **Weekly.** A 30-minute sync, a one-line status per stream in `STATUS.md`, and the GPU-hour log.
 
 ## 13. Timeline and gates
 
-16 weeks after approval. The gates G0–G6 are from the proposal; new checks are in **bold**.
+16 weeks after approval. The gates G0–G6 are from the proposal; new checks are in **bold**. Columns follow the stream ownership in §12.
 
-| Week | S1: Data & baselines | S2: Banks & planners | S3: LLM & retrieval | S4: Rules, stats, write-up | Gate |
+| Week | S1: Data, detection & retrieval (Abhishek) | S2: Banks, questions & back-testing (Bhavya) | S3: LLM & agent frameworks (Akshat) | S4: Rules, safety, eval & domain agents (Shreyas) | Gate |
 |---|---|---|---|---|---|
-| **0** (before approval) | Download data; install snapml, PyG; **trace ~80 F1 source** | Install SimPy; DSL grammar sketch | vLLM + Qwen3-8B/4B + gpt-oss-20b smoke test on GPU | **Send TA addendum (§1 changes, H9/H10, fairness protocol)**; **check code/licences for every external system** | **G0** — TA sign-off; nothing built before this |
-| 1 | Parquet, splits, pattern parsing, bank views, aliasing | DSL parser + executor; expert questions start | Planner prompt + JSON schema | Repo skeleton, CI, test-split guard, rules corpus collection | |
-| 2 | GFP+GBT per bank + full; **Multi-GNN reproduction on HI-Small** | Partner banks + DP mechanisms + accountant | Evidence view: top-40 baseline | Fusion v0; metrics + bootstrap code | **G1** — one-bank matches published; enough alerts; **Multi-GNN reproduces** |
-| 3 | Conformal intake; **Multi-GNN on our split** | Realistic back-testing; e-values + e-BH; **harness v0** | LLM planner end-to-end on 20 val alerts | Ceiling checks on privacy code | **G2** — expert questions ≥0.01 Brier at ε=2 on val, under ceiling |
-| 4 | Final alert sets; **freeze 1k external subset** | Simple planners + enumerator; **ReAct through harness on 50 val alerts** | Teacher runs start; edge scorer training | **Pre-register H1–H4, H9 (+H10) thresholds**; lock external list | **G3** — ≥20 questions pass; enumerator + fast models run; library frozen; **harness works; external list locked** |
-| 5 | **DP-FedAvg setup** | **Torres [6] port (native + ported)** | Strategy library build; PCST | Compliance gate + regulatory RAG | |
-| 6 | **DP-FedAvg training**; FraudGT (sec.) | **Sharma [3] faithful port** | **Reflexion, ReWOO ports** | Injection set generation | |
-| 7 | **AML-specific federated method** (sec.) | Co-Investigator / FinFRE-RAG ports (sec.) | QLoRA planner SFT; 4B fast model fine-tune | Fusion v1 (per-family weights) | |
-| 8 | Held-out-cycles rerun | Orchestrator: async mode (stretch prep) | **LATS, LLMCompiler, debate, UoT/BED-LLM** (sec.) | Eval dashboard on val | |
-| **9** | All baselines on val | All core ported agents on val | **DSPy-tuned ReAct**; retrieval demo | Mid-project review | **G4** — core done on val; fine-tuned models + retrieval demo; **all core external systems on val**; pick top 2–3 for full test; pick stretch items; compute check |
-| 10 | MEGA-GNN (sec.) | Stretch: FCAC / async | Conformal cascade; SemIf/Laya (stretch) | **Component SOTA: RouteLLM-style, ModernBERT, GNNExplainer/PPR** | |
+| **0** (before approval) | Download data; install snapml, PyG; **trace ~80 F1 source**; **code/licence check for Group A/B**; hardware smoke test on own machine | Install SimPy, Lark; DSL grammar sketch; hardware smoke test | vLLM + Qwen3-8B/4B + gpt-oss-20b smoke test on GPU; **write the serving recipe; fixed benchmark prompt to convert laptop hours** | **Send TA addendum (§1 changes, H9/H10, fairness protocol)**; **code/licence check for Group C/D**; **collect RAM/CPU of every machine** | **G0**: TA sign-off; nothing built before this |
+| 1 | Parquet, splits, pattern parsing, bank views, aliasing; **hand-off to all by end of week** | DSL parser + executor; expert questions start (with S4); **run-log schema (with S4)** | Planner prompt + JSON schema | Repo skeleton, CI, test-split guard, rules corpus collection; expert questions (with S2) | |
+| 2 | GFP+GBT per bank + full; **Multi-GNN reproduction on HI-Small** | Partner banks + DP mechanisms + accountant | **Shared LLM endpoint up for the team**; top-40-by-amount evidence stub | Fusion v0; metrics + bootstrap code | **G1**: one-bank matches published; enough alerts; **Multi-GNN reproduces** |
+| 3 | Conformal intake; **Multi-GNN on our split** | Realistic back-testing; e-values + e-BH; **harness v0** | LLM planner end-to-end on 20 val alerts | Ceiling checks on privacy code | **G2**: expert questions ≥0.01 Brier at ε=2 on val, under ceiling |
+| 4 | Final alert sets; **freeze 1k external subset**; edge scorer training starts | Simple planners + enumerator; **harness v1 (interface frozen)** | **ReAct through harness on 50 val alerts**; teacher runs start | **Pre-register H1–H4, H9 (+H10) thresholds**; lock external list | **G3**: ≥20 questions pass; enumerator + fast models run; library frozen; **harness works; external list locked** |
+| 5 | **DP-FedAvg setup**; PCST | **Small-decision dataset v1**; raw-sharing baseline; per-account cap tests | Strategy library build | Compliance gate + regulatory RAG; **Torres [6] port (native + ported)** | |
+| 6 | **DP-FedAvg training**; FraudGT (sec.) | Exact-mode back-testing; ε-sweep tooling | **Reflexion, ReWOO ports** | Injection set generation; **Sharma [3] faithful port** | |
+| 7 | **AML-specific federated method** (sec.); four evidence views final | **Co-Investigator / FinFRE-RAG ports** (sec.) | QLoRA planner SFT; 4B fast model fine-tune (**planner-view decision with S1**) | Fusion v1 (per-family weights) | |
+| 8 | Held-out-cycles rerun | Orchestrator: async mode (stretch prep) | **LATS, LLMCompiler** (sec.) | Eval dashboard on val; **debate / AutoGen port** (sec.) | |
+| **9** | All baselines on val; **retrieval demo** | All non-LLM planners + ablation configs on val | **DSPy-tuned ReAct**; fine-tuned models ready | Mid-project review; **all core external agents on val** | **G4**: core done on val; fine-tuned models + retrieval demo; **all core external systems on val**; pick top 2–3 for full test; pick stretch items; compute check |
+| 10 | MEGA-GNN (sec.); **GNNExplainer / PGExplainer / PPR comparisons** | Stretch: async runs; **ModernBERT/DeBERTa + RouteLLM-style fast-model baselines** (sec.) | Conformal cascade; SemIf/Laya (stretch) | **UoT / BED-LLM ports** (sec.); FCAC (stretch) | |
 | 11 | Federated ε reporting | Stretch external agents if time | Stretch frameworks if time | **Injection tests on our system + external agents**; CaMeL comparison | |
 | 12 | Final configs | Final configs | Final configs | **Dry-run all analysis scripts on val**; figure templates | |
 | 13 | Buffer | Buffer | Buffer | Freeze pre-registration; commit hash to TA | |
-| **14** | Final test run | Final test run | Final test run | Stats, Holm, bootstrap | **G5** — one final test run (all systems, same code path) |
+| **14** | Final test run | Final test run | Final test run (**LLM runs split across S3 and S1 machines, same checkpoint**) | Stats, Holm, bootstrap | **G5**: one final test run (all systems, same code path) |
 | 15 | Results tables | Results tables | Case studies | Report draft | |
-| **16** | Review | Review | Review | Final report + presentation | **G6** — submit |
+| **16** | Review | Review | Review | Final report + presentation | **G6**: submit |
 
 Any change to the primary hypotheses after G3 goes back to the TA.
 
@@ -751,6 +786,12 @@ Secondary items are cut only after all stretch items, starting with the second S
 | **SOTA GNNs don't fit on 16 GB for HI-Medium** | Neighbour sampling, smaller hidden size; else report SOTA upper limits on HI-Small and say so |
 | **Federated ε not comparable to ours** | Plot on the same axes with explicit unit labels and a caveat paragraph; H10 is secondary for this reason |
 | Compute overrun | Weekly GPU-hour log; cut order |
+| **Qwen3-8B does not fit the 8 GB laptop at our context length** | Week-0 test; fall back to the 4B model for S1 development only, and run all 8B jobs on the reference machine. G5 then takes longer, so use the week-13 buffer |
+| **Only one machine can run the 8B model well** (queue; QLoRA and teacher runs take it offline) | GPU calendar; teacher and QLoRA in blocked windows; S4 and S2 develop against mock or small models; cap tokens on LATS/debate |
+| **Different GPUs give slightly different LLM outputs** | Same checkpoint, vLLM version and sampling settings everywhere; timing from the reference machine only; a 50-alert cross-machine check at G3 |
+| **Laptop RAM or thermals limit long jobs** (32M-row data, 31 GFP runs, GNN training) | Daily-chunk jobs with checkpoints; full-graph jobs on the 32 GB PC; plugged in, cooling pad; no multi-day single runs |
+| **S1 or S2 is the bottleneck for everyone** (data hand-off in week 1, harness freeze in week 4) | Both are hard-dated in §13; other streams develop against toy graphs and the mock harness until then |
+| **No GPU for S4** | S4 work is CPU by design; LLM-dependent steps (ports, injection tests) use shared servers and are scheduled in the GPU calendar |
 | Running out of time | Cut order; the core is never cut |
 
 ---
@@ -762,7 +803,10 @@ Secondary items are cut only after all stretch items, starting with the second S
 | 1 | Use a frontier API model as backbone on 200–300 alerts? Breaks "$0, all local" | Stretch only; decide at G4 based on budget | G4 |
 | 2 | H9 in the primary tier? | Yes; it's what the instructor asked for, and placing it last in the Holm order leaves H1–H4 unaffected | G0 (TA addendum) |
 | 3 | Which AML-specific federated method? | Whichever has working code: check [8], [9], FedGraph-VASP, FC2L | G0 |
-| 4 | Stream owners | Assign at first meeting | Week 0 |
+| 4 | Stream owners | **Assigned (§12.1):** S1 Abhishek, S2 Bhavya, S3 Akshat, S4 Shreyas | Done |
+| 5 | RAM / CPU of each non-reference machine; does Qwen3-8B 4-bit run on the 3070 Ti laptop at the harness context cap? | Test in week 0; the answer decides whether S1 is a second LLM server | G0 |
+| 6 | Where shared large artifacts live (bank views, scores, alert sets, back-test cache) | Rebuild from scripts by default; share the rest through one cloud folder or DVC remote with a hash manifest | Week 1 |
+| 7 | Which evidence view the fine-tuned planner is trained on (top-40 or scorer+PCST) | Train on top-40 unless scorer+PCST is ready and better on validation by week 7 | Week 7 |
 
 ---
 

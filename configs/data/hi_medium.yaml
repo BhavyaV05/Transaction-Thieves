@@ -1,0 +1,11 @@
+name: HI-Medium         # all main results
+raw_dir: data/raw/hi_medium
+parquet_dir: data/parquet/hi_medium
+views_dir: data/views/hi_medium
+alerts_dir: data/alerts/hi_medium
+n_banks: 30
+split_days:             # 16 days, 1-indexed, inclusive
+  train: [1, 9]
+  val: [10, 12]
+  test: [13, 16]        # locked until G5, see ftm/guards.py
+evidence_window_hours: 72

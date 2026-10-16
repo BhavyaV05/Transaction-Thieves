@@ -1,0 +1,6 @@
+protection_unit: transaction     # adjacency = add or remove one transaction
+eps_per_alert: 2.0
+eps_sweep: [0.5, 1.0, 2.0, 4.0, null]   # null = no noise
+per_account_cap: null                    # T2 sets the value; enforced across all alerts and asking banks
+eps_cal: null                            # back-testing budget, reported separately
+composition: basic                       # summed eps

@@ -1,0 +1,11 @@
+# Fill in GitHub handles, then uncomment. Review pairs: T1 <-> T2, T3 <-> T4 (tracks.md section 1).
+# An invalid handle makes GitHub report errors, so this file is commented out until handles are known.
+#
+# T1 (Abhishek), reviewed by T2 (Bhavya)
+# /ftm/data/ /ftm/baselines/ /ftm/intake/ /ftm/retrieval/      @abhishek-handle
+# T2 (Bhavya), reviewed by T1 (Abhishek)
+# /ftm/banks/ /ftm/dsl/ /ftm/privacy/ /ftm/backtest/ /ftm/agent/ /ftm/harness/   @bhavya-handle
+# T3 (Akshat), reviewed by T4 (Shreyas)
+# /ftm/library/ /ftm/fastmodel/ /ftm/planners/llm.py           @akshat-handle
+# T4 (Shreyas), reviewed by T3 (Akshat)
+# /ftm/compliance/ /ftm/fusion/ /ftm/decision/ /ftm/safety/ /ftm/eval/ /prereg/ /.github/   @shreyas-handle

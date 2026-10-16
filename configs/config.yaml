@@ -1,0 +1,10 @@
+# Root Hydra config. Override groups on the command line, e.g.  python scripts/run_experiment.py data=hi_small privacy.eps_per_alert=1
+defaults:
+  - data: hi_small
+  - privacy: default
+  - banks: default
+  - llm: default
+  - _self_
+
+seed: 0
+machine: unknown   # t1-3070ti | t2-3050ti | t3-5070ti | t4-cpu  (logged with every run)

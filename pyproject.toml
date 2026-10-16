@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ftm"
+version = "0.0.1"
+description = "Follow the Money Without Moving the Data (LMA Group Project 2026)"
+readme = "README.md"
+requires-python = ">=3.11"
+# Base install = what every track needs and what CI runs. Heavy, GPU-specific
+# packages live in extras so a CPU-only machine (and CI) can install the base.
+dependencies = [
+    "numpy",
+    "scipy",
+    "polars",
+    "pyarrow",
+    "duckdb",
+    "lark",
+    "simpy",
+    "hydra-core",
+    "omegaconf",
+    "mlflow",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+# T1: one-bank models and SOTA GNNs. snapml is installed separately if the licence allows (plan section 4.1).
+gbt = ["lightgbm", "xgboost", "scikit-learn"]
+gnn = ["torch", "torch_geometric", "pcst_fast"]
+fed = ["flwr", "opacus"]
+# T3 (and T4 for ports): LLM client side. vLLM/Unsloth run on the serving machine only, see docs/hardware.md.
+llm = ["openai", "dspy", "ag2"]
+serve = ["vllm", "unsloth"]
+rag = ["rank-bm25", "sentence-transformers"]
+
+[tool.setuptools.packages.find]
+include = ["ftm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: needs a GPU (skipped in CI)",
+    "slow: long-running (skipped in CI)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]  # long docstring/prose lines are fine

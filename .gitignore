@@ -1,0 +1,31 @@
+# data and artifacts (rebuilt from scripts; see plan.md section 4.3)
+data/*
+!data/README.md
+outputs/
+mlruns/
+artifacts/
+*.parquet
+*.csv
+*.ckpt
+*.pt
+*.safetensors
+*.gguf
+
+# trained weights are never released (plan.md section 10)
+models/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# local
+.env
+.DS_Store
+.vscode/
+.idea/

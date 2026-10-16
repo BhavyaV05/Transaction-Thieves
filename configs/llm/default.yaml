@@ -1,0 +1,9 @@
+backbone: Qwen/Qwen3-8B       # same for every system unless a row says otherwise
+quantisation: 4bit
+endpoint: ${oc.env:FTM_LLM_ENDPOINT,http://localhost:8000/v1}
+api_key: ${oc.env:FTM_LLM_API_KEY,none}
+temperature: 0.0
+limits:
+  max_llm_calls: 20
+  max_tokens: 6000            # per-prompt cap; must fit the smallest serving machine
+  max_sim_time_days: 5.0

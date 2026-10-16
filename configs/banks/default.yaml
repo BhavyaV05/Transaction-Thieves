@@ -1,0 +1,7 @@
+n_partner_banks: 29
+latency_days:
+  typical_max: 1.0      # usually under 1 day
+  tail_max: 4.0         # sometimes up to 4 days
+timeout_days: 5.0
+p_decline: 0.05         # placeholder; T2 sets the real value
+notes_enabled: true     # optional untrusted text note on replies (injection target)
