@@ -4,7 +4,7 @@ One line per track per week (newest at the top). Say what is done, what is block
 
 | Week | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
-| 0 | - | - | - | - |
+| 0 | - | - | - | TA addendum drafted (`docs/ta_addendum.md`, needs team review); Group C/D code/licence check done (`docs/external_code_check.md`). Waiting on: machine specs from everyone, federated-method choice with Abhishek |
 
 ## Week-0 machine report (everyone, before G0)
 
