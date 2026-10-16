@@ -405,7 +405,25 @@ All choose questions under the same budget and stop rule:
 **Done when:** all run end-to-end on validation within the CPU budget.
 
 ### 6.11 C10: System 2 LLM planner [Core, S3]
-- **Model:** Qwen3-8B on vLLM (4-bit).
+- **Model:** picked by the backbone size sweep (E18), not fixed in advance. The planner reads several kinds of data at once (subgraph, answers, rules, strategies), and 8B is likely too small to reason well over all of them.
+  - Candidates (all well-known open-weight models that fit the 16 GB reference GPU). Two same-family ladders (Qwen, Gemma) show how quality drops with size without mixing in family effects; the rest are strong reasoners at in-between sizes.
+
+    | Size class | Model | Params (active) | Quant on 16 GB | Why it's in | Set |
+    |---|---|---|---|---|---|
+    | ≈8B | Qwen3-8B | 8B dense | 4-bit | Floor; current default | Core |
+    | 12–14B | Gemma 4 12B | 12B dense | 4-bit | The expected ≈13B sweet spot | Core |
+    | 12–14B | Qwen3-14B | 14B dense | 4-bit | Middle rung of the Qwen ladder | Core |
+    | 12–14B | Phi-4-reasoning (14B) | 14B dense | 4-bit | Reasoning-tuned at this size; MIT licence | If time |
+    | 20–26B MoE | gpt-oss-20b | 21B (3.6B) | MXFP4 (native) | Already on our stack as the teacher; fast | Core |
+    | 20–26B MoE | Gemma 4 26B A4B | 25.2B (3.8B) | 4-bit | Large-model quality at small-model speed | Core |
+    | 27–31B dense | Qwen3.8-27B UD-Q3_K_XL GGUF | 27B dense | Q3 GGUF | The model we use for CIBC reasoning; largest that fits Akshat's PC | Core |
+    | 27–31B dense | Gemma 4 31B | 31B dense | Q3 GGUF | Top of the Gemma ladder; only if it fits at the context cap | If time |
+
+  - Parity: every candidate gets the same prompt text in its own chat template, the same sampling settings and context cap, and thinking/reasoning mode on with thinking tokens counted in the token cap. No per-model prompt tuning.
+  - Serving: GGUF models run on llama.cpp, the rest on vLLM, and the run log records which. Once E18 picks a model, its serving stack becomes the fixed stack for all machines.
+  - Different parts use different sizes: the fast model (C13) stays small (4B), and only the planner and the external-agent backbone follow E18.
+  - Qwen3-8B is the working default until E18 is done. Elsewhere in this plan, "the 8B" means "the planner backbone chosen by E18".
+  - Versions above come from public model cards and roundups as of October 2026; T3 checks each card (version, licence, context length) in week 0.
 - **Inputs:** evidence subgraph (C11, aliased), alert summary, retrieved strategies (C12), budget left, answers so far.
 - **Outputs (structured JSON, schema-validated):**
   - hypothesis (typology + one-line rationale)
@@ -413,10 +431,10 @@ All choose questions under the same budget and stop rule:
   - target bank and ε request
 - **Modes:** compose (main), fixed-list only (ablation), act-only/no hypotheses (ablation), no back-testing (ablation, where the planner judges its own evidence).
 - **Fine-tuning (secondary):**
-  1. Teacher: gpt-oss-20b on training alerts.
+  1. Teacher: the strongest E18 candidate on validation (by default Qwen3.8-27B; gpt-oss-20b if it scores better), run on training alerts. The teacher is never weaker than the student.
   2. Keep only teacher questions that (a) passed back-testing and (b) moved the posterior toward the true label.
-  3. SFT Qwen3-8B with QLoRA (Unsloth).
-  4. Compare planner vs teacher.
+  3. Student: QLoRA (Unsloth) on a model small enough to train on 16 GB: Qwen3-8B by default, or Qwen3-14B / Gemma 4 12B if it fits at our sequence length.
+  4. Compare the tuned student vs the same model prompted, vs the teacher, and vs the E18 backbone. This tests whether a tuned small model matches a larger prompted one.
 - **Done when:** ≥95% of outputs parse into valid DSL on validation, and the end-to-end loop runs at 8–20 s per alert.
 
 ### 6.12 C11: Evidence retriever (graph RAG) [Secondary, S1]
@@ -535,7 +553,7 @@ Every system gets the same:
 - question language
 - compliance gate
 - ε per alert and per-account cap
-- backbone model (Qwen3-8B unless the row says otherwise)
+- backbone model (the one chosen by E18 unless the row says otherwise)
 - caps on LLM calls, tokens and simulated time
 
 The protocol also requires:
@@ -592,10 +610,18 @@ The protocol also requires:
 | E13 | Async | One-at-a-time vs batched (k=2, then 1); LLMCompiler | Full test | RQ5, H8 | Stretch |
 | E14 | Robustness | Refusals, timeouts, broken replies, shuffled answers, per-account cap on/off | Full test | robustness | Core (shuffled) / Secondary |
 | E15 | Injection | §10, our system + external agents, with/without checker; CaMeL etc. | Injection set | safety | Secondary |
-| E16 | Fine-tuned planner | Qwen3-8B QLoRA vs base vs teacher | Full test | fine-tuning | Secondary |
+| E16 | Fine-tuned planner | QLoRA student (8B or 14B) vs same model prompted vs teacher vs E18 backbone | Full test | fine-tuning | Secondary |
 | E17 | Three-way decision | FCAC vs single threshold | Full test | decision | Stretch |
+| E18 | **Backbone size sweep** | Planner (compose mode) on every §6.11 candidate (core set first, "if time" after), under the §6.11 parity rules; report Brier, valid-DSL rate, latency and GPU-s per alert, plotted against size for each family | Validation: stage 1 ≈200 alerts, stage 2 ≈500 | backbone choice | Core |
 
 All tuning happens on validation. There is **one** final test run (G5), and it runs every experiment.
+
+**E18 decision rule** (committed to `prereg/` before stage 1 runs):
+1. **Stage 1:** every candidate on ≈200 validation alerts. Drop any model below 95% valid DSL, or clearly worse than the best on Brier (95% cluster-bootstrap CI).
+2. **Stage 2:** the top 3 on ≈500 validation alerts. 200 alerts can only detect Brier differences of ≈0.05, which would make every model look "equivalent" and bias the choice toward the smallest; 500 brings this to ≈0.03.
+3. **Pick** the smallest model whose Brier difference from the best has a CI upper bound below the equivalence margin (§9.3). If none qualifies, take the best one that meets the 8–20 s per-alert target on the reference machine.
+
+E18 uses validation only and never touches the test set. The fine-tuned planner (E16) may be smaller than the chosen backbone, since QLoRA must fit on 16 GB.
 
 ---
 
@@ -665,7 +691,8 @@ Hardware: four machines (§12.1); default cost is $0. Estimates below are in **r
 | Running our agents (all ablations) | 75–170 GPU-h | ≈28k investigations + ≈4k teacher runs, 8–20 s each |
 | **SOTA GNNs + federated training (new)** | 20–40 GPU-h | Multi-GNN etc. one-bank + see-everything; DP-FedAvg |
 | **External agents (new)** | 40–70 GPU-h | 1k subset × ~10 systems; top 2–3 on full test; LATS/debate token-capped |
-| **Total GPU** | 160–325 h; **expected ≈175–225 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
+| **Backbone size sweep (E18, new)** | 12–22 GPU-h | Stage 1: up to 8 models × ≈200 val alerts; stage 2: top 3 × ≈500; the 27–31B models are the slowest |
+| **Total GPU** | 172–347 h; **expected ≈190–240 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
 
 **Where the hours run:**
 
@@ -676,7 +703,7 @@ Hardware: four machines (§12.1); default cost is $0. Estimates below are in **r
 | 3050 Ti laptop (S2) | Small-model dev and tests; ModernBERT/DeBERTa baselines. CPU: back-testing shards |
 | CPU-only (S4) | None. Evaluation, bootstrap, gate, CI, port development against shared servers |
 
-The final test run (G5) is about 62–155 reference-hours of LLM investigation for our system alone (≈28k investigations × 8–20 s), plus the external agents. It is split across the S3 and S1 machines using the same checkpoint and serving stack, scheduled in week 13 buffer plus week 14.
+The final test run (G5) is about 62–155 reference-hours of LLM investigation for our system alone (≈28k investigations × 8–20 s), plus the external agents. It is split across the S3 and S1 machines using the same checkpoint and serving stack, scheduled in week 13 buffer plus week 14. If E18 picks a model above ≈8B, the 8 GB laptop cannot serve it, so G5 runs on the reference machine alone: up to ≈155 h of continuous running, which only fits if it starts at the beginning of week 13.
 
 Back-testing is CPU work that splits by question. Any machine can run shards, with results cached by canonical form + ε.
 
@@ -716,6 +743,8 @@ RAM and CPU of the three non-reference machines are **not yet known**; they are 
 - **Fixed context cap.** The harness `max_tokens` limit is set so a prompt fits every machine that will serve it, so no system gets a longer prompt than another.
 - **Cost accounting.** Report tokens and LLM calls as the primary cost; GPU-seconds come from replaying a sample on the reference machine. GPU-hours are logged per machine, weekly. Laptop hours are converted to reference-hours using a fixed benchmark run in week 0, not an assumption.
 - **Review pairs.** S1 ↔ S2 (shared data and bank views) and S3 ↔ S4 (shared harness and agents). Each owner reviews the other's PRs.
+- **Lite models on small machines.** Machines that cannot load the planner backbone develop against a lite model (Qwen3-1.7B / 4B-4bit or the mock LLM).
+- **Validation PRs.** If a change needs checking on the real model, open a PR whose description says explicitly that **Akshat should close it**. Akshat reviews it on the reference machine, runs the needed checks, makes any changes, and merges or closes it. The normal pair review still applies.
 - **Weekly.** A 30-minute sync, a one-line status per stream in `STATUS.md`, and the GPU-hour log.
 
 ## 13. Timeline and gates
@@ -724,10 +753,10 @@ RAM and CPU of the three non-reference machines are **not yet known**; they are 
 
 | Week | S1: Data, detection & retrieval (Abhishek) | S2: Banks, questions & back-testing (Bhavya) | S3: LLM & agent frameworks (Akshat) | S4: Rules, safety, eval & domain agents (Shreyas) | Gate |
 |---|---|---|---|---|---|
-| **0** (before approval) | Download data; install snapml, PyG; **trace ~80 F1 source**; **code/licence check for Group A/B**; hardware smoke test on own machine | Install SimPy, Lark; DSL grammar sketch; hardware smoke test | vLLM + Qwen3-8B/4B + gpt-oss-20b smoke test on GPU; **write the serving recipe; fixed benchmark prompt to convert laptop hours** | **Send TA addendum (§1 changes, H9/H10, fairness protocol)**; **code/licence check for Group C/D**; **collect RAM/CPU of every machine** | **G0**: TA sign-off; nothing built before this |
+| **0** (before approval) | Download data; install snapml, PyG; **trace ~80 F1 source**; **code/licence check for Group A/B**; hardware smoke test on own machine | Install SimPy, Lark; DSL grammar sketch; hardware smoke test | vLLM + Qwen3-8B/4B + gpt-oss-20b smoke test on GPU; **check each E18 candidate loads at the context cap and verify its model card**; **write the serving recipe; fixed benchmark prompt to convert laptop hours** | **Send TA addendum (§1 changes, H9/H10, fairness protocol)**; **code/licence check for Group C/D**; **collect RAM/CPU of every machine** | **G0**: TA sign-off; nothing built before this |
 | 1 | Parquet, splits, pattern parsing, bank views, aliasing; **hand-off to all by end of week** | DSL parser + executor; expert questions start (with S4); **run-log schema (with S4)** | Planner prompt + JSON schema | Repo skeleton, CI, test-split guard, rules corpus collection; expert questions (with S2) | |
 | 2 | GFP+GBT per bank + full; **Multi-GNN reproduction on HI-Small** | Partner banks + DP mechanisms + accountant | **Shared LLM endpoint up for the team**; top-40-by-amount evidence stub | Fusion v0; metrics + bootstrap code | **G1**: one-bank matches published; enough alerts; **Multi-GNN reproduces** |
-| 3 | Conformal intake; **Multi-GNN on our split** | Realistic back-testing; e-values + e-BH; **harness v0** | LLM planner end-to-end on 20 val alerts | Ceiling checks on privacy code | **G2**: expert questions ≥0.01 Brier at ε=2 on val, under ceiling |
+| 3 | Conformal intake; **Multi-GNN on our split** | Realistic back-testing; e-values + e-BH; **harness v0** | LLM planner end-to-end on 20 val alerts; **backbone size sweep (E18)** | Ceiling checks on privacy code | **G2**: expert questions ≥0.01 Brier at ε=2 on val, under ceiling |
 | 4 | Final alert sets; **freeze 1k external subset**; edge scorer training starts | Simple planners + enumerator; **harness v1 (interface frozen)** | **ReAct through harness on 50 val alerts**; teacher runs start | **Pre-register H1–H4, H9 (+H10) thresholds**; lock external list | **G3**: ≥20 questions pass; enumerator + fast models run; library frozen; **harness works; external list locked** |
 | 5 | **DP-FedAvg setup**; PCST | **Small-decision dataset v1**; raw-sharing baseline; per-account cap tests | Strategy library build | Compliance gate + regulatory RAG; **Torres [6] port (native + ported)** | |
 | 6 | **DP-FedAvg training**; FraudGT (sec.) | Exact-mode back-testing; ε-sweep tooling | **Reflexion, ReWOO ports** | Injection set generation; **Sharma [3] faithful port** | |
@@ -779,14 +808,15 @@ Secondary items are cut only after all stretch items, starting with the second S
 | Weights / conformal bounds drift | Recalibrate on latest validation days; retire questions that stop working; report achieved vs target |
 | The LLM's questions add nothing | A clear, measured "no", with costs |
 | System memorises known criminals | Library by shape; random aliases; shuffled-answer test; by-account ablation |
-| Tools don't work out (fast models, snapml licence, weak teacher) | Checked at G0/G3; own 4B is the main fast model; rebuild GFP features; Qwen3-14B as teacher |
+| Tools don't work out (fast models, snapml licence, weak teacher) | Checked at G0/G3; own 4B is the main fast model; rebuild GFP features; next-largest E18 candidate as teacher |
 | **No public code for an external system** | Reimplement from the paper, label as reimplementation, check against the paper's reported numbers where possible |
 | **"Unfair comparison" criticism** | Fairness protocol, same backbone, native + ported modes, DSPy-tuned external, questions-only scoring |
 | **A strong external agent beats our planner** | Still a measured result; questions-only scoring shows whether our tool + fusion layer adds value; report it honestly |
 | **SOTA GNNs don't fit on 16 GB for HI-Medium** | Neighbour sampling, smaller hidden size; else report SOTA upper limits on HI-Small and say so |
 | **Federated ε not comparable to ours** | Plot on the same axes with explicit unit labels and a caveat paragraph; H10 is secondary for this reason |
 | Compute overrun | Weekly GPU-hour log; cut order |
-| **Qwen3-8B does not fit the 8 GB laptop at our context length** | Week-0 test; fall back to the 4B model for S1 development only, and run all 8B jobs on the reference machine. G5 then takes longer, so use the week-13 buffer |
+| **The planner backbone does not fit the 8 GB laptop** (certain if E18 picks anything above ≈8B) | Week-0 test; S1 develops against a lite model, and all backbone jobs run on the reference machine. G5 then takes longer, so it starts at the beginning of week 13 |
+| **A larger backbone slows every LLM run** (planner, external agents, teacher) | E18 enforces the 8–20 s per-alert target; token caps on LATS/debate; at G4, if projected hours exceed the budget, run lower-priority ablations on the 1k subset only |
 | **Only one machine can run the 8B model well** (queue; QLoRA and teacher runs take it offline) | GPU calendar; teacher and QLoRA in blocked windows; S4 and S2 develop against mock or small models; cap tokens on LATS/debate |
 | **Different GPUs give slightly different LLM outputs** | Same checkpoint, vLLM version and sampling settings everywhere; timing from the reference machine only; a 50-alert cross-machine check at G3 |
 | **Laptop RAM or thermals limit long jobs** (32M-row data, 31 GFP runs, GNN training) | Daily-chunk jobs with checkpoints; full-graph jobs on the 32 GB PC; plugged in, cooling pad; no multi-day single runs |
@@ -807,6 +837,7 @@ Secondary items are cut only after all stretch items, starting with the second S
 | 5 | RAM / CPU of each non-reference machine; does Qwen3-8B 4-bit run on the 3070 Ti laptop at the harness context cap? | Test in week 0; the answer decides whether S1 is a second LLM server | G0 |
 | 6 | Where shared large artifacts live (bank views, scores, alert sets, back-test cache) | Rebuild from scripts by default; share the rest through one cloud folder or DVC remote with a hash manifest | Week 1 |
 | 7 | Which evidence view the fine-tuned planner is trained on (top-40 or scorer+PCST) | Train on top-40 unless scorer+PCST is ready and better on validation by week 7 | Week 7 |
+| 8 | Planner backbone (one of the §6.11 candidates, 8B to 31B) | Decide from E18 by its decision rule; do not pick by guesswork | G3 |
 
 ---
 
@@ -848,4 +879,8 @@ Proposal references [1]–[41] carry over unchanged (see `proposal_v5.pdf`). New
 - Ying et al. *GNNExplainer.* NeurIPS 2019. Luo et al. *PGExplainer.* NeurIPS 2020.
 - Hines et al. *Spotlighting.* 2024. Chen et al. *StruQ.* USENIX Security 2025.
 - Xu & Ramdas. *Online multiple testing with e-values* (e-LOND). AISTATS 2024.
+- Qwen Team. *Qwen3 Technical Report.* 2025. Qwen3.8-27B model card (Qwen, August 2026).
+- Gemma Team. *Gemma 4* model cards (12B, 26B A4B, 31B). Google, 2026.
+- Abdin et al. *Phi-4-reasoning Technical Report.* Microsoft, 2025.
+- OpenAI. *gpt-oss-120b & gpt-oss-20b Model Card.* 2025.
 - Benchmark listing for HI-Small SOTA figure: https://www.wizwand.com/dataset/ibm-aml (source paper to be traced)
