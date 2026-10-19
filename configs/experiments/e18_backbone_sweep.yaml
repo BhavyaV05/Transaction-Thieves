@@ -1,0 +1,38 @@
+# E18: backbone size sweep (plan.md 6.11 and section 8; tracks.md 5.4). Owner: T3 (Akshat); decision rule: T4.
+# Validation only. The decision rule below is copied into prereg/ and committed before stage 1 runs.
+# hf_id: null = not checked yet; T3 fills it from the model card (docs/t3_week0.md). profile = the entry in
+# configs/llm/serving.yaml that serves it (pinned revision); null = profile still to add before week 3.
+
+candidates:
+  - {name: qwen3-8b,           family: qwen,  params_b: 8,    active_b: 8,   quant: awq,          stack: vllm,      hf_id: Qwen/Qwen3-8B-AWQ,         set: core,    profile: qwen3-8b}
+  - {name: gemma4-12b,         family: gemma, params_b: 12,   active_b: 12,  quant: 4bit,         stack: vllm,      hf_id: null,                      set: core, profile: null}
+  - {name: qwen3-14b,          family: qwen,  params_b: 14,   active_b: 14,  quant: 4bit,         stack: vllm,      hf_id: Qwen/Qwen3-14B,            set: core, profile: null}
+  - {name: phi4-reasoning,     family: phi,   params_b: 14,   active_b: 14,  quant: 4bit,         stack: vllm,      hf_id: microsoft/Phi-4-reasoning, set: if_time, profile: null}
+  - {name: gpt-oss-20b,        family: gpt-oss, params_b: 21, active_b: 3.6, quant: mxfp4,        stack: vllm,      hf_id: openai/gpt-oss-20b,        set: core,    profile: gpt-oss-20b}
+  - {name: gemma4-26b-a4b,     family: gemma, params_b: 25.2, active_b: 3.8, quant: 4bit,         stack: vllm,      hf_id: null,                      set: core, profile: null}
+  - {name: qwen3.8-27b-q3,     family: qwen,  params_b: 27,   active_b: 27,  quant: UD-Q3_K_XL,   stack: llama.cpp, hf_id: null,                      set: core, profile: null}   # the CIBC reasoning model
+  - {name: gemma4-31b-q3,      family: gemma, params_b: 31,   active_b: 31,  quant: Q3_K,         stack: llama.cpp, hf_id: null,                      set: if_time, profile: null}  # only if it fits at the context cap
+
+parity:                       # identical for every candidate
+  prompt: planner_compose     # same prompt text, each model's own chat template
+  temperature: 0.0
+  max_prompt_tokens: 6000     # = llm.limits.max_tokens (a prompt cap)
+  thinking: false             # stage 1 and the default arm; gpt-oss at reasoning_effort: low
+  per_model_prompt_tuning: false
+  evidence_view: top40        # same evidence for every candidate
+
+stage1:
+  alerts: 200                 # validation alerts, fixed seed
+  min_valid_dsl: 0.95
+  drop_if_clearly_worse: true # 95% cluster-bootstrap CI of Brier(model) - Brier(best) above 0
+stage2:
+  top_k: 3
+  alerts: 500                 # 200 alerts detect ~0.05 Brier, 500 ~0.03
+  thinking_arm: {models: winner, alerts: same, thinking: true, max_output_tokens_per_step: 1024}   # adopted for every system only if it wins by > margin within latency
+decision:
+  rule: smallest_equivalent_to_best   # CI upper bound of Brier(model) - Brier(best) below the plan.md 9.3 margin
+  fallback: best_meeting_latency
+  latency_s_per_alert: [8, 20]        # on the reference machine
+  ci_level: 0.95
+  n_boot: 10000
+seed: 0

@@ -419,7 +419,8 @@ All choose questions under the same budget and stop rule:
     | 27–31B dense | Qwen3.8-27B UD-Q3_K_XL GGUF | 27B dense | Q3 GGUF | The model we use for CIBC reasoning; largest that fits Akshat's PC | Core |
     | 27–31B dense | Gemma 4 31B | 31B dense | Q3 GGUF | Top of the Gemma ladder; only if it fits at the context cap | If time |
 
-  - Parity: every candidate gets the same prompt text in its own chat template, the same sampling settings and context cap, and thinking/reasoning mode on with thinking tokens counted in the token cap. No per-model prompt tuning.
+  - Parity: every candidate gets the same prompt text in its own chat template, the same sampling settings and prompt cap, and no per-model prompt tuning.
+  - Thinking mode: **off** for every system by default (planner, Group C and D), so the 8–20 s per-alert target holds; gpt-oss, which cannot fully switch it off, runs at `reasoning_effort: low`. E18 runs all candidates with thinking off. In stage 2 the winner also gets a **thinking-on arm** on the same ≈500 alerts, with a fixed output budget (1,024 tokens per step, counted in tokens and latency). If thinking-on beats off by more than the §9.3 margin and still meets the latency target, it becomes the setting for **every** system.
   - Serving: GGUF models run on llama.cpp, the rest on vLLM, and the run log records which. Once E18 picks a model, its serving stack becomes the fixed stack for all machines.
   - Different parts use different sizes: the fast model (C13) stays small (4B), and only the planner and the external-agent backbone follow E18.
   - Qwen3-8B is the working default until E18 is done. Elsewhere in this plan, "the 8B" means "the planner backbone chosen by E18".
@@ -691,8 +692,8 @@ Hardware: four machines (§12.1); default cost is $0. Estimates below are in **r
 | Running our agents (all ablations) | 75–170 GPU-h | ≈28k investigations + ≈4k teacher runs, 8–20 s each |
 | **SOTA GNNs + federated training (new)** | 20–40 GPU-h | Multi-GNN etc. one-bank + see-everything; DP-FedAvg |
 | **External agents (new)** | 40–70 GPU-h | 1k subset × ~10 systems; top 2–3 on full test; LATS/debate token-capped |
-| **Backbone size sweep (E18, new)** | 12–22 GPU-h | Stage 1: up to 8 models × ≈200 val alerts; stage 2: top 3 × ≈500; the 27–31B models are the slowest |
-| **Total GPU** | 172–347 h; **expected ≈190–240 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
+| **Backbone size sweep (E18, new)** | 17–31 GPU-h | Stage 1: up to 8 models × ≈200 val alerts; stage 2: top 3 × ≈500; thinking-on arm for the winner × ≈500 (5–9 h); the 27–31B models are the slowest |
+| **Total GPU** | 177–356 h; **expected ≈195–245 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
 
 **Where the hours run:**
 

@@ -15,14 +15,14 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 
 | | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
-| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) | | RTX 5070 Ti / 16 GB (16,303 MiB, driver 610.88) | none |
-| RAM | 15 GiB (about 9.5 GiB available) | | 31.1 GiB usable (32 GB) | |
-| CPU model / cores | i7-12650H, 10 cores / 16 threads | | Ryzen 9 7900X, 12 cores / 24 threads | |
-| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup | | E: 406 GB (use this); C: 38 GB (keep off it) | |
-| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | | Windows 11 Pro (build 26200) | |
-| WSL2 works? | n/a (native Linux) | | Yes (Docker Desktop 29.6.2, WSL2 backend; no Ubuntu distro) | |
-| Python version | 3.12.13 (system, user site; no venv) | | 3.12.10 (`.venv`, uv) | |
-| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) | | (reference) pending the vLLM smoke test | n/a |
+| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) |  | RTX 5070 Ti / 16 GB (16,303 MiB, driver 610.88) | none |
+| RAM | 15 GiB (about 9.5 GiB available) |  | 31.1 GiB usable (32 GB) | 14 GiB (about 5 GiB available) |
+| CPU model / cores | i7-12650H, 10 cores / 16 threads |  | Ryzen 9 7900X, 12 cores / 24 threads | i7-12650H, 10 cores / 16 threads |
+| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup |  | E: 406 GB (use this); C: 38 GB (keep off it) | 19 GB |
+| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) |  | Windows 11 Pro (build 26200) | Ubuntu 26.04.1 LTS (Linux 7.0.0) |
+| WSL2 works? | n/a (native Linux) |  | Yes (Docker Desktop 29.6.2, WSL2 backend; no Ubuntu distro) | n/a (native Linux) |
+| Python version | 3.12.13 (system, user site; no venv) |  | 3.12.10 (`.venv`, uv) | 3.12 venv via uv (system Python is 3.14) |
+| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) |  | (reference) pending the vLLM smoke test | n/a |
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 

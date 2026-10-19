@@ -1,0 +1,39 @@
+# Legal bases the compliance gate (C6) checks citations against. v0: the sharing regimes only.
+# Owner: T4 (Shreyas). Texts are short summaries for the gate and the planner prompt, not legal advice;
+# each names its source (proposal refs [16]-[18]) so the RAG corpus (secondary, ~40 FATF red flags) can link it.
+# A rule permits actions; `kinds` limits which answer kinds a question under it may ask for.
+
+rules:
+  - rule_id: US-314B-SHARE
+    jurisdiction: US
+    source: "31 CFR 1010.540 (voluntary information sharing among financial institutions), proposal ref [16]"
+    text: >-
+      A financial institution that has notified FinCEN may share information with another participating
+      institution about individuals, entities or transactions, for the purpose of identifying and reporting
+      possible money laundering or terrorist activity. Shared information is used only for that purpose.
+    permits: [ask_bank]
+    kinds: [bool, count, kary, set_count]
+  - rule_id: US-314B-NOTICE
+    jurisdiction: US
+    source: "FinCEN Section 314(b) Fact Sheet, proposal ref [17]"
+    text: >-
+      Participation requires an annual notice to FinCEN, and the institution must keep procedures to protect the
+      security and confidentiality of what it receives.
+    permits: []
+    kinds: []
+  - rule_id: SG-COSMIC-REQUEST
+    jurisdiction: SG
+    source: "MAS Notice FSM-N02 and Guidelines on COSMIC, proposal ref [18]"
+    text: >-
+      A participant may send a request to another participant about a customer whose activity crosses risk
+      thresholds, to seek information relevant to money laundering, terrorism financing or proliferation risk.
+    permits: [ask_bank]
+    kinds: [bool, count, kary, set_count]
+  - rule_id: INTERNAL-SAR-DRAFT
+    jurisdiction: ANY
+    source: "home bank's own process; a SAR draft stays inside the home bank"
+    text: >-
+      The investigator may draft a suspicious activity report for the home bank's own compliance review queue.
+      Drafts are never sent to another bank.
+    permits: [draft_sar, escalate_to_human]
+    kinds: []

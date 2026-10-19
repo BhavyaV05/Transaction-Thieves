@@ -1,0 +1,104 @@
+# Pre-registered hypotheses and tests. DRAFT v0 (T4, Shreyas). Status: draft until the G3 commit; frozen at week 13
+# and its commit hash sent to the TA before G5. Any change to a primary hypothesis after G3 goes back to the TA.
+# Source of truth for wording: plan.md section 2 and 9.3. Code: ftm/eval (metrics, bootstrap, stats).
+# Values marked `fix_on_val` are set from validation runs before the G3 commit, never from test.
+
+status: draft
+version: 0
+
+statistics:
+  bootstrap: {resamples: 10000, seed: 0, level: 0.95, unit: cluster}
+  clusters: attempt+accounts        # ftm.eval.bootstrap.cluster_ids; HI-Small val alerts: largest share 0.03 (T1, 2026-10-19)
+  clusters_fallback: {rule: "if largest_share > 0.2 on HI-Medium val alerts, use hub_cap", hub_cap: fix_on_val}
+  correction:
+    primary: {method: holm, family: [H1, H2, H3, H4, H9], alpha: 0.05}   # Holm orders by p-value; the list order is for reporting
+    secondary: {method: holm, family: [H6, H7, H10], alpha: 0.05}
+    exploratory: {method: none, family: [H5, H8], label: "uncorrected, exploratory"}
+  equivalence_margin:
+    definition: "0.5 * |Brier(random planner) - Brier(best simple planner)| on the same alerts"
+    value: fix_on_val
+  gap_closed:
+    formula: "(Brier(one bank) - Brier(system)) / (Brier(one bank) - Brier(upper))"
+    upper_limits: [gfp_see_everything, best_sota_see_everything]
+    min_denominator: 1.0e-5          # below it, report raw Brier differences (ftm.eval.metrics.MIN_GAP_DENOMINATOR)
+  missing_verdict: "scored as p0; no-verdict rate reported per system"   # agreed with T3, PR #7
+  evaluation_set:
+    alerts: test alerts from conformal intake (ftm/intake), headline on test bulk days   # days decision: docs/t4_decisions_week2.md item 4
+    also_report: [end_to_end_over_all_rows_with_intake_misses, kept_only_sensitivity]
+
+hypotheses:
+  H1:
+    tier: primary
+    claim: "At eps = 2 per alert, private questions close at least 30% of the gap (Brier)."
+    statistic: gap_closed(one_bank, ours_compose_eps2, upper)
+    reject_null_if: "95% CI lower bound > 0 AND point estimate >= 0.30"
+    p_value: "bootstrap, H0: gap_closed <= 0"
+    threshold: 0.30
+    experiment: E2
+  H2:
+    tier: primary
+    claim: "Questions get at least 70% of the benefit of sharing raw records, while sharing none."
+    statistic: "(Brier(one_bank) - Brier(ours_eps2)) / (Brier(one_bank) - Brier(raw_share_3_banks))"
+    reject_null_if: "95% CI lower bound >= 0.70"
+    p_value: "bootstrap, H0: ratio < 0.70"
+    threshold: 0.70
+    experiment: E2
+  H3:
+    tier: primary
+    claim: "LLM composing its own questions is at least as good as the best simple planner AND the enumerator, and better than itself with a fixed list."
+    statistic:
+      - non_inferior: "Brier(llm_compose) - Brier(best_simple_planner)"     # CI upper bound < margin
+      - non_inferior: "Brier(llm_compose) - Brier(enumerator)"
+      - superior: "Brier(llm_compose) - Brier(llm_fixed_list)"             # CI upper bound < 0
+    reject_null_if: "all three hold"
+    p_value: "max of the three bootstrap p-values (intersection-union test)"
+    margin: equivalence_margin
+    experiment: E3
+  H4:
+    tier: primary
+    claim: "Back-testing matters: without it results get worse; with it, under 10% of accepted questions are useless on later data."
+    statistic:
+      - superior: "Brier(ours_compose) - Brier(no_backtest)"               # CI upper bound < 0
+      - single_factor: "Brier(llm_decides) - Brier(no_backtest)"            # same decider, only back-testing differs (PR #7 review); reported, not part of the test
+      - fdr_audit: "share of accepted questions with LR <= 1 on test, among those asked >= 30 times"
+    reject_null_if: "superior holds AND fdr_audit upper 95% bound < 0.10"
+    threshold_fdr: 0.10
+    experiment: E4
+  H9:
+    tier: primary
+    claim: "At eps = 2, our system closes at least as much of the gap as the best ported external agent on the same backbone."
+    statistic: "gap_closed(ours) - gap_closed(best_ported_external)"       # best chosen on validation at G4, not on test
+    reject_null_if: "95% CI lower bound > -margin_gap"
+    margin_gap: fix_on_val
+    scores: [end_to_end, questions_only]                                   # end_to_end is the test; questions_only is reported
+    eval_set: frozen_1000_subset_and_full_test_for_top_2_3
+    experiment: E5
+  H6:
+    tier: secondary
+    claim: "Smart retrieval shows at least 15 points more real pattern edges among the 40, and improves results."
+    statistic: ["pattern_edge_share(scorer_pcst) - pattern_edge_share(top40_by_amount)", "Brier(scorer_pcst) - Brier(top40)"]
+    reject_null_if: "share difference CI lower bound >= 0.15 AND Brier CI upper bound < 0"
+    experiment: E8
+  H7:
+    tier: secondary
+    claim: "A calibrated formula making the final call beats the LLM deciding."
+    statistic: "Brier(ours_compose) - Brier(llm_decides)"
+    reject_null_if: "95% CI upper bound < 0"
+    experiment: E9
+  H10:
+    tier: secondary
+    claim: "Private questions match or beat DP federated training on Brier at a comparable privacy level."
+    statistic: "Brier(ours) - Brier(dp_fedavg)"
+    reject_null_if: "95% CI upper bound < equivalence_margin"
+    caveat: "training-time eps and per-question eps are different units; plotted on the same axes with both labels"
+    experiment: E6
+  H5:
+    tier: exploratory
+    claim: "The fast model handles most routine decisions within its accuracy bound, at least 10x faster, with no detection loss."
+    bound: "error_marginal = P(answer accepted AND wrong) <= 2 * alpha per decision type (two-tier union bound, PR #10)"
+    descriptive_only: error_given_accepted   # not bounded by the cascade; reported, never tested
+    experiment: E10
+  H8:
+    tier: exploratory
+    claim: "Two questions at once, then one more, keeps 80% of the benefit in 60% of the time."
+    experiment: E13
