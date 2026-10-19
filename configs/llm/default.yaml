@@ -1,5 +1,11 @@
-backbone: Qwen/Qwen3-8B       # same for every system unless a row says otherwise
-quantisation: 4bit
+backbone: Qwen/Qwen3-8B       # working default until E18 picks the planner backbone (plan.md 6.11); same for every system unless a row says otherwise
+quantisation: awq             # Qwen/Qwen3-8B-AWQ; revision pinned in configs/llm/serving.yaml (T3)
+serving_stack: vllm           # vllm | llama.cpp (GGUF candidates); once E18 picks, fixed for every machine
+thinking: false               # off for every system (latency target); E18 stage 2 tests an on arm (plan.md 6.11)
+reasoning_effort: low         # gpt-oss only (it cannot switch thinking fully off)
+fast_model: Qwen/Qwen3-4B     # System 1 (C13); stays small whatever E18 picks
+teacher: null                 # distillation teacher = strongest E18 candidate on val (default Qwen3.8-27B); set after E18
+lite_model: Qwen/Qwen3-1.7B   # development on machines that cannot load the backbone (plan.md 12.3)
 endpoint: ${oc.env:FTM_LLM_ENDPOINT,http://localhost:8000/v1}
 api_key: ${oc.env:FTM_LLM_API_KEY,none}
 temperature: 0.0
