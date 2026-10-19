@@ -95,6 +95,8 @@ hypotheses:
   H5:
     tier: exploratory
     claim: "The fast model handles most routine decisions within its accuracy bound, at least 10x faster, with no detection loss."
+    bound: "error_marginal = P(answer accepted AND wrong) <= 2 * alpha per decision type (two-tier union bound, PR #10)"
+    descriptive_only: error_given_accepted   # not bounded by the cascade; reported, never tested
     experiment: E10
   H8:
     tier: exploratory
