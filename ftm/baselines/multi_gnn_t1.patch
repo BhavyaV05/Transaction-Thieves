@@ -1,0 +1,93 @@
+diff --git a/data_config.json b/data_config.json
+index 62b1322..a223948 100644
+--- a/data_config.json
++++ b/data_config.json
+@@ -1,7 +1,7 @@
+ {
+     "paths": {
+-      "aml_data": "/path/to/aml_data", 
+-      "model_to_load": "/path/to/model_you_want_to_load (e.g for inference or fine-tuning)",
+-      "model_to_save": "/path/to/model_save_location (where you want to store the model you are going to train)"
++      "aml_data": "/home/abhishekg/Documents/Transaction-Thieves/data/multignn", 
++      "model_to_load": "/home/abhishekg/Documents/Transaction-Thieves/data/multignn/models",
++      "model_to_save": "/home/abhishekg/Documents/Transaction-Thieves/data/multignn/models"
+     }
+   }
+\ No newline at end of file
+diff --git a/train_util.py b/train_util.py
+index 42062b8..73d7caf 100644
+--- a/train_util.py
++++ b/train_util.py
+@@ -13,7 +13,7 @@ class AddEgoIds(BaseTransform):
+     def __init__(self):
+         pass
+ 
+-    def __call__(self, data: Union[Data, HeteroData]):
++    def forward(self, data: Union[Data, HeteroData]):
+         x = data.x if not isinstance(data, HeteroData) else data['node'].x
+         device = x.device
+         ids = torch.zeros((x.shape[0], 1), device=device)
+diff --git a/training.py b/training.py
+index 797357c..48ebdc1 100644
+--- a/training.py
++++ b/training.py
+@@ -8,10 +8,13 @@ from torch_geometric.nn import to_hetero, summary
+ from torch_geometric.utils import degree
+ import wandb
+ import logging
++import os, time, json
+ 
+ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, model, optimizer, loss_fn, args, config, device, val_data, te_data, data_config):
+     #training
+     best_val_f1 = 0
++    t_start = time.time()
++    budget = float(os.environ.get('T1_BUDGET_S', '1e18'))
+     for epoch in range(config.epochs):
+         total_loss = total_examples = 0
+         preds = []
+@@ -55,6 +58,8 @@ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, mod
+         wandb.log({"f1/test": te_f1}, step=epoch)
+         logging.info(f'Validation F1: {val_f1:.4f}')
+         logging.info(f'Test F1: {te_f1:.4f}')
++        with open(os.environ.get('T1_METRICS', 'metrics.jsonl'), 'a') as fh:
++            fh.write(json.dumps({'epoch': epoch, 'train_f1': f1, 'val_f1': val_f1, 'te_f1': te_f1, 'elapsed_s': time.time() - t_start}) + '\n')
+ 
+         if epoch == 0:
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+@@ -63,12 +68,17 @@ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, mod
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+             if args.save_model:
+                 save_model(model, optimizer, epoch, args, data_config)
++        if time.time() - t_start > budget:
++            logging.info('T1 time budget reached, stopping')
++            break
+     
+     return model
+ 
+ def train_hetero(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, model, optimizer, loss_fn, args, config, device, val_data, te_data, data_config):
+     #training
+     best_val_f1 = 0
++    t_start = time.time()
++    budget = float(os.environ.get('T1_BUDGET_S', '1e18'))
+     for epoch in range(config.epochs):
+         total_loss = total_examples = 0
+         preds = []
+@@ -114,6 +124,8 @@ def train_hetero(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, m
+         wandb.log({"f1/test": te_f1}, step=epoch)
+         logging.info(f'Validation F1: {val_f1:.4f}')
+         logging.info(f'Test F1: {te_f1:.4f}')
++        with open(os.environ.get('T1_METRICS', 'metrics.jsonl'), 'a') as fh:
++            fh.write(json.dumps({'epoch': epoch, 'train_f1': f1, 'val_f1': val_f1, 'te_f1': te_f1, 'elapsed_s': time.time() - t_start}) + '\n')
+ 
+         if epoch == 0:
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+@@ -122,6 +134,9 @@ def train_hetero(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, m
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+             if args.save_model:
+                 save_model(model, optimizer, epoch, args, data_config)
++        if time.time() - t_start > budget:
++            logging.info('T1 time budget reached, stopping')
++            break
+         
+     return model
+ 

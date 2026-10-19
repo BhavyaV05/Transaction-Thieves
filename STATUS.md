@@ -4,6 +4,7 @@ One line per track per week (newest at the top). Say what is done, what is block
 
 | Week | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
+| 2-3 | Done: GFP+LightGBM reproduced on the paper split (F1 62.95 LightGBM / 62.51 XGBoost vs 62.86 / 63.23 published); Multi-GNN Multi-PNA+EU reproduced on its split (test F1 67.64 vs paper 68.16, 5 of 100 epochs, 2.5 h); p0 (hand-offs #5, #17) for HI-Small one-bank + see-everything (Brier 0.001167 vs 0.000906, constant 0.001307: the gap is real) and HI-Medium one-bank; conformal intake with achieved-vs-target miss rates; draft train/val alert sets (HI-Medium val 2,238, train 10,962, projected test 3,475 alerts / 1,011 positives, a projection); edge-scorer data prep. Blocked: HI-Medium see-everything (compute, command in `ftm/baselines/README.md`); Multi-GNN on our split not started. Needs a team decision: the plan 5.2 drop rules empty the val set, the selective-risk bound conflicts with the alert budget, the 1,000-alert subset needs test labels (`ftm/intake/README.md`). Branch `t1/week2-4-models-intake` | - | - | - |
 | 0 | Done except conversion benchmark (needs T3 script). Data hand-off #1 (HI-Small and HI-Medium) already built, see `ftm/data/README.md`; snapml/PyG OK; needs: TA OK on snapml licence, licence answer from Tian et al. authors. Branch `t1/week0-week1-data` | - | - | - |
 
 ## Week-0 machine report (everyone, before G0)
