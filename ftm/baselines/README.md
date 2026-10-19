@@ -47,7 +47,7 @@ Load with `ftm.baselines.gfp_gbt.read_p0(ds, mode=..., split=...)`. **Status:** 
 | GFP + LightGBM | **62.95** | 0.785 | 0.525 | 0.603 | 62.86 +- 0.25 |
 | GFP + XGBoost | **62.51** | 0.800 | 0.513 | 0.591 | **63.23 +- 0.17** |
 
-Reproduced within 0.8 points. The 63.23 quoted in tracks.md is the **XGBoost** row of Table 4 of the GFP paper (the AMLworld paper does not give GFP+LightGBM); we ran both. Runtime: features 518 s (5.08 M transactions, 8-10 k rows/s, 4-6 threads), LightGBM grid 462 s, XGBoost grid 359 s. At the fixed 0.5 threshold F1 is 51.4 / 50.9 (the val-tuned threshold matters). Json: `data/runs/gfp_repro_hi_small.json` (commit `b26e990`, seed 0).
+Reproduced within 0.8 points. The 63.23 quoted in tracks.md is the **XGBoost** row (AMLworld paper, arXiv:2306.16424, Table 2 and appendix D for the GFP configuration; the same numbers are in Table 4 of the GFP paper); the GFP+LightGBM row is 62.86. We ran both. Runtime: features 518 s (5.08 M transactions, 8-10 k rows/s, 4-6 threads), LightGBM grid 462 s, XGBoost grid 359 s. At the fixed 0.5 threshold F1 is 51.4 / 50.9 (the val-tuned threshold matters). Json: `data/runs/gfp_repro_hi_small.json` (commit `b26e990`, seed 0).
 
 Two things that cost F1 before they were fixed, so reviewers know where to look: (1) with LightGBM's default `min_child_samples=20, reg_lambda=0` the validation AP *falls* from 0.30 (1 tree) to 0.08 (100 trees); early stopping on the logloss (the wrapper's default metric next to `average_precision`) then stopped after one tree and gave 50.9 F1. `LGBM_GRID` now uses `min_child_samples=100, reg_lambda=10` and `metric="average_precision"` only. (2) Float32 overflow in kurtosis features (inf) is clipped at 1e30.
 
