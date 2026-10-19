@@ -71,11 +71,11 @@ Timing numbers come from the reference machine only.
 
 | | Proposal | Now |
 |---|---|---|
-| GPU hours | 100–215 (expected ≈115) | 172–347 (expected ≈190–240) |
+| GPU hours | 100–215 (expected ≈115) | 177–356 (expected ≈195–245) |
 | Budget | 250 | 250 (unchanged) |
 | Cost | $0 | $0 |
 
-The increase is the external systems (≈40–70 h), the SOTA GNNs and federated training (≈20–40 h), and the model-size sweep (≈12–22 h). The expected case fits the budget. The worst case does not, so a weekly GPU-hour log and a fixed cut order (plan §14) apply. The core is never cut.
+The increase is the external systems (≈40–70 h), the SOTA GNNs and federated training (≈20–40 h), and the model-size sweep, including one thinking-mode test (≈17–31 h). The expected case fits the budget. The worst case does not, so a weekly GPU-hour log and a fixed cut order (plan §14) apply. The core is never cut.
 
 ## 6. Scope (plan §14)
 
