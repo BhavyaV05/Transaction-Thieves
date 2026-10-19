@@ -4,8 +4,9 @@ parquet_dir: data/parquet/hi_medium
 views_dir: data/views/hi_medium
 alerts_dir: data/alerts/hi_medium
 n_banks: 30
-split_days:             # 16 days, 1-indexed, inclusive
+split_days:             # 1-indexed, inclusive. 16 bulk days; days 17-28 are a sparse tail (6,987 rows)
   train: [1, 9]
   val: [10, 12]
-  test: [13, 16]        # locked until G5, see ftm/guards.py
+  test: [13, 28]        # canonical 13-16 plus the tail (kept in test so time order holds, nothing dropped); locked until G5, see ftm/guards.py
+heldout_cycles: false   # E12: drop cycle attempts from train
 evidence_window_hours: 72

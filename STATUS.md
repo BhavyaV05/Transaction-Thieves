@@ -4,7 +4,7 @@ One line per track per week (newest at the top). Say what is done, what is block
 
 | Week | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
-| 0 | - | - | - | - |
+| 0 | Done except conversion benchmark (needs T3 script). Data hand-off #1 (HI-Small and HI-Medium) already built, see `ftm/data/README.md`; snapml/PyG OK; needs: TA OK on snapml licence, licence answer from Tian et al. authors. Branch `t1/week0-week1-data` | - | - | - |
 
 ## Week-0 machine report (everyone, before G0)
 

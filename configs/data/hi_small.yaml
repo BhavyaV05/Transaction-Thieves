@@ -4,6 +4,13 @@ parquet_dir: data/parquet/hi_small
 views_dir: data/views/hi_small
 alerts_dir: data/alerts/hi_small
 n_banks: 30             # largest banks by transaction count
-# HI-Small: check the real date range, then split in the same proportions as HI-Medium (9/3/4 of 16 days).
-split_days: null
+# HI-Small spans 18 calendar days (2022-09-01 .. 09-18) but 99.98% of the rows are in days 1-10;
+# days 11-18 are a sparse tail (1,108 rows, mostly late legs of laundering attempts).
+# Rule: take the 10 bulk days, split them in the HI-Medium proportions 9/3/4 (5.6 / 1.9 / 2.5 days,
+# rounded to 6 / 2 / 2), and put the sparse tail in test so time order is kept (nothing is dropped).
+split_days:             # 1-indexed, inclusive
+  train: [1, 6]
+  val: [7, 8]
+  test: [9, 18]         # locked until G5, see ftm/guards.py
+heldout_cycles: false   # E12: drop cycle attempts from train (ftm.data.io.scan_*(heldout_cycles=...))
 evidence_window_hours: 72
