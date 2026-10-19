@@ -10,11 +10,11 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] report specs (`docs/hardware.md` §2, `docs/t3_week0.md` §1) and model-card check (`docs/t3_week0.md` §2)
 
 ## Week 1
-- [ ] Planner prompt + JSON schema against DSL grammar v0
+- [x] Planner prompt + JSON schema (`ftm/planners/llm_prompt.py`): written against a **provisional** DSL stand-in (`ftm/planners/llm_dsl.py`) because grammar v0 (hand-off #3) has not arrived; switching is one `DslAdapter`
 
 ## Week 2
-- [ ] **Shared endpoint up**
-- [ ] top-40-by-amount evidence stub. **G1** support
+- [ ] **Shared endpoint up**: client, budgets, mock server and README done (`ftm/llm/`); the real server waits for the GPU smoke test
+- [x] top-40-by-amount evidence stub (`ftm/retrieval/views.py`, through `ftm.data.io`, aliased). **G1** support
 
 ## Week 3
 - [ ] LLM planner end-to-end on 20 val alerts. **G2**

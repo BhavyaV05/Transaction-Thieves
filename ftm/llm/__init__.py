@@ -4,6 +4,8 @@ Owner: T3 (Akshat).  Component: Serving (hand-off #10).  Tier: Core support.
 Spec: tracks.md 1.2 and 5.3; docs/hardware.md sections 4-5.
 
 client.py: stdlib-only chat client (no `openai` dependency, so CPU-only machines and CI can import it).
+budget.py: per-alert call / prompt-token caps and cost accounting.  jsonout.py: JSON extraction + schema checks.
+mock.py: scripted / record-replay mock, in-process and as an HTTP server.  Usage: README.md.
 """
 
 from ftm.llm.client import ChatClient, ChatResponse, HttpChatClient, LLMError
