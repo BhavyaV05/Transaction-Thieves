@@ -94,9 +94,10 @@ def selective_clear_threshold(p, y, beta: float, delta: float = 0.1) -> float:
     pos = np.cumsum(ys)
     ub = np.where(pos >= k, 1.0, beta_dist.ppf(1 - delta, pos + 1, np.maximum(k - pos, 1)))
     last_of_tie = np.r_[ps[1:] != ps[:-1], True]  # a cleared set must contain all rows with the same score
-    # the sequence starts where a cleared set with zero laundering rows can pass: k >= ln(1/delta)/beta
-    # (fixed in advance, so it does not depend on the labels); smaller sets cannot be certified anyway
-    k_min = int(np.ceil(np.log(1 / delta) / beta))
+    # The sequence starts at k_min = 4 ln(1/delta)/beta cleared rows: a cleared set with zero laundering rows
+    # first passes at ln(1/delta)/beta, and starting 4x later tolerates a few laundering rows among the
+    # cleared ones. The start depends only on (beta, delta), not on the labels, so validity is kept.
+    k_min = int(np.ceil(4 * np.log(1 / delta) / beta))
     ok = (ub <= beta) | (k < k_min)
     bad = np.flatnonzero(~ok & last_of_tie)
     first_bad = bad[0] if len(bad) else len(ps)
@@ -111,3 +112,14 @@ def fixed_window(p, lo: float = 0.15, hi: float = 0.85):
     """Ablation: alert iff lo <= p <= hi (plan.md 6.3)."""
     p = np.asarray(p, "f8")
     return (p >= lo) & (p <= hi)
+
+
+def selective_risk_upper_bound(p, y, t_alert: float, delta: float = 0.1) -> dict:
+    """Clopper-Pearson (1 - delta) upper bound on P(laundering | auto-cleared = {p < t_alert}) from calibration rows."""
+    from scipy.stats import beta as beta_dist
+
+    p, y = np.asarray(p, "f8"), np.asarray(y).astype(int)
+    c = p < t_alert
+    k, pos = int(c.sum()), int(y[c].sum())
+    ub = 1.0 if k == 0 or pos >= k else float(beta_dist.ppf(1 - delta, pos + 1, k - pos))
+    return {"n_cleared": k, "n_laundering_cleared": pos, "upper_bound": ub, "delta": delta}

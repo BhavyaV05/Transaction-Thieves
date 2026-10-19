@@ -63,10 +63,16 @@ def repro(csv: str, out: str, threads: int) -> None:
     print(f"loaded {n} rows in {time.time() - t0:.0f}s", flush=True)
     codes = g.category_codes(df.filter(pl.col("split") != "paper_test"))
     t1 = time.time()
-    X, names, f = g.build_features(df, codes, threads=threads)
-    t_feat = time.time() - t1
-    y = f["is_laundering"].to_numpy().astype(int)
-    sp = f["split"].to_numpy()
+    cache = Path("data/runs/cache_repro.npz")  # intermediate, deleted at the end of the session
+    if cache.exists():
+        z = np.load(cache, allow_pickle=True)
+        X, y, sp, t_feat = z["X"], z["y"], z["sp"], float(z["t"])
+    else:
+        X, names, f = g.build_features(df, codes, threads=threads)
+        t_feat = time.time() - t1
+        y = f["is_laundering"].to_numpy().astype(int)
+        sp = f["split"].to_numpy()
+        np.savez(cache, X=X, y=y, sp=sp, t=t_feat)
     tr, va, te = sp == "train", sp == "val", sp == "paper_test"
     print(f"features {X.shape} in {t_feat:.0f}s", flush=True)
     res = {"commit": commit(), "seed": SEED, "n": int(n), "feature_seconds": t_feat, "n_features": X.shape[1],
@@ -78,6 +84,8 @@ def repro(csv: str, out: str, threads: int) -> None:
     mv = g.metrics(y[va], sv)
     res["models"]["lightgbm"] = {"params": p, "grid": log, "val": mv, "test": g.metrics(y[te], st, mv["thr"]),
                                   "test_f1_at_0.5": g.metrics(y[te], st, 0.5)["f1"], "seconds": time.time() - t2}  # fmt: skip
+    t = res["models"]["lightgbm"]["test"]
+    print("lightgbm", f"test F1 {100 * t['f1']:.2f} P {t['precision']:.3f} R {t['recall']:.3f} PR-AUC {t['pr_auc']:.3f}", flush=True)
     best = None
     t2 = time.time()
     xlog = []
@@ -147,6 +155,47 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None) -> No
     print("done", ds, mode, f"{time.time() - t0:.0f}s", flush=True)
 
 
+def report(ds: str) -> None:
+    """Per-bank and pooled one-bank vs see-everything table on the val 'eval' part (the gap)."""
+    d = Path("data/scores") / ds
+    ob = pl.read_parquet(d / "p0_one_bank.parquet")  # time-guard: not transactions
+    se = pl.read_parquet(d / "p0_see_everything.parquet").select("tx_id", pl.col("p0").alias("p0_se"))  # time-guard: not transactions
+    v = ob.filter((pl.col("split") == "val") & pl.col("p0").is_not_null()).join(se, on="tx_id", how="left")
+    rows = []
+    for b in sorted(v["bank"].unique().to_list()):
+        vb = v.filter(pl.col("bank") == b)
+        fit, ev = vb.filter(pl.col("val_part") == "fit"), vb.filter(pl.col("val_part") == "eval")
+        y = ev["label"].cast(pl.Int8).to_numpy()
+        const = float(fit["label"].cast(pl.Float64).mean())
+        r = {"bank": b, "n_eval": len(y), "n_pos": int(y.sum()), "brier_const": float(np.mean((const - y) ** 2))}
+        for tag, col in (("ob", "p0"), ("se", "p0_se")):
+            thr = g.metrics(fit["label"].cast(pl.Int8).to_numpy(), fit[col].to_numpy())["thr"]
+            m = g.metrics(y, ev[col].to_numpy(), thr)
+            r |= {f"brier_{tag}": m["brier"], f"prauc_{tag}": m.get("pr_auc"), f"f1_{tag}": m.get("f1")}
+        rows.append(r)
+    tab = pl.DataFrame(rows)
+    ev = v.filter(pl.col("val_part") == "eval")
+    y = ev["label"].cast(pl.Int8).to_numpy()
+    const = float(v.filter(pl.col("val_part") == "fit")["label"].cast(pl.Float64).mean())
+    pooled = {"n_eval": len(y), "n_pos": int(y.sum()), "brier_const": float(np.mean((const - y) ** 2))}
+    for tag, col in (("ob", "p0"), ("se", "p0_se")):
+        fit = v.filter(pl.col("val_part") == "fit")
+        thr = g.metrics(fit["label"].cast(pl.Int8).to_numpy(), fit[col].to_numpy())["thr"]
+        m = g.metrics(y, ev[col].to_numpy(), thr)
+        pooled |= {f"brier_{tag}": m["brier"], f"prauc_{tag}": m["pr_auc"], f"f1_{tag}": m["f1"]}
+    # sum of squared errors weighted pooled Brier is the number above; the macro mean over banks is below
+    pooled["bss_ob"] = 1 - pooled["brier_ob"] / pooled["brier_const"]
+    pooled["bss_se"] = 1 - pooled["brier_se"] / pooled["brier_const"]
+    pooled["macro_brier_ob"] = float(tab["brier_ob"].mean())
+    pooled["macro_brier_se"] = float(tab["brier_se"].mean())
+    out = Path("data/runs")
+    tab.write_csv(out / f"gap_{ds}_per_bank.csv")
+    (out / f"gap_{ds}_pooled.json").write_text(json.dumps(pooled, indent=1))
+    with pl.Config(tbl_rows=40, tbl_cols=12, float_precision=5):
+        print(tab)
+    print(json.dumps(pooled, indent=1))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repro", action="store_true", help="reproduction on the published split (raw CSV)")
@@ -155,10 +204,13 @@ def main() -> None:
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--data", default=None)
     ap.add_argument("--mode", choices=["one_bank", "see_everything"], default=None)
+    ap.add_argument("--report", action="store_true", help="one-bank vs see-everything table for --data")
     ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
     a = ap.parse_args()
     if a.repro:
         repro(a.csv, a.out, a.threads)
+    elif a.report and a.data:
+        report(a.data)
     elif a.data and a.mode:
         run_dataset(a.data, a.mode, a.threads, a.banks)
     else:

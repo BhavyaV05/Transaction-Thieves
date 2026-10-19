@@ -43,8 +43,10 @@ GFP_PARAMS = {
 N_ECHO = 5  # snapml echoes the 5 input columns (edge id, src, dst, timestamp, amount) first
 BASIC = ["amount_received", "amount_paid", "receiving_currency", "payment_currency",
          "payment_format", "same_bank", "hour"]  # fmt: skip
+# min_child_samples=100 and reg_lambda=10 matter: with the library default (20, 0) validation AP of GFP+LightGBM
+# falls from 0.30 after one tree to 0.08 after 100 (rare positives, small leaves); with these it rises to 0.48.
 LGBM_GRID = [
-    {"num_leaves": nl, "scale_pos_weight": w, "learning_rate": 0.05, "min_child_samples": 20}
+    {"num_leaves": nl, "scale_pos_weight": w, "learning_rate": 0.05, "min_child_samples": 100, "reg_lambda": 10.0}
     for nl in (31, 127) for w in (1.0, 8.0)
 ]  # fmt: skip
 
@@ -134,10 +136,11 @@ def fit_lgbm(Xtr, ytr, Xva, yva, grid=LGBM_GRID, seed: int = 0, threads: int = 4
 
     best, log = None, []
     for p in grid:
-        m = lgb.LGBMClassifier(n_estimators=600, random_state=seed, n_jobs=threads, verbose=-1,
+        # metric="average_precision" REPLACES the default logloss; with both, early stopping fires on the
+        # logloss (which worsens under the train->val shift) after one tree
+        m = lgb.LGBMClassifier(n_estimators=600, random_state=seed, n_jobs=threads, verbose=-1, metric="average_precision",
                                colsample_bytree=0.8, subsample=0.8, subsample_freq=1, **p)  # fmt: skip
-        m.fit(Xtr, ytr, eval_set=[(Xva, yva)], eval_metric="average_precision",
-              callbacks=[lgb.early_stopping(30, verbose=False)])  # fmt: skip
+        m.fit(Xtr, ytr, eval_set=[(Xva, yva)], callbacks=[lgb.early_stopping(30, verbose=False)])
         ap = float(average_precision_score(yva, m.predict_proba(Xva)[:, 1]))
         log.append({**p, "val_ap": ap, "best_iteration": int(m.best_iteration_ or 0)})
         if best is None or ap > best[0]:
@@ -261,6 +264,6 @@ def p0_table(res: dict, mode: str, bank: int | None, cm: str, seed: int = 0) -> 
     n = f.height
     return pl.DataFrame({
         "tx_id": f["tx_id"], "bank": pl.Series([bank] * n, dtype=pl.Int64), "mode": [mode] * n,
-        "model": ["gfp_lgbm"] * n, "split": f["split"], "val_part": res["part"], "p0": res["p0"],
-        "score_raw": res["raw"], "label": f["is_laundering"], "seed": [seed] * n, "commit": [cm] * n,
+        "model": ["gfp_lgbm"] * n, "split": f["split"], "val_part": res["part"], "p0": pl.Series(res["p0"]).fill_nan(None),
+        "score_raw": pl.Series(res["raw"]).fill_nan(None), "label": f["is_laundering"], "seed": [seed] * n, "commit": [cm] * n,
     }).with_columns(pl.col("val_part").replace("", None))  # fmt: skip
