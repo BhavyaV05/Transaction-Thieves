@@ -22,14 +22,14 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 | OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | | | |
 | WSL2 works? | n/a (native Linux) | | | |
 | Python version | 3.12.13 (system, user site; no venv) | | | |
-| Benchmark tokens/s (see 4) | pending T3 benchmark script (Qwen3-8B Q4_K_M ollama proxy numbers in `docs/t1_week0.md`) | | (reference) | n/a |
+| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) | | (reference) | n/a |
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 
 ## 3. Week-0 smoke tests (tick when done; details in `tasks/`)
 
 - [ ] **T3:** vLLM + Qwen3-8B (4-bit), Qwen3-4B, gpt-oss-20b run on the 5070 Ti. Blackwell needs a CUDA 12.8+ build of PyTorch/vLLM; on Windows use WSL2 or Docker. Write the recipe below.
-- [ ] **T1:** Qwen3-8B 4-bit loads and answers a 6,000-token prompt on the 3070 Ti. This decides whether T1 is a second LLM server.
+- [x] **T1 (proxy only):** Qwen3-8B Q4_K_M via **ollama/GGUF, not vLLM**, loads 100% on the 3070 Ti (6.4 GB of 8.2 GB VRAM peak) and answers a ~5,900-token prompt in ~3.3 s (about 2,100 prompt tok/s, 62 generation tok/s). The vLLM 4-bit check on the same checkpoint is still open, so the second-server decision is not final. Details: `docs/t1_week0.md` section 6.
 - [ ] **T2:** Qwen3-1.7B / 4B-4bit run on the 3050 Ti (for harness smoke tests).
 - [ ] **T4:** the mock LLM / record-replay mode works (no GPU needed); a request to the shared endpoint succeeds.
 - [x] **T1:** snapml and PyG install; the snapml licence is checked. snapml 1.17.2 has a cp312 wheel and the GraphFeaturePreprocessor runs on a 5-edge toy graph; PyG 2.7.0 two-layer GCN runs on the 3070 Ti (CUDA); pcst_fast solves a toy tree. snapml licence is proprietary (IBM ILAN), see `docs/t1_week0.md`.

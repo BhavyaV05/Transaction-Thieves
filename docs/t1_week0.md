@@ -46,11 +46,24 @@ FraudGT needs a licence question to the authors before we copy code into `ftm/ba
 
 ## 5. Week-0 items and status
 
-- Qwen3-8B 4-bit on the 3070 Ti: see section 6.
+- Qwen3-8B 4-bit on the 3070 Ti: **ran as an ollama GGUF Q4_K_M proxy, not vLLM** (section 6). A vLLM check is still open.
 - HI-Medium download and conversion: see `ftm/data/README.md` (added after the HI-Small hand-off; status there).
 - Conversion benchmark (laptop hours to reference hours): **not run**, T3's benchmark script is not published yet (`docs/hardware.md` section 4).
 - Not downloaded by design: LI-* datasets, HI-Large.
 
 ## 6. Qwen3-8B test on the 3070 Ti
 
-(filled in below)
+**Caveat: this is a proxy.** vLLM is not installed (it would replace the user-site torch), so I used the local **ollama 0.15.0 server with `qwen3:8b` (GGUF Q4_K_M, 5.2 GB)**. It is not the vLLM 4-bit serving stack that plan.md section 12 specifies, so the second-server decision still needs a vLLM check on the same checkpoint. The numbers below show only that the weights, the KV cache for the 6,000-token cap and a 8,192-token context fit on the 8 GB card and how fast they run in llama.cpp-style serving.
+
+Setup: `/api/chat`, `num_ctx` 8192, `temperature` 0, `num_predict` 256, `think: false`. Prompt = 120 aliased HI-Small rows of bank 70 (val split, from `ftm.data.io` + `alias.apply_aliases`) plus a one-line question, about 5,900 tokens (the harness cap is 6,000). Each of the 3 runs used a different slice of rows so the prompt cache could not help (a first attempt that reused the prefix gave meaningless prompt speeds of over 100,000 tokens/s; discarded). The model was unloaded before run 0, and no other GPU process was running.
+
+| run | prompt tokens | prompt eval tok/s | generated tokens | generation tok/s | load s | total s |
+|---|---|---|---|---|---|---|
+| 0 (cold load) | 5,927 | 1,982 | 26 | 62.0 | 2.4 | 5.84 |
+| 1 | 5,919 | 2,099 | 27 | 61.9 | 0.07 | 3.34 |
+| 2 | 5,830 | 2,102 | 29 | 62.4 | 0.07 | 3.32 |
+
+- Loaded **100% on GPU** (`ollama ps`: 6.6 GB, 8,192 context). Peak VRAM from `nvidia-smi` was **6.39 GB of 8.19 GB** (about 0.23 GB of that is the desktop).
+- It answered the toy question sensibly each time (it only produced 26-29 tokens, so the 62 tok/s generation rate is measured over short outputs; expect similar for longer ones).
+- Result: **Qwen3-8B Q4_K_M runs on the 3070 Ti at the 6,000-token cap with about 1.8 GB VRAM to spare** (ollama proxy). `ollama stop qwen3:8b` was run afterwards; the model stays downloaded.
+- The tokens/s here are ollama numbers, not the T3 benchmark (fixed prompt, vLLM), so they must not be used for the reference-hour factor.

@@ -9,7 +9,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] trace the ~80 F1 source (ExSTraQt, arXiv:2604.02899; docs/t1_week0.md)
 - [x] check code/licence for Group A/B and pick the AML-specific federated method (Tian et al.; docs/t1_week0.md)
 - [x] report RAM/CPU
-- [ ] **test whether Qwen3-8B 4-bit runs on your GPU at the harness context cap** (and run the conversion benchmark)
+- [x] **test whether Qwen3-8B 4-bit runs on your GPU at the harness context cap**: passed as an ollama Q4_K_M proxy (6.4 GB VRAM, 62 tok/s); vLLM check still open.
+- [ ] run the conversion benchmark (waiting for the T3 script)
 
 ## Week 1
 - [x] Parquet, splits, pattern parsing, bank views, aliasing, time guard (HI-Small; docs in ftm/data/README.md). **Hand off to everyone by end of week**
