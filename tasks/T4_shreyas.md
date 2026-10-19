@@ -31,7 +31,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] **Torres port**
 
 ## Week 6
-- [ ] Injection set generation
+- [x] Injection set generation
 - [ ] **Sharma port**
 
 ## Week 7
