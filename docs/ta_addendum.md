@@ -21,7 +21,10 @@ Table 5 is now split in two: **5a, external systems** (new) and **5b, our ablati
 
 Group C agents run in two modes: **native** (as published: one bank's view, no cross-bank questions) and **ported** (given our cross-bank question tool with the same privacy budget). Every LLM system gets **two scores**: end-to-end (its own verdict) and questions-only (its collected answers passed through our fusion formula). The second score separates "asks better questions" from "makes better final calls".
 
-**Code status** (full check: `docs/external_code_check.md`):
+**Code status** (full checks: `docs/external_code_check.md` for Groups C/D, `docs/t1_week0.md` for Groups A/B):
+- **Multi-GNN, MEGA-GNN:** official code, Apache-2.0. Multi-GNN is already reproduced on HI-Small (test F1 67.64 vs the paper's 68.16).
+- **FraudGT, Tian et al. [8]** (our pick for the AML-specific federated method): official code, but **no licence**. We are asking the authors and run them from separate checkouts until they answer.
+- **The ~80 F1 on HI-Small** that benchmark sites list is ExSTraQt (arXiv 2604.02899): a feature-based method on a different split, with code but no licence. We add it to Group A as a reference if the authors allow it.
 - **Sharma:** official MIT-licensed code, ported faithfully.
 - **Torres:** no released code, prompts or named model. It is a labelled **reimplementation**, and its published numbers (on SynthAML10) cannot be checked on AMLworld.
 - **ReAct, Reflexion, ReWOO:** MIT reference code.
@@ -91,5 +94,6 @@ The main claims rest on RQ1, RQ2 and RQ6 (H1–H4, H9). Everything else keeps it
 2. **The planner-size change (§4)**: the planner backbone is chosen by E18 at G3 instead of being fixed at 8B.
 3. **The revised compute estimate (§5)** and the cut order.
 4. **Optional frontier-API run** (GPT/Claude/Gemini as backbone on 200–300 alerts, to test whether model size is the bottleneck). It breaks "$0, all local", so it is stretch only, decided at G4. Is this acceptable in principle?
+5. **Using IBM snapml** for the dataset authors' graph features. It installs free from PyPI, but its licence is IBM's proprietary ILAN: no redistribution, and an "authorised use" that a free download leaves undefined. We would use it as a library only, never bundled into our code, and keep a path that doesn't need it. If you say no, we reimplement the features ourselves (30–50 h).
 
-We will not start building until you sign off (G0).
+**Where we are:** data preparation, the baselines and the alert intake are already built, so that the G1 checks are ready. The test split is locked in code and has not been read. Everything else waits for your sign-off (G0).
