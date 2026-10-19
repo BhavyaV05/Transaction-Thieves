@@ -1,0 +1,43 @@
+# Serving profiles for scripts/serve_llm.py (T3, tracks.md 5.3, docs/hardware.md section 5).
+# Rule: every serving machine uses the SAME vLLM version, checkpoint revision and server flags. Only timing differs.
+# Revisions are the Hugging Face commit hashes checked on 2026-10-19 (docs/t3_week0.md section 2).
+
+vllm_version: 0.31.0                       # pinned; 0.32.0 (2026-10-18) is too new to pin yet
+docker_image: vllm/vllm-openai:v0.31.0     # ~10 GB compressed; pull only after moving Docker's disk image off C: (recipe)
+
+# Bind address. Loopback by default. To share over the tailnet use `tailscale serve` (recipe) or set this to the
+# machine's Tailscale 100.x address. serve_llm.py refuses wildcard and public addresses.
+host: 127.0.0.1
+port: 8000
+
+# Hugging Face cache on the host. On Akshat's PC set FTM_HF_HOME=E:\hf_cache (keep weights off C:).
+hf_home: ${oc.env:FTM_HF_HOME,${oc.env:HF_HOME,'~/.cache/huggingface'}}
+
+# Flags shared by every profile (parity across machines).
+common:
+  seed: 0
+  generation_config: vllm                  # ignore the model's own default sampling; the client sends temperature
+  enable_prefix_caching: true
+
+models:
+  qwen3-8b:                                # planner + Group D backbone until E18 picks another (plan.md 6.11)
+    repo: Qwen/Qwen3-8B-AWQ
+    revision: 4da05a8edb55c6046cce958586c33b61da07bb79
+    licence: apache-2.0
+    max_model_len: 8192                    # >= Limits.max_tokens (6000 prompt) + room for the answer
+    gpu_memory_utilization: 0.90
+    reasoning_parser: qwen3
+  qwen3-4b:                                # System 1 fast model base (C13) and harness smoke tests
+    repo: Qwen/Qwen3-4B-AWQ
+    revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.60
+    reasoning_parser: qwen3
+  gpt-oss-20b:                             # teacher candidate; takes the whole 16 GB GPU (block GPU_CALENDAR.md)
+    repo: openai/gpt-oss-20b
+    revision: 6cee5e81ee83917806bbde320786a8fb61efebee
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.92
+    reasoning_parser: null                 # vLLM handles the harmony format natively

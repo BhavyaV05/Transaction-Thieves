@@ -4,10 +4,10 @@ Checklist generated from tracks.md section 5.8. Read the whole track section fir
 Tick items off in your PRs and post one line per week in STATUS.md. Weeks count from TA approval (G0).
 
 ## Week 0
-- [ ] Serving smoke test (8B, 4B, gpt-oss-20b)
-- [ ] recipe
-- [ ] conversion benchmark
-- [ ] report specs
+- [ ] Serving smoke test (8B, 4B, gpt-oss-20b): scripts and pinned profiles ready (`scripts/serve_llm.py`, `configs/llm/serving.yaml`); **GPU run pending** (move Docker's disk to E: first; steps in `docs/t3_week0.md` §4)
+- [ ] recipe: written (`docs/hardware.md` §5); tick after the smoke test confirms it
+- [ ] conversion benchmark: script published (`scripts/bench_llm.py`, `docs/hardware.md` §4); reference run pending the smoke test
+- [x] report specs (`docs/hardware.md` §2, `docs/t3_week0.md` §1) and model-card check (`docs/t3_week0.md` §2)
 
 ## Week 1
 - [ ] Planner prompt + JSON schema against DSL grammar v0
