@@ -131,8 +131,10 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
     parts = []
     t0 = time.time()
     if mode == "see_everything":
-        frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS).collect()
-        res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads, neg_frac=neg_frac)
+        frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS).sort(["timestamp", "tx_id"]).collect()
+        codes = g.category_codes(frame)
+        frame = g.encode_categoricals(frame, codes)  # memory: strings -> Int16
+        res = g.score_graph(frame, codes, cut, seed=SEED, threads=threads, neg_frac=neg_frac, presorted=True)
         meta["graphs"]["all"] = res["meta"] | {"importances": res.get("importances")}
         parts.append(g.p0_table(res, mode, None, cm))
         del frame, res
@@ -186,6 +188,12 @@ def report(ds: str) -> None:
     # sum of squared errors weighted pooled Brier is the number above; the macro mean over banks is below
     pooled["bss_ob"] = 1 - pooled["brier_ob"] / pooled["brier_const"]
     pooled["bss_se"] = 1 - pooled["brier_se"] / pooled["brier_const"]
+    # paired bootstrap over eval rows (not over banks/days: the CI is about row noise only)
+    rng = np.random.default_rng(SEED)
+    se_, ob_ = (ev["p0_se"].to_numpy() - y) ** 2, (ev["p0"].to_numpy() - y) ** 2
+    diffs = [(ob_[i] - se_[i]).mean() for i in (rng.integers(0, len(y), len(y)) for _ in range(300))]
+    pooled["brier_gap_ob_minus_se"] = float((ob_ - se_).mean())
+    pooled["brier_gap_ci95"] = [float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))]
     pooled["macro_brier_ob"] = float(tab["brier_ob"].mean())
     pooled["macro_brier_se"] = float(tab["brier_se"].mean())
     out = Path("data/runs")

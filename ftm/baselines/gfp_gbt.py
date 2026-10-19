@@ -78,12 +78,13 @@ def time_invariant_columns() -> np.ndarray:
     return np.flatnonzero(np.all(np.isclose(a, b, rtol=1e-6, atol=1e-6), axis=0))
 
 
-def graph_features(tx_id, ts, src, dst, amount, grp, batch: int = BATCH, threads: int = 4):
+def graph_features(tx_id, ts, src, dst, amount, grp, batch: int = BATCH, threads: int = 4, out=None):
     """GFP features for time-sorted edges; `grp` (non-decreasing ints, e.g. 0 train, 1 val) splits batches."""
     g = _gfp(threads)
     edges = np.column_stack([tx_id, src, dst, ts, amount]).astype("f8")
     keep = time_invariant_columns()
-    out = np.empty((len(edges), len(keep)), dtype="f4")
+    if out is None:
+        out = np.empty((len(edges), len(keep)), dtype="f4")
     bounds = np.flatnonzero(np.diff(grp)) + 1
     for lo, hi in zip(np.r_[0, bounds], np.r_[bounds, len(edges)], strict=True):
         for s in range(lo, hi, batch):
@@ -98,32 +99,47 @@ def category_codes(frame: pl.DataFrame) -> dict[str, dict[str, int]]:
     return {c: {v: i for i, v in enumerate(sorted(frame[c].unique().to_list()))} for c in cols}
 
 
-def build_features(frame: pl.DataFrame, codes: dict, threads: int = 4):
-    """(X float32, names, sorted frame) for train/val rows; GFP is run over the whole frame in time order.
+CATS = ("receiving_currency", "payment_currency", "payment_format")
+
+
+def encode_categoricals(frame: pl.DataFrame, codes: dict) -> pl.DataFrame:
+    """Replace the three string columns by Int16 codes (saves memory on HI-Medium); build_features accepts both."""
+    return frame.with_columns(
+        [pl.col(c).replace_strict(codes[c], default=-1, return_dtype=pl.Int16) for c in CATS if frame[c].dtype == pl.Utf8]
+    )
+
+
+def build_features(frame: pl.DataFrame, codes: dict, threads: int = 4, presorted: bool = False):
+    """(X float32, names, frame sorted by (timestamp, tx_id)) for train/val rows; GFP runs over the whole frame.
 
     `frame` is one graph: the full train+val data (see-everything) or one bank view. Its rows must be
-    train/val only; a test row raises unless FTM_FINAL_RUN=1.
+    train/val only; a test row raises unless FTM_FINAL_RUN=1. `presorted` skips the sort (caller sorted).
     """
     if (frame["split"] == "test").any():
         guards.require_final_run("test rows in build_features")
-    f = frame.sort(["timestamp", "tx_id"])
+    f = frame if presorted else frame.sort(["timestamp", "tx_id"])
+    if presorted and not f["timestamp"].is_sorted():
+        raise ValueError("presorted=True but timestamps are not sorted")
     # "paper_test" is only used by the --repro run on the published split of the raw file
     order = {"train": 0, "val": 1, "test": 2, "paper_test": 2}
     grp = f["split"].replace_strict(order, return_dtype=pl.Int8).to_numpy()
     if (np.diff(grp) < 0).any():
         raise ValueError("a later split starts before an earlier one ends; cannot batch without leakage")
+    keep = g_cols = time_invariant_columns()
+    X = np.empty((f.height, len(BASIC) + len(g_cols)), dtype="f4")
+    X[:, 0] = f["amount_received"].to_numpy()
+    X[:, 1] = f["amount_paid"].to_numpy()
+    for j, c in enumerate(CATS):
+        col = f[c] if f[c].dtype != pl.Utf8 else f[c].replace_strict(codes[c], default=-1, return_dtype=pl.Int16)
+        X[:, 2 + j] = col.to_numpy()
+    X[:, 5] = (f["from_bank"] == f["to_bank"]).cast(pl.Int8).to_numpy()
+    X[:, 6] = f["timestamp"].dt.hour().to_numpy()
     t0 = f["timestamp"].min()
     ts = (f["timestamp"] - t0).dt.total_seconds().to_numpy()
-    gf = graph_features(f["tx_id"].to_numpy(), ts, f["src_id"].to_numpy(), f["dst_id"].to_numpy(),
-                        f["amount_received"].to_numpy(), grp, threads=threads)  # fmt: skip
-    basic = np.column_stack([
-        f["amount_received"].to_numpy(), f["amount_paid"].to_numpy(),
-        *[f[c].replace_strict(codes[c], default=-1, return_dtype=pl.Int16).to_numpy()
-          for c in ("receiving_currency", "payment_currency", "payment_format")],
-        (f["from_bank"] == f["to_bank"]).cast(pl.Int8).to_numpy(), f["timestamp"].dt.hour().to_numpy(),
-    ]).astype("f4")  # fmt: skip
-    names = BASIC + [f"gfp_{i}" for i in time_invariant_columns()]
-    return np.hstack([basic, gf]), names, f
+    graph_features(f["tx_id"].to_numpy(), ts, f["src_id"].to_numpy(), f["dst_id"].to_numpy(),
+                   f["amount_received"].to_numpy(), grp, threads=threads, out=X[:, len(BASIC):])  # fmt: skip
+    names = BASIC + [f"gfp_{i}" for i in keep]
+    return X, names, f
 
 
 def fit_lgbm(Xtr, ytr, Xva, yva, grid=LGBM_GRID, seed: int = 0, threads: int = 4):
@@ -146,6 +162,11 @@ def fit_lgbm(Xtr, ytr, Xva, yva, grid=LGBM_GRID, seed: int = 0, threads: int = 4
         if best is None or ap > best[0]:
             best = (ap, m, p)
     return best[1], best[2], log
+
+
+def predict_chunked(model, X, chunk: int = 1_000_000):
+    """predict_proba[:, 1] in row chunks (the wrapper may copy the chunk to float64)."""
+    return np.concatenate([model.predict_proba(X[i : i + chunk])[:, 1] for i in range(0, len(X), chunk)])
 
 
 def fit_calibrator(raw, y, min_pos: int = 30):
@@ -204,7 +225,7 @@ def val_parts(timestamps: pl.Series, first, last) -> np.ndarray:
 
 
 def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 0, threads: int = 4,
-                grid=LGBM_GRID, n_folds: int = 3, extra_cols=None, neg_frac: float = 1.0) -> dict:  # fmt: skip
+                grid=LGBM_GRID, n_folds: int = 3, extra_cols=None, neg_frac: float = 1.0, presorted: bool = False) -> dict:  # fmt: skip
     """Features -> LightGBM on train -> calibration on val 'fit' -> scores for every train/val row.
 
     Train rows get out-of-fold raw scores (`n_folds` contiguous time blocks, each scored by a model fit
@@ -214,7 +235,7 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
     clean train rows (HI-Medium see-everything); the isotonic step on val removes the resulting score bias.
     """
     t0 = time.time()
-    X, names, f = build_features(frame, codes, threads=threads)
+    X, names, f = build_features(frame, codes, threads=threads, presorted=presorted)
     if extra_cols is not None:
         X = np.hstack([X, np.column_stack([f[c].to_numpy() for c in extra_cols]).astype("f4")])
         names = names + list(extra_cols)
@@ -237,7 +258,7 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
     meta["n_train_fit"] = int(len(use))
     model, params, log = fit_lgbm(X[use], y[use], X[fit], y[fit], grid=grid, seed=seed, threads=threads)
     v0 = int(np.flatnonzero(va)[0])
-    raw[v0:] = model.predict_proba(X[v0:])[:, 1]  # val rows are the contiguous tail of the time-sorted frame
+    raw[v0:] = predict_chunked(model, X[v0:])  # val rows are the contiguous tail of the time-sorted frame
     # out-of-fold train scores: contiguous time blocks of the (time-sorted) train rows
     blocks = np.array_split(idx, n_folds)
     import lightgbm as lgb
@@ -245,13 +266,13 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
     for b in blocks:
         rest = np.setdiff1d(use, b, assume_unique=True)
         if y[rest].sum() < 5:
-            raw[b] = model.predict_proba(X[b[0] : b[-1] + 1])[:, 1]  # ponytail: in-sample fallback for tiny banks
+            raw[b] = predict_chunked(model, X[b[0] : b[-1] + 1])  # ponytail: in-sample fallback for tiny banks
             continue
         m = lgb.LGBMClassifier(n_estimators=max(model.best_iteration_ or 50, 20), random_state=seed,
                                n_jobs=threads, verbose=-1, colsample_bytree=0.8, subsample=0.8,
                                subsample_freq=1, **params)  # fmt: skip
         m.fit(X[rest], y[rest])
-        raw[b] = m.predict_proba(X[b[0] : b[-1] + 1])[:, 1]
+        raw[b] = predict_chunked(m, X[b[0] : b[-1] + 1])
     cal, cal_name = fit_calibrator(raw[fit], y[fit])
     p0 = np.full(len(f), np.nan)
     ok = ~np.isnan(raw)
