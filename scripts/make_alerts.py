@@ -81,7 +81,7 @@ def main() -> None:
         ("launder_and_clean", hl & hc), ("launder_only", hl & ~hc), ("clean_only", ~hl & hc), ("empty", ~hl & ~hc))}  # fmt: skip
     # time-weighting ablation: same target, different half-lives; achieved miss on the untouched eval part
     tw = []
-    for hl in (None, cfg["half_life_days"], 0.25, 0.1):
+    for hl in dict.fromkeys((None, cfg["half_life_days"], 0.25, 0.1)):
         c2 = {**cfg, "half_life_days": hl}
         t2 = thresholds(cal, a_l, a_c, c2)
         m2 = cf.achieved_miss_rates(ev["p0"].to_numpy(), ev["label"].cast(pl.Int8).to_numpy(), t2["t_launder"], t2["t_clean"])
@@ -107,7 +107,7 @@ def main() -> None:
     # alpha sweep: alerts per val day on cal+eval, and the projection to test (val rates only)
     sweep = []
     ce = pl.concat([cal, ev])
-    for al_ in (0.05, 0.2, 0.4, 0.6, 0.7, 0.8, 0.85, 0.9, 0.93, 0.95, 0.97, 0.98, 0.99):
+    for al_ in sorted({0.05, 0.2, 0.4, 0.5, 0.55, 0.6, 0.62, 0.64, 0.66, 0.7, 0.8, 0.9, 0.95, a_l}):
         t = thresholds(cal, al_, a_c, cfg)
         s = summarize(ce, t["t_alert"], n_val_days * 2 * day_frac)
         tr = summarize(p0.filter(pl.col("split") == "train"), t["t_alert"], 1.0)

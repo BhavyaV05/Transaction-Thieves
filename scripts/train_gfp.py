@@ -157,6 +157,34 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
         combine(ds)
 
 
+def recalibrate(ds: str) -> None:
+    """Refit the calibrator of every (mode, bank) from the stored raw scores (val 'fit' part) and rewrite p0.
+
+    Same rule as score_graph (isotonic only with enough positives and signal, else Platt); no model is refit.
+    """
+    d = Path("data/scores") / ds
+    for mode in ("one_bank", "see_everything"):
+        f = d / f"p0_{mode}.parquet"
+        if not f.exists():
+            continue
+        df = pl.read_parquet(f)
+        outs = []
+        for (bank,), grp in df.group_by(["bank"], maintain_order=True):
+            ok = grp.filter(pl.col("score_raw").is_not_null() & pl.col("score_raw").is_not_nan())
+            fit = ok.filter(pl.col("val_part") == "fit")
+            if fit.height == 0 or fit["label"].sum() == 0:
+                outs.append(grp)
+                continue
+            trn = ok.filter(pl.col("split") == "train")
+            sig = g.has_signal(trn["label"].cast(pl.Int8).to_numpy(), trn["score_raw"].to_numpy()) if trn.height else False
+            cal, name = g.fit_calibrator(fit["score_raw"].to_numpy(), fit["label"].cast(pl.Int8).to_numpy(), has_signal=sig)
+            p0 = np.where(grp["score_raw"].is_null() | grp["score_raw"].is_nan(), np.nan, cal(grp["score_raw"].fill_null(0.0).fill_nan(0.0).to_numpy()))
+            outs.append(grp.with_columns(pl.Series("p0", p0).fill_nan(None)))
+            print(mode, bank, name, flush=True)
+        pl.concat(outs).write_parquet(f)
+    combine(ds)
+
+
 def combine(ds: str) -> None:
     """p0_one_bank.parquet = untagged + tagged parts (parallel runs over bank subsets); p0.parquet = both modes."""
     d = Path("data/scores") / ds
@@ -240,10 +268,13 @@ def main() -> None:
     ap.add_argument("--tag", default="", help="write p0_<mode>__<tag>.parquet (parallel runs); merge with --combine")
     ap.add_argument("--exclude", type=int, nargs="*", default=[], help="banks to skip")
     ap.add_argument("--combine", action="store_true")
+    ap.add_argument("--recalibrate", action="store_true", help="refit calibrators from stored raw scores")
     ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
     a = ap.parse_args()
     if a.repro:
         repro(a.csv, a.out, a.threads)
+    elif a.recalibrate and a.data:
+        recalibrate(a.data)
     elif a.combine and a.data:
         combine(a.data)
     elif a.report and a.data:

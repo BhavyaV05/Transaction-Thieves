@@ -25,6 +25,7 @@ import polars as pl
 from ftm import guards
 
 BATCH = 128
+SIGNAL_LIFT = 3.0  # out-of-fold train AP / prevalence needed before isotonic calibration is trusted
 HOUR, DAY = 3600, 86400
 # Settings of the GFP paper (Blanusa et al., KDD 2024, arXiv:2402.08593, section 3): one-day window
 # for the vertex statistics and for fan, degree, temporal cycle and simple cycle features, six hours
@@ -164,22 +165,32 @@ def fit_lgbm(Xtr, ytr, Xva, yva, grid=LGBM_GRID, seed: int = 0, threads: int = 4
     return best[1], best[2], log
 
 
+def has_signal(y_train, raw_train) -> bool:
+    """Is the out-of-fold train AP at least SIGNAL_LIFT x the train prevalence?"""
+    from sklearn.metrics import average_precision_score
+
+    y = np.asarray(y_train)
+    return bool(y.sum() > 0 and average_precision_score(y, raw_train) >= SIGNAL_LIFT * y.mean())
+
+
 def predict_chunked(model, X, chunk: int = 1_000_000):
     """predict_proba[:, 1] in row chunks (the wrapper may copy the chunk to float64)."""
     return np.concatenate([model.predict_proba(X[i : i + chunk])[:, 1] for i in range(0, len(X), chunk)])
 
 
-def fit_calibrator(raw, y, min_pos: int = 30):
-    """Isotonic regression raw -> P(laundering); Platt scaling when there are fewer than `min_pos` positives.
+def fit_calibrator(raw, y, min_pos: int = 30, has_signal: bool = True):
+    """Isotonic regression raw -> P(laundering); Platt scaling when isotonic would be unreliable.
 
-    Returns (callable on raw scores, name). Isotonic is the plan's choice; with a handful of positives
-    it is a step function with large plateaus, so the sparse banks fall back to a 2-parameter logistic.
+    Returns (callable on raw scores, name). Isotonic is the plan's choice. It is used only when there
+    are at least `min_pos` positives AND the score carries signal (`has_signal`: the out-of-fold train AP is
+    at least `SIGNAL_LIFT` times the train prevalence, a check that early stopping on val cannot inflate): a step function fit on a handful of positives, or on a score without signal
+    (HI-Medium bank 70), puts p0 = 1 on the top plateau and creates ~170k false alerts. Otherwise a
+    2-parameter logistic on the logit of the score is used (about constant when the score has no signal).
     """
     from sklearn.isotonic import IsotonicRegression
     from sklearn.linear_model import LogisticRegression
-
     raw, y = np.asarray(raw, "f8"), np.asarray(y)
-    if y.sum() >= min_pos:
+    if y.sum() >= min_pos and has_signal:
         iso = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip").fit(raw, y)
         return iso.predict, "isotonic"
     z = np.log(np.clip(raw, 1e-9, 1 - 1e-9) / (1 - np.clip(raw, 1e-9, 1 - 1e-9)))[:, None]
@@ -273,7 +284,7 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
                                subsample_freq=1, **params)  # fmt: skip
         m.fit(X[rest], y[rest])
         raw[b] = predict_chunked(m, X[b[0] : b[-1] + 1])
-    cal, cal_name = fit_calibrator(raw[fit], y[fit])
+    cal, cal_name = fit_calibrator(raw[fit], y[fit], has_signal=has_signal(y[tr], raw[tr]))
     p0 = np.full(len(f), np.nan)
     ok = ~np.isnan(raw)
     p0[ok] = cal(raw[ok])
