@@ -115,7 +115,7 @@ COLS = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amoun
         "receiving_currency", "payment_currency", "payment_format", "is_laundering", "split"]  # fmt: skip
 
 
-def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_frac: float = 1.0) -> None:
+def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_frac: float = 1.0, tag: str = "", exclude=()) -> None:
     from ftm.data import io
 
     cfg = io.load_config(ds)
@@ -139,7 +139,7 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
         parts.append(g.p0_table(res, mode, None, cm))
         del frame, res
     else:
-        todo = banks or io.read_banks(cfg["views_dir"])["bank"].to_list()
+        todo = [b for b in (banks or io.read_banks(cfg["views_dir"])["bank"].to_list()) if b not in exclude]
         for b in todo:
             frame = io.scan_view(cfg["views_dir"], b, split=["train", "val"], columns=COLS).collect()
             frame = frame.with_columns((pl.col("from_bank") == b).cast(pl.Int8).alias("out"))  # bank knows its direction
@@ -148,13 +148,29 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
             parts.append(g.p0_table(res, mode, b, cm))
             print(f"bank {b}: {res['meta'].get('status')} {time.time() - t0:.0f}s", flush=True)
     df = pl.concat(parts)
-    df.write_parquet(out_dir / f"p0_{mode}.parquet")
+    sfx = f"__{tag}" if tag else ""
+    df.write_parquet(out_dir / f"p0_{mode}{sfx}.parquet")
     meta["seconds"] = time.time() - t0
-    Path(f"data/runs/p0_{ds}_{mode}.json").write_text(json.dumps(meta, indent=1, default=str))
-    other = out_dir / f"p0_{'one_bank' if mode == 'see_everything' else 'see_everything'}.parquet"
-    if other.exists():
-        pl.concat([pl.read_parquet(out_dir / f"p0_{m}.parquet") for m in ("one_bank", "see_everything")]).write_parquet(out_dir / "p0.parquet")
+    Path(f"data/runs/p0_{ds}_{mode}{sfx}.json").write_text(json.dumps(meta, indent=1, default=str))
     print("done", ds, mode, f"{time.time() - t0:.0f}s", flush=True)
+    if not tag:
+        combine(ds)
+
+
+def combine(ds: str) -> None:
+    """p0_one_bank.parquet = untagged + tagged parts (parallel runs over bank subsets); p0.parquet = both modes."""
+    d = Path("data/scores") / ds
+    for mode in ("one_bank", "see_everything"):
+        parts = sorted(d.glob(f"p0_{mode}__*.parquet"))
+        if parts:
+            base = [d / f"p0_{mode}.parquet"] if (d / f"p0_{mode}.parquet").exists() else []
+            pl.concat([pl.read_parquet(x) for x in base + parts]).write_parquet(d / f"p0_{mode}.parquet")
+            for x in parts:
+                x.unlink()  # merged; the per-run json files in data/runs keep the metadata
+    both = [d / f"p0_{m}.parquet" for m in ("one_bank", "see_everything")]
+    if all(x.exists() for x in both):
+        pl.concat([pl.read_parquet(x) for x in both]).write_parquet(d / "p0.parquet")
+        print("combined", ds, flush=True)
 
 
 def report(ds: str) -> None:
@@ -221,14 +237,19 @@ def main() -> None:
     ap.add_argument("--mode", choices=["one_bank", "see_everything"], default=None)
     ap.add_argument("--report", action="store_true", help="one-bank vs see-everything table for --data")
     ap.add_argument("--neg-frac", type=float, default=1.0, help="share of clean train rows used for fitting")
+    ap.add_argument("--tag", default="", help="write p0_<mode>__<tag>.parquet (parallel runs); merge with --combine")
+    ap.add_argument("--exclude", type=int, nargs="*", default=[], help="banks to skip")
+    ap.add_argument("--combine", action="store_true")
     ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
     a = ap.parse_args()
     if a.repro:
         repro(a.csv, a.out, a.threads)
+    elif a.combine and a.data:
+        combine(a.data)
     elif a.report and a.data:
         report(a.data)
     elif a.data and a.mode:
-        run_dataset(a.data, a.mode, a.threads, a.banks, a.neg_frac)
+        run_dataset(a.data, a.mode, a.threads, a.banks, a.neg_frac, a.tag, a.exclude)
     else:
         raise SystemExit("give --repro, or --data hi_small --mode one_bank|see_everything")
 

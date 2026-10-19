@@ -75,6 +75,10 @@ def main() -> None:
     miss = cf.achieved_miss_rates(ev["p0"].to_numpy(), ev["label"].cast(pl.Int8).to_numpy(), th["t_launder"], th["t_clean"])
     cleared = ev.filter(pl.col("p0") < th["t_alert"])
     out["thresholds"] = th
+    hl, hc = cf.prediction_sets(ev["p0"].to_numpy(), th["t_launder"], th["t_clean"])
+    yy = ev["label"].cast(pl.Int8).to_numpy()
+    out["set_types_eval"] = {name: {"rows": int(m.sum()), "laundering": int(yy[m].sum())} for name, m in (
+        ("launder_and_clean", hl & hc), ("launder_only", hl & ~hc), ("clean_only", ~hl & hc), ("empty", ~hl & ~hc))}  # fmt: skip
     # time-weighting ablation: same target, different half-lives; achieved miss on the untouched eval part
     tw = []
     for hl in (None, cfg["half_life_days"], 0.25, 0.1):
@@ -129,15 +133,18 @@ def main() -> None:
             (pl.lit(split[0].upper()) + pl.int_range(pl.len()).cast(pl.Utf8).str.zfill(6)).alias("alert_id"))  # fmt: skip
         d = al.add_drop_flags(d, att, {split: starts[split]}, window_hours=cfg["evidence_window_hours"])
         d.select(cols).write_parquet(adir / f"{split}.parquet")
+        # attempt-level recall: attempts with >= 1 laundering tx in this split that have >= 1 alerted tx (any bank view)
+        att_all = (pat.join(p0.filter(pl.col("split") == split).select("tx_id").unique(), on="tx_id")["attempt_id"].n_unique())
+        att_hit = d.filter(pl.col("attempt_id").is_not_null())["attempt_id"].n_unique()
         counts[split] = {"alerts": d.height, "positives": int(d["label"].sum()),
                          "keep_spans_rule_only": int((~d["drop_spans_split"]).sum()),
                          "keep_spans_rule_pos": int(d.filter(~pl.col("drop_spans_split"))["label"].sum()),
                          "keep_both_rules": int(d["keep"].sum()), "keep_both_rules_pos": int(d.filter(pl.col("keep"))["label"].sum()),
-                         "unique_tx": d["tx_id"].n_unique()}  # fmt: skip
+                         "unique_tx": d["tx_id"].n_unique(), "attempts_in_split_views": att_all, "attempts_with_alert": att_hit}  # fmt: skip
     out["alert_sets"] = counts
     Path("data/runs").mkdir(parents=True, exist_ok=True)
     Path(f"data/runs/alerts_{a.data}.json").write_text(json.dumps(out, indent=1, default=str))
-    print(json.dumps({k: out[k] for k in ("thresholds", "achieved_vs_target", "eval_conformal", "eval_fixed_window", "alert_sets")}, indent=1, default=str))
+    print(json.dumps({k: out[k] for k in ("thresholds", "set_types_eval", "achieved_vs_target", "eval_conformal", "eval_fixed_window", "alert_sets")}, indent=1, default=str))
     for s in sweep:
         print({k: (round(v, 4) if isinstance(v, float) else v) for k, v in s.items()})
 
