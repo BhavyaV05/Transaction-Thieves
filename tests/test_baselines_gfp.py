@@ -112,3 +112,25 @@ def test_read_p0_test_split_is_locked(monkeypatch):
     monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
     with pytest.raises(guards.TestSplitLocked):
         g.read_p0("hi_small", split="test")
+
+
+@pytest.mark.slow
+def test_real_small_bank_p0_has_no_test_rows():
+    """HI-Small bank 1588 end to end (needs data/ and snapml; ~5 s). Train/val rows only, p0 in [0, 1]."""
+    from pathlib import Path
+
+    pytest.importorskip("snapml")
+    pytest.importorskip("lightgbm")
+    if not Path("data/views/hi_small/bank=1588.parquet").exists():
+        pytest.skip("no data/")
+    from ftm.data import io
+
+    cfg = io.load_config("hi_small")
+    cols = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amount_received", "amount_paid",
+            "receiving_currency", "payment_currency", "payment_format", "is_laundering", "split"]  # fmt: skip
+    fr = io.scan_view(cfg["views_dir"], 1588, split=["train", "val"], columns=cols).collect()
+    v = io.scan_transactions(cfg["parquet_dir"], split="val", columns=["timestamp"]).collect()["timestamp"]
+    res = g.score_graph(fr, g.category_codes(fr), (v.min(), v.max()), grid=g.LGBM_GRID[:1], threads=2)
+    t = g.p0_table(res, "one_bank", 1588, "test")
+    assert set(t["split"].unique()) == {"train", "val"} and t.height == fr.height
+    assert t["p0"].is_between(0, 1).all()

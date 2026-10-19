@@ -75,7 +75,24 @@ HI_MEDIUM_SECTION
 
 ## Multi-GNN reproduction (M2)
 
-MULTI_GNN_SECTION
+`scripts/train_gnn.py --repro` (launcher in `multi_gnn.py`) runs IBM's Multi-GNN, Apache-2.0, kept **outside the repo** in `~/Documents/t1_external/Multi-GNN` at commit `252b0252afca109d1d216c411c59ff70753b25fc`. **Reproduction only**: it uses the code's own 60/20/20 split by transaction index (overlaps our test days), logs test F1 every epoch, writes nothing to `data/scores`/`data/alerts`, and feeds nothing downstream.
+
+- Data: `format_kaggle_files.py` (needs `datatable`) on `HI-Small_Trans.csv` -> `data/multignn/Small_HI/formatted_transactions.csv`.
+- Environment: python 3.12, torch 2.5.1+cu121, PyG 2.7. Extra installs: `torch_sparse` 0.6.18 and `pyg_lib` 0.4.0 (wheels from data.pyg.org for torch 2.5.0+cu121, `--no-deps`; needed by `LinkNeighborLoader`), `datatable`, `wandb` (disabled with `--testing`). `torch_scatter` was already there; torch itself untouched.
+- Patch (`multi_gnn_t1.patch`, 93 lines): (1) `AddEgoIds.__call__` -> `forward` (PyG 2.7's `BaseTransform` is abstract); (2) time budget (`T1_BUDGET_S`) and a per-epoch metrics line (`T1_METRICS`) in `training.py`; (3) local paths in `data_config.json`.
+- Model: Multi-PNA with edge updates, reverse message passing, ego IDs, port numbering (`--model pna --emlps --reverse_mp --ego --ports`), the repo's `model_settings.json` PNA parameters (2 GNN layers, 20 hidden, lr 6.1e-4), seed 1. **Deviations from the paper's runs:** batch size 2048 and neighbour sampling [100, 100] (batch 8192 ran out of memory on the 8 GB GPU), and only **5 of 100 epochs** because of the 2.5 h time box (epochs took 21-26 min on the 3070 Ti laptop with the CPU shared with other jobs), one seed. 8,932 s in total.
+
+| epoch | train F1 | val F1 | test F1 (own split) |
+|---|---|---|---|
+| 1 | 0.1 | 1.9 | 4.8 |
+| 2 | 26.9 | 29.1 | 36.5 |
+| 3 | 40.9 | 47.6 | 57.2 |
+| 4 | 47.2 | 55.8 | 65.4 |
+| **5** | 48.9 | **60.1** | **67.6** |
+| 6 | 49.1 | 56.9 | 65.5 |
+
+Model selection by best val F1 (epoch 5): **test F1 67.64 vs the paper's Multi-PNA+EU 68.16 +- 2.65 on AML Small HI** (Table 2 of arXiv:2306.11586; Multi-GIN+EU is 64.79; Multi-PNA without EU 64.59). Reproduced (inside one paper standard deviation) even though it is a short, single-seed run; the curve was still rising at epoch 5 on val and fell at epoch 6, so longer training or more seeds could move it a point or two either way. Metrics: `data/multignn/pna_metrics.jsonl`, log `data/multignn/pna_train.log` (gitignored). Our-split Multi-GNN (one-bank, see-everything) is not done.
+
 
 ## Files
 
