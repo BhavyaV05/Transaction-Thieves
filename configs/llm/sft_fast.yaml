@@ -1,0 +1,24 @@
+# QLoRA fine-tune of the System 1 fast model (own Qwen3-4B) on the small-decision dataset (T3, tracks.md 5.6).
+# Examples are rendered by ftm.fastmodel.decisions.to_sft_example: the answer is ONE label token.
+task: fast_model
+base_model: Qwen/Qwen3-4B
+revision: 1cfa9a7208912126459214e8b04321603b3df60c
+load_in_4bit: true
+max_seq_length: 2048
+enable_thinking: false
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+train:
+  epochs: 1
+  learning_rate: 2.0e-4
+  per_device_batch_size: 8
+  grad_accum: 4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  optim: adamw_8bit
+  responses_only: true
+seeds: [0, 1, 2]
+output_dir: models/fast_4b
