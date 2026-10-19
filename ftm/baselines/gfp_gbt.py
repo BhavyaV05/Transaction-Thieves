@@ -204,13 +204,14 @@ def val_parts(timestamps: pl.Series, first, last) -> np.ndarray:
 
 
 def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 0, threads: int = 4,
-                grid=LGBM_GRID, n_folds: int = 3, extra_cols=None) -> dict:  # fmt: skip
+                grid=LGBM_GRID, n_folds: int = 3, extra_cols=None, neg_frac: float = 1.0) -> dict:  # fmt: skip
     """Features -> LightGBM on train -> calibration on val 'fit' -> scores for every train/val row.
 
     Train rows get out-of-fold raw scores (`n_folds` contiguous time blocks, each scored by a model fit
     on the other blocks with the chosen hyper-parameters), val rows the model fit on all of train. The
     same calibrator (fit on val 'fit' only) maps both to p0. Returns arrays aligned with `frame` sorted
-    by (timestamp, tx_id) plus run metadata.
+    by (timestamp, tx_id) plus run metadata. `neg_frac` < 1 trains on all laundering rows and that share of
+    clean train rows (HI-Medium see-everything); the isotonic step on val removes the resulting score bias.
     """
     t0 = time.time()
     X, names, f = build_features(frame, codes, threads=threads)
@@ -231,23 +232,26 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
         meta["status"] = "skipped: too few positives"
         return {"frame": f, "raw": raw, "p0": raw.copy(), "part": part, "meta": meta}
     t1 = time.time()
-    model, params, log = fit_lgbm(X[tr], y[tr], X[fit], y[fit], grid=grid, seed=seed, threads=threads)
-    raw[va] = model.predict_proba(X[va])[:, 1]
-    # out-of-fold train scores: contiguous time blocks of the (time-sorted) train rows
     idx = np.flatnonzero(tr)
+    use = idx[(y[idx] == 1) | (np.random.default_rng(seed).random(len(idx)) < neg_frac)] if neg_frac < 1 else idx
+    meta["n_train_fit"] = int(len(use))
+    model, params, log = fit_lgbm(X[use], y[use], X[fit], y[fit], grid=grid, seed=seed, threads=threads)
+    v0 = int(np.flatnonzero(va)[0])
+    raw[v0:] = model.predict_proba(X[v0:])[:, 1]  # val rows are the contiguous tail of the time-sorted frame
+    # out-of-fold train scores: contiguous time blocks of the (time-sorted) train rows
     blocks = np.array_split(idx, n_folds)
     import lightgbm as lgb
 
     for b in blocks:
-        rest = np.setdiff1d(idx, b, assume_unique=True)
+        rest = np.setdiff1d(use, b, assume_unique=True)
         if y[rest].sum() < 5:
-            raw[b] = model.predict_proba(X[b])[:, 1]  # ponytail: in-sample fallback for tiny banks
+            raw[b] = model.predict_proba(X[b[0] : b[-1] + 1])[:, 1]  # ponytail: in-sample fallback for tiny banks
             continue
         m = lgb.LGBMClassifier(n_estimators=max(model.best_iteration_ or 50, 20), random_state=seed,
                                n_jobs=threads, verbose=-1, colsample_bytree=0.8, subsample=0.8,
                                subsample_freq=1, **params)  # fmt: skip
         m.fit(X[rest], y[rest])
-        raw[b] = m.predict_proba(X[b])[:, 1]
+        raw[b] = m.predict_proba(X[b[0] : b[-1] + 1])[:, 1]
     cal, cal_name = fit_calibrator(raw[fit], y[fit])
     p0 = np.full(len(f), np.nan)
     ok = ~np.isnan(raw)

@@ -115,7 +115,7 @@ COLS = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amoun
         "receiving_currency", "payment_currency", "payment_format", "is_laundering", "split"]  # fmt: skip
 
 
-def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None) -> None:
+def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_frac: float = 1.0) -> None:
     from ftm.data import io
 
     cfg = io.load_config(ds)
@@ -132,7 +132,7 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None) -> No
     t0 = time.time()
     if mode == "see_everything":
         frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS).collect()
-        res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads)
+        res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads, neg_frac=neg_frac)
         meta["graphs"]["all"] = res["meta"] | {"importances": res.get("importances")}
         parts.append(g.p0_table(res, mode, None, cm))
         del frame, res
@@ -205,6 +205,7 @@ def main() -> None:
     ap.add_argument("--data", default=None)
     ap.add_argument("--mode", choices=["one_bank", "see_everything"], default=None)
     ap.add_argument("--report", action="store_true", help="one-bank vs see-everything table for --data")
+    ap.add_argument("--neg-frac", type=float, default=1.0, help="share of clean train rows used for fitting")
     ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
     a = ap.parse_args()
     if a.repro:
@@ -212,7 +213,7 @@ def main() -> None:
     elif a.report and a.data:
         report(a.data)
     elif a.data and a.mode:
-        run_dataset(a.data, a.mode, a.threads, a.banks)
+        run_dataset(a.data, a.mode, a.threads, a.banks, a.neg_frac)
     else:
         raise SystemExit("give --repro, or --data hi_small --mode one_bank|see_everything")
 

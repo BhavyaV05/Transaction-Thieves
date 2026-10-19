@@ -87,3 +87,22 @@ def test_score_graph_and_p0_schema():
     assert t["p0"].is_between(0, 1).all() and t["p0"].null_count() == 0
     assert set(t.filter(pl.col("split") == "train")["val_part"].unique().to_list()) == {None}
     assert set(t.filter(pl.col("split") == "val")["val_part"].unique().to_list()) == {"fit", "cal", "eval"}
+
+
+def test_edge_scorer_features_are_past_only():
+    from ftm.retrieval.edge_scorer import FEATURES, edge_features
+
+    f = _frame(n=500).filter(pl.col("split") == "train")
+    feats, codes = edge_features(f)
+    assert feats.columns[0] == "tx_id" and set(FEATURES) <= set(feats.columns)
+    s = f.sort(["timestamp", "tx_id"])
+    # the 1st transaction of any sender has 0 prior sends counted before it: cum_count starts at 1 (itself)
+    first = s.group_by("src_id").first().select("tx_id")["tx_id"]
+    assert (feats.filter(pl.col("tx_id").is_in(first))["src_prior_out"] == 1).all()
+    assert feats["src_prior_in"].min() >= 0 and feats["dst_prior_out"].min() >= 0
+    # appending later rows never changes earlier rows' features
+    feats2, _ = edge_features(s.head(300), codes)
+    ids = feats2["tx_id"]
+    a = feats.filter(pl.col("tx_id").is_in(ids)).sort("tx_id").select(FEATURES)
+    b = feats2.sort("tx_id").select(FEATURES)
+    assert a.equals(b)
