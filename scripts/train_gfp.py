@@ -205,8 +205,13 @@ def report(ds: str) -> None:
     """Per-bank and pooled one-bank vs see-everything table on the val 'eval' part (the gap)."""
     d = Path("data/scores") / ds
     ob = pl.read_parquet(d / "p0_one_bank.parquet")  # time-guard: not transactions
-    se = pl.read_parquet(d / "p0_see_everything.parquet").select("tx_id", pl.col("p0").alias("p0_se"))  # time-guard: not transactions
-    v = ob.filter((pl.col("split") == "val") & pl.col("p0").is_not_null()).join(se, on="tx_id", how="left")
+    have_se = (d / "p0_see_everything.parquet").exists()
+    if have_se:
+        se = pl.read_parquet(d / "p0_see_everything.parquet").select("tx_id", pl.col("p0").alias("p0_se"))  # time-guard: not transactions
+    else:  # one-bank only: the see-everything columns come out as n/a
+        se = ob.select("tx_id", pl.lit(None, dtype=pl.Float64).alias("p0_se")).unique("tx_id")
+    tags = (("ob", "p0"), ("se", "p0_se")) if have_se else (("ob", "p0"),)
+    v = ob.filter((pl.col("split") == "val") & pl.col("p0").is_not_null() & pl.col("p0").is_not_nan()).join(se, on="tx_id", how="left")
     rows = []
     for b in sorted(v["bank"].unique().to_list()):
         vb = v.filter(pl.col("bank") == b)
@@ -215,7 +220,7 @@ def report(ds: str) -> None:
         const = float(fit["label"].cast(pl.Float64).mean())
         allb = ob.filter(pl.col("bank") == b)
         r = {"bank": b, "n_laundering_train_val": int(allb["label"].sum()), "n_eval": len(y), "n_pos": int(y.sum()), "brier_const": float(np.mean((const - y) ** 2))}
-        for tag, col in (("ob", "p0"), ("se", "p0_se")):
+        for tag, col in tags:
             thr = g.metrics(fit["label"].cast(pl.Int8).to_numpy(), fit[col].to_numpy())["thr"]
             m = g.metrics(y, ev[col].to_numpy(), thr)
             r |= {f"brier_{tag}": m["brier"], f"prauc_{tag}": m.get("pr_auc"), f"f1_{tag}": m.get("f1")}
@@ -225,30 +230,32 @@ def report(ds: str) -> None:
     y = ev["label"].cast(pl.Int8).to_numpy()
     const = float(v.filter(pl.col("val_part") == "fit")["label"].cast(pl.Float64).mean())
     pooled = {"n_eval": len(y), "n_pos": int(y.sum()), "brier_const": float(np.mean((const - y) ** 2))}
-    for tag, col in (("ob", "p0"), ("se", "p0_se")):
+    for tag, col in tags:
         fit = v.filter(pl.col("val_part") == "fit")
         thr = g.metrics(fit["label"].cast(pl.Int8).to_numpy(), fit[col].to_numpy())["thr"]
         m = g.metrics(y, ev[col].to_numpy(), thr)
         pooled |= {f"brier_{tag}": m["brier"], f"prauc_{tag}": m["pr_auc"], f"f1_{tag}": m["f1"]}
     # sum of squared errors weighted pooled Brier is the number above; the macro mean over banks is below
     pooled["bss_ob"] = 1 - pooled["brier_ob"] / pooled["brier_const"]
-    pooled["bss_se"] = 1 - pooled["brier_se"] / pooled["brier_const"]
-    # paired bootstrap over eval rows (not over banks/days: the CI is about row noise only)
-    rng = np.random.default_rng(SEED)
-    se_, ob_ = (ev["p0_se"].to_numpy() - y) ** 2, (ev["p0"].to_numpy() - y) ** 2
-    diffs = [(ob_[i] - se_[i]).mean() for i in (rng.integers(0, len(y), len(y)) for _ in range(300))]
-    pooled["brier_gap_ob_minus_se"] = float((ob_ - se_).mean())
-    pooled["brier_gap_ci95"] = [float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))]
+    if have_se:
+        pooled["bss_se"] = 1 - pooled["brier_se"] / pooled["brier_const"]
+    if have_se:  # paired bootstrap over eval rows (not over banks/days: the CI is about row noise only)
+        rng = np.random.default_rng(SEED)
+        se_, ob_ = (ev["p0_se"].to_numpy() - y) ** 2, (ev["p0"].to_numpy() - y) ** 2
+        diffs = [(ob_[i] - se_[i]).mean() for i in (rng.integers(0, len(y), len(y)) for _ in range(300))]
+        pooled["brier_gap_ob_minus_se"] = float((ob_ - se_).mean())
+        pooled["brier_gap_ci95"] = [float(np.quantile(diffs, 0.025)), float(np.quantile(diffs, 0.975))]
     pooled["macro_brier_ob"] = float(tab["brier_ob"].mean())
-    pooled["macro_brier_se"] = float(tab["brier_se"].mean())
+    pooled["macro_brier_se"] = float(tab["brier_se"].mean()) if have_se else None
     out = Path("data/runs")
     tab.write_csv(out / f"gap_{ds}_per_bank.csv")
     (out / f"gap_{ds}_pooled.json").write_text(json.dumps(pooled, indent=1))
     md = ["| bank | laundering (train+val) | eval rows | eval pos | Brier const | Brier one-bank | Brier see-all | PR-AUC one-bank | PR-AUC see-all | F1 one-bank | F1 see-all |",
           "|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
     f = lambda x: "n/a" if x is None or x != x else f"{x:.4f}"  # noqa: E731
+    e = lambda x: "n/a" if x is None or x != x else f"{x * 1e3:.3f}e-3"  # noqa: E731
     for r in tab.iter_rows(named=True):
-        md.append(f"| {r['bank']} | {r['n_laundering_train_val']} | {r['n_eval']} | {r['n_pos']} | {r['brier_const'] * 1e3:.3f}e-3 | {r['brier_ob'] * 1e3:.3f}e-3 | {r['brier_se'] * 1e3:.3f}e-3 | {f(r['prauc_ob'])} | {f(r['prauc_se'])} | {f(r['f1_ob'])} | {f(r['f1_se'])} |")  # fmt: skip
+        md.append(f"| {r['bank']} | {r['n_laundering_train_val']} | {r['n_eval']} | {r['n_pos']} | {e(r['brier_const'])} | {e(r['brier_ob'])} | {e(r.get('brier_se'))} | {f(r['prauc_ob'])} | {f(r.get('prauc_se'))} | {f(r['f1_ob'])} | {f(r.get('f1_se'))} |")  # fmt: skip
     (out / f"gap_{ds}_per_bank.md").write_text("\n".join(md) + "\n")
     with pl.Config(tbl_rows=40, tbl_cols=12, float_precision=5):
         print(tab)

@@ -16,18 +16,18 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] Parquet, splits, pattern parsing, bank views, aliasing, time guard (HI-Small and HI-Medium; docs in ftm/data/README.md). **Hand off to everyone by end of week**
 
 ## Week 2
-- [ ] GFP+GBT per bank and full
-- [ ] Multi-GNN reproduction on HI-Small. **G1**
+- [x] GFP+GBT per bank and full (HI-Small: both modes; HI-Medium: one-bank done, see-everything see `ftm/baselines/README.md`; reproduction F1 62.95/62.51 vs 62.86/63.23)
+- [x] Multi-GNN reproduction on HI-Small. **G1** (Multi-PNA+EU, own split, 5 epochs: test F1 67.64 vs paper 68.16 +- 2.65)
 
 ## Week 3
-- [ ] Conformal intake
+- [x] Conformal intake (Mondrian + time weighting + selective-risk bound reported, not applied; achieved vs target in `ftm/intake/README.md`; exact SCRC of plan ref [38] is a TODO there)
 - [ ] Multi-GNN on our split (one-bank + see-everything)
-- [ ] p₀ and upper-limit predictions to T2/T4. **G2** support
+- [ ] p₀ and upper-limit predictions to T2/T4. **G2** support (p₀ one-bank + see-everything GFP are on disk, schema in `ftm/baselines/README.md`; SOTA GNN upper limits not done)
 
 ## Week 4
-- [ ] Final alert sets
+- [ ] Final alert sets (draft train/val sets built; drop-rule ruling and test projection need the team, see `ftm/intake/README.md`)
 - [ ] freeze 1k subset
-- [ ] start edge scorer training. **G3**
+- [ ] start edge scorer training. **G3** (data prep + tiny MLP baseline in `ftm/retrieval/edge_scorer.py`, val AUC 0.986)
 
 ## Week 5
 - [ ] DP-FedAvg setup

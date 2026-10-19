@@ -53,21 +53,51 @@ Two things that cost F1 before they were fixed, so reviewers know where to look:
 
 ## Our split: one-bank vs see-everything (M3), HI-Small
 
-Splits: train days 1-6, val 7-8 (`configs/data/hi_small.yaml`). LightGBM, 4-point grid (num_leaves 31 or 127 x scale_pos_weight 1 or 8, lr 0.05, min_child_samples 100, lambda 10, early stopping on val `fit` AP, colsample/subsample 0.8), logged in `data/runs/p0_<ds>_<mode>.json`. Calibration is fit on the val `fit` part; all numbers below are on val `eval` (the last quarter of the val time span, 93,240 bank-view rows with 122 laundering rows one-bank; the same rows scored by the whole-graph model for the comparison). **Isotonic is used only where the `fit` part has >= 30 laundering rows (1 of 28 banks: bank 70); the other 27 banks use a two-parameter Platt scaling** because an isotonic step function on a handful of positives is mostly plateaus. Two banks (19, 1674) have fewer than 5 train positives and are skipped (`p0` null).
+Splits: train days 1-6, val 7-8 (`configs/data/hi_small.yaml`). LightGBM, 4-point grid (num_leaves 31 or 127 x scale_pos_weight 1 or 8, lr 0.05, min_child_samples 100, lambda 10, early stopping on val `fit` AP, colsample/subsample 0.8), logged in `data/runs/p0_<ds>_<mode>.json`. Calibration is fit on the val `fit` part; all numbers below are on val `eval` (the last quarter of the val time span, 93,240 bank-view rows with 122 laundering rows one-bank; the same rows scored by the whole-graph model for the comparison). **Isotonic is used only where the `fit` part has >= 30 laundering rows AND the out-of-fold train AP is at least 3x the train prevalence (`SIGNAL_LIFT`); otherwise a two-parameter Platt scaling.** On HI-Small that is Platt for all 28 scored one-bank models (bank 70 had enough positives but no signal) and isotonic for see-everything. An isotonic step function fit on a handful of positives, or on a score with no signal, puts `p0 = 1` on its top plateau: HI-Medium bank 70 did that (170,000 false alerts) before the rule was added. `python scripts/train_gfp.py --data <ds> --recalibrate` refits the calibrators from the stored raw scores without refitting a model. Two banks (19, 1674) have fewer than 5 train positives and are skipped (`p0` null).
 
 **Headline (pooled over the 28 bank views, val eval part):**
 
 | | Brier | Brier skill vs constant | PR-AUC | F1 at the best `fit`-part threshold |
 |---|---|---|---|---|
 | constant (train/val-fit prevalence) | 0.001307 | 0 | | |
-| one-bank (30 views, own edges only) | 0.001167 | 0.107 | 0.201 | 0.283 |
+| one-bank (30 views, own edges only) | 0.001167 | 0.107 | 0.202 | 0.283 |
 | **see-everything** (whole graph) | **0.000906** | **0.307** | **0.419** | **0.474** |
 
 Paired bootstrap over rows of (one-bank Brier - see-everything Brier) = 0.000261, 95% CI [0.000139, 0.000386]: the gap is real and large relative to the headroom (see-everything removes 2.9x the Brier skill of one-bank). **The see-everything model is not barely better than one-bank: the gap, which is the project's denominator, exists on HI-Small.** The caveat is statistical power: 122 laundering rows in the eval part, 0-28 per bank (the per-bank table below is noisy; read the pooled row).
 
 Two things to know: bank 70 (the largest, 28 eval positives) is at base rate under both models (PR-AUC 0.001 vs prevalence 0.001); this is a hub with 450 k transactions and no pattern the GFP features pick up, and it dominates the pooled Brier weight but not the PR-AUC. The macro-average Brier over banks is 0.001178 (one-bank) vs 0.000834 (see-everything). Per-bank table: `data/runs/gap_hi_small_per_bank.md` (copied below).
 
-PER_BANK_HI_SMALL
+| bank | laundering (train+val) | eval rows | eval pos | Brier const | Brier one-bank | Brier see-all | PR-AUC one-bank | PR-AUC see-all | F1 one-bank | F1 see-all |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 59 | 4504 | 3 | 0.666e-3 | 0.569e-3 | 0.628e-3 | 0.3650 | 0.1963 | 0.4000 | 0.0000 |
+| 3 | 16 | 2807 | 0 | 0.000e-3 | 0.011e-3 | 0.147e-3 | n/a | n/a | n/a | n/a |
+| 4 | 26 | 1730 | 2 | 1.155e-3 | 1.184e-3 | 0.640e-3 | 0.0335 | 0.5833 | 0.0690 | 0.8000 |
+| 6 | 8 | 1791 | 0 | 0.000e-3 | 0.000e-3 | 0.229e-3 | n/a | n/a | n/a | n/a |
+| 7 | 18 | 2538 | 2 | 0.788e-3 | 0.787e-3 | 0.394e-3 | 0.2750 | 0.5625 | 0.5000 | 0.6667 |
+| 10 | 69 | 5846 | 7 | 1.196e-3 | 1.150e-3 | 0.469e-3 | 0.2917 | 0.7536 | 0.4000 | 0.4444 |
+| 11 | 56 | 2051 | 6 | 2.918e-3 | 2.846e-3 | 2.265e-3 | 0.3702 | 0.4663 | 0.2500 | 0.2857 |
+| 12 | 109 | 5848 | 11 | 1.878e-3 | 1.762e-3 | 1.155e-3 | 0.1873 | 0.5278 | 0.1111 | 0.5882 |
+| 14 | 15 | 1809 | 0 | 0.001e-3 | 0.136e-3 | 0.006e-3 | n/a | n/a | n/a | n/a |
+| 15 | 43 | 3939 | 4 | 1.015e-3 | 1.014e-3 | 1.113e-3 | 0.0428 | 0.0535 | 0.1053 | 0.0000 |
+| 20 | 67 | 3007 | 10 | 3.318e-3 | 2.081e-3 | 2.410e-3 | 0.5932 | 0.5930 | 0.4615 | 0.5556 |
+| 22 | 45 | 2128 | 5 | 2.344e-3 | 1.717e-3 | 1.897e-3 | 0.5648 | 0.5594 | 0.3333 | 0.5455 |
+| 23 | 41 | 2022 | 7 | 3.454e-3 | 2.824e-3 | 2.239e-3 | 0.4799 | 0.6114 | 0.4000 | 0.6667 |
+| 28 | 23 | 2318 | 2 | 0.862e-3 | 0.742e-3 | 0.063e-3 | 0.4167 | 1.0000 | 0.6667 | 0.6667 |
+| 70 | 523 | 24916 | 28 | 1.123e-3 | 1.123e-3 | 1.123e-3 | 0.0015 | 0.0015 | 0.0000 | 0.0000 |
+| 116 | 32 | 2283 | 2 | 0.875e-3 | 0.937e-3 | 0.860e-3 | 0.0606 | 0.0611 | 0.0000 | 0.0000 |
+| 118 | 21 | 1853 | 0 | 0.001e-3 | 0.001e-3 | 0.179e-3 | n/a | n/a | n/a | n/a |
+| 119 | 86 | 1584 | 10 | 6.276e-3 | 3.038e-3 | 2.118e-3 | 0.7808 | 0.8111 | 0.7826 | 0.8000 |
+| 211 | 48 | 2319 | 1 | 0.432e-3 | 0.979e-3 | 0.009e-3 | 0.0385 | 1.0000 | 0.0000 | 1.0000 |
+| 213 | 26 | 1578 | 0 | 0.001e-3 | 0.043e-3 | 0.005e-3 | n/a | n/a | n/a | n/a |
+| 214 | 22 | 1677 | 1 | 0.596e-3 | 0.636e-3 | 0.572e-3 | 0.0833 | 0.2500 | 0.0000 | 0.0000 |
+| 220 | 29 | 3813 | 4 | 1.048e-3 | 1.064e-3 | 0.775e-3 | 0.0250 | 0.3541 | 0.0000 | 0.2857 |
+| 410 | 40 | 1708 | 5 | 2.920e-3 | 1.992e-3 | 1.004e-3 | 0.7417 | 0.8385 | 0.5000 | 0.7500 |
+| 1292 | 19 | 2032 | 3 | 1.474e-3 | 1.449e-3 | 0.029e-3 | 0.1058 | 1.0000 | 0.0000 | 1.0000 |
+| 1362 | 30 | 1819 | 0 | 0.001e-3 | 0.024e-3 | 0.471e-3 | n/a | n/a | n/a | n/a |
+| 1420 | 31 | 1618 | 1 | 0.618e-3 | 0.617e-3 | 0.023e-3 | 0.0667 | 1.0000 | 0.0000 | 0.1053 |
+| 1588 | 21 | 1438 | 3 | 2.083e-3 | 2.073e-3 | 2.059e-3 | 0.0605 | 0.0699 | 0.0000 | 0.0000 |
+| 1665 | 29 | 2264 | 5 | 2.207e-3 | 2.197e-3 | 0.462e-3 | 0.1365 | 0.8208 | 0.2500 | 0.3333 |
+
 
 ## HI-Medium
 
