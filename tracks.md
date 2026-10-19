@@ -126,7 +126,7 @@ Each owner reviews the other's PRs in their pair. The pairs share the interfaces
 | 3 | DSL grammar v0 | T2 → T3 | Week 1 | Planner prompt and JSON schema are written against it |
 | 4 | Executor + `PartnerBank` + accountant | T2 → T3, T4 | Week 2–3 | Python API in §4 below |
 | 5 | Calibrated one-bank probabilities p₀ per transaction (GFP+GBT and Multi-GNN, one-bank and see-everything) | T1 → T2, T4 | Week 2 (GFP), week 3 (GNN) | Parquet keyed by `tx_id`, with model name and split |
-| 6 | Alert sets: train / val / test; **frozen 1,000-alert external subset** | T1 → all | Draft week 3, final + frozen week 4 | Subset stratified by label × typology × bank, fixed seed |
+| 6 | Alert sets: train / val / test; **1,000-alert external subset rule** | T1 → all | Draft week 3, final week 4; subset rule frozen at G3, IDs drawn at G5 | Subset stratified by home bank × p₀ decile (no labels), seed 0 |
 | 7 | Harness v0 / **v1 (interface frozen)** | T2 → T3, T4 | Week 3 / week 4 | After week 4 an interface change needs agreement of all four owners |
 | 8 | LLM question batches (DSL programs, JSONL, with planner metadata) | T3 → T2 | From week 4, weekly | T2 back-tests them (CPU) and returns the result below |
 | 9 | Back-test table: question, family, ε_cal, LR (clipped), e-value, accepted/rejected | T2 → T3, T4 | Rolling from week 3 | T3 uses it for the distillation filter and the library; T4 for fusion |
@@ -177,7 +177,7 @@ You build the ground everyone stands on: the data pipeline, the one-bank startin
 
 1. **Download and convert.** Get AMLworld HI-Small and HI-Medium from Kaggle (CDLA-Sharing licence): transactions CSV, accounts CSV, `*_Patterns.txt`. Convert to typed Parquet, parse timestamps, assign a stable `tx_id`.
 2. **Pattern file.** Map each laundering transaction to `(attempt_id, typology)`; typologies are fan-in, fan-out, cycle, scatter-gather, gather-scatter, bipartite, stack, random. This gives labels for "which pattern" and "edge belongs to a laundering pattern", which the scorer (C11), small-decision dataset (T2) and per-typology breakdowns (T4) all need.
-3. **Temporal split (HI-Medium).** Days 1–9 train, 10–12 validation, 13–16 test. For HI-Small, check its real date range and split in the same proportions. Drop an alert if its laundering attempt spans a split boundary, or if its 72-hour evidence window starts before the split.
+3. **Temporal split (HI-Medium).** Days 1–9 train, 10–12 validation, 13–16 test (the sparse tail after day 16 stays in test but is reported separately). For HI-Small, check its real date range and split in the same proportions. **Flag, don't drop,** alerts whose laundering attempt spans a split boundary (sensitivity analysis); there is no 72-hour window rule (`docs/t4_decisions_week2.md`).
 4. **Bank views.** Take the 30 largest banks by transaction count. View(b) = transactions where `from_bank == b` or `to_bank == b`. One Parquet per bank.
 5. **Aliasing.** Map account IDs to random aliases (per run seed) for anything an LLM reads. The mapping lives server-side only.
 6. **Time guard.** Every tool query takes `as_of` and filters `timestamp ≤ as_of`. Write the shared helper and a unit test that every tool in `ftm/` uses it.
@@ -211,18 +211,18 @@ Used in **two roles**: (a) an alternative one-bank starting model (does a strong
 - **What:** decides which transactions are "unsure" and become alerts. Only alerts go to the agent.
 - **Build:**
   1. **Class-conditional (Mondrian) conformal prediction** on the one-bank score. Calibrate the non-conformity score separately for laundering and clean, which bounds misses among actual launderers. (Plain conformal can meet its target by calling almost everything clean.)
-  2. An alert passes when the prediction set is {launder, clean}.
+  2. An alert passes when **launder is in the prediction set** (empty-set rows are not alerts and count as intake misses).
   3. **Selective conformal risk control** [38] bounds misses among transactions the model clears on its own.
   4. **Time-weighted calibration for drift** [39]: weight recent calibration days more.
   5. Always log achieved miss rate next to the target.
 - **Done when:** on validation, achieved miss rates are within tolerance of targets, and alert counts project to **2,500–4,000 test alerts with ≥375 positives** (G1). Train ≈20,000 and validation ≥1,000 alerts.
 - **Ablation:** a fixed 0.15–0.85 score window instead of conformal.
-- **Output:** alert sets (hand-off #6), including the frozen **1,000-alert external-comparison subset**, stratified by label × typology × bank, fixed seed, frozen at G3.
+- **Output:** alert sets (hand-off #6). The **1,000-alert external-comparison subset** is stratified by home bank × p₀ decile (no labels), seed 0: the rule is frozen at G3 and the IDs are drawn at G5 by `run_final.py` before any system runs. Add a label-free `strata` option to `alerts.stratified_subset`.
 
 ### 3.7 Group B: federated baselines
 
 - **DP-FedAvg GNN** (core; Flower + Opacus): 30 clients = the 30 bank views, edge-level DP-SGD. Simulate clients sequentially, one on the GPU at a time. Report ε with an explicit caveat: training-time ε is a different unit from our per-question ε. This is why H10 is secondary.
-- **One AML-specific federated method** (secondary): pick by code availability at G0 from Tian et al. [8], Ceydeli et al. [9], FedGraph-VASP (arXiv:2601.17935), or FC2L (NeurIPS 2026). Others are stretch.
+- **One AML-specific federated method** (secondary): **Tian et al. [8]** (decided; code reads HI-Small, no licence, so email the authors). Fallback: Ceydeli et al. [9] reimplemented. Others are stretch.
 - **Done when:** a Brier-vs-ε curve for federated training on val, and test-ready configs; the figure carries both unit labels and a caveat paragraph.
 
 ### 3.8 C11: evidence retriever (graph RAG, secondary)
@@ -642,7 +642,7 @@ Every system gets the same alerts, simulated banks, question language, gate, ε 
 - **Two scores** for every LLM system: end-to-end and questions-only.
 - **Native vs ported** for domain agents.
 - **Tuning parity:** we fine-tune our planner, so DSPy-tuned ReAct gets the same validation data.
-- **Evaluation set:** all external systems run on the frozen 1,000-alert subset; the top 2–3 (chosen at G4 on validation) also run on the full test set; our system and all ablations run on both, so subset numbers are directly comparable.
+- **Evaluation set:** all external systems run on the 1,000-alert subset (rule frozen at G3, IDs drawn at G5); the top 2–3 (chosen at G4 on validation) also run on the full test set; our system and all ablations run on both, so subset numbers are directly comparable.
 
 ### 6.11 Week-by-week
 

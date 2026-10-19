@@ -23,8 +23,8 @@ statistics:
     min_denominator: 1.0e-5          # below it, report raw Brier differences (ftm.eval.metrics.MIN_GAP_DENOMINATOR)
   missing_verdict: "scored as p0; no-verdict rate reported per system"   # agreed with T3, PR #7
   evaluation_set:
-    alerts: test alerts from conformal intake (ftm/intake), headline on test bulk days   # days decision: docs/t4_decisions_week2.md item 4
-    also_report: [end_to_end_over_all_rows_with_intake_misses, kept_only_sensitivity]
+    alerts: test alerts from conformal intake (ftm/intake); headline on HI-Medium test days 13-16; the tail after day 16 reported separately, never pooled
+    also_report: [end_to_end_over_all_rows_with_intake_misses, kept_only_sensitivity]   # spans-split alerts flagged, not dropped; no 72 h window rule
 
 hypotheses:
   H1:

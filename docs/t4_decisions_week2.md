@@ -1,6 +1,6 @@
 # T4 recommendations on the open decisions from T1's weeks 2–4 (PRs #2, #3)
 
-Owner: T4 (Shreyas), as the owner of evaluation and pre-registration. These are **recommendations**, for the team to agree on at the next sync. Each final choice goes into `prereg/` at G3, before any test number exists.
+Owner: T4 (Shreyas), as the owner of evaluation and pre-registration. **Status: adopted by T4 on 2026-10-20** and written into `plan.md` (§5.2, §6.3, §7.2, §9, §16) and `tracks.md`. Raise objections at the next sync. Each final choice also goes into `prereg/` at G3, before any test number exists.
 
 | # | Decision (raised in) | Recommendation | Why |
 |---|---|---|---|
@@ -15,4 +15,8 @@ Owner: T4 (Shreyas), as the owner of evaluation and pre-registration. These are 
 | 8 | **AML-specific federated method** (T4 week-0 item "confirm with Abhishek"; `docs/t1_week0.md` §3) | **Agree: Tian et al. [8]**, with Ceydeli et al. [9] reimplemented as the fallback | It is the only candidate with code that already reads HI-Small and its Patterns file. It has no licence, so run it from a separate checkout and email the authors this week |
 | 9 | **Validation is small** (new: the HI-Small val `eval` part has only 332 alerts, 49 positive) | Use the **HI-Medium** val alerts for E18, fusion fitting and G2, and **cross-fit** fusion inside val instead of holding out another slice. T1 to report alert counts per val part (`fit`/`cal`/`eval`) for HI-Medium | Several things compete for the same val alerts: the conformal calibration, fusion weights, E18 stage 2 (≈500 alerts) and the G2 check. 49 positives can only detect large differences; the alerts CI above is already ±0.03 around a 0.04 gap |
 
-For the team to confirm: items 1–4 change what `tracks.md` and `plan.md` §5.2 say. Once agreed, T4 updates the docs and T1 updates the defaults in `configs/intake/conformal.yaml` and `configs/data/hi_medium.yaml`.
+**Follow-ups for T1:** the docs are updated. T1 to:
+- set the intake defaults in `configs/intake/conformal.yaml` (no 72 h window drop; span rule as a flag only)
+- mark the HI-Medium test tail in `configs/data/hi_medium.yaml` so reports can separate it
+- add the label-free `strata` option to `alerts.stratified_subset`
+- post the HI-Medium alert counts per val part (item 9)
