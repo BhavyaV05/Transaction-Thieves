@@ -10,4 +10,4 @@ alerts/    train / val / test alert sets, plus the frozen 1,000-alert external s
 runs/      run logs (schema: ftm/eval/runlog.py)
 ```
 
-T1 documents the exact schemas here by the end of week 1.
+Schemas, split rule, keys and loading code: **`ftm/data/README.md`** (hand-off #1). Rebuild with `python scripts/prepare_data.py --data hi_small`.
