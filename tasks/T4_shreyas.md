@@ -11,7 +11,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 
 ## Week 1
 - [ ] Repo skeleton, CI, test-split guard
-- [ ] rules corpus collection
+- [x] rules corpus collection
 - [ ] expert questions with Bhavya
 - [ ] run-log schema
 

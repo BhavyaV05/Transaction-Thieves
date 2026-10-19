@@ -1,0 +1,360 @@
+# Red-flag corpus for the regulatory RAG (C6, plan.md 6.7) and the expert question list (T2 + T4, plan.md 5.3).
+# Owner: T4 (Shreyas). v0, 44 red flags (28 FFIEC, 16 MAS) from two official sources:
+#   FFIEC = FFIEC BSA/AML Examination Manual, Appendix F "Money Laundering and Terrorist Financing Red Flags",
+#           bsaaml.ffiec.gov/manual/Appendices/07, read from the Internet Archive snapshot of 2024-12-23
+#           (web.archive.org/web/20241223031454/https://bsaaml.ffiec.gov/manual/Appendices/07). US government work;
+#           `text` is verbatim.
+#   MAS   = Guidelines to MAS Notice 626 (Banks), November 2015, Appendix B "Examples of Suspicious Transactions",
+#           mas.gov.sg. `text` is a close paraphrase (wording: paraphrase); the item number points to the original.
+#           Newer red flags are on STRO's website (Appendix B-1-2); re-check against the current guidelines.
+# FATF red-flag reports (proposal ref [19]) are not in v0: the FATF PDFs could not be fetched (HTTP 403).
+#
+# Fields:
+#   flag_id      RF-<jurisdiction>-<nn>
+#   jurisdiction US (FFIEC, 314(b) regime) | SG (MAS, COSMIC regime)
+#   source       document, section and item
+#   text         the red flag
+#   typologies   AMLworld pattern types it relates to (fan_in, fan_out, cycle, scatter_gather, gather_scatter,
+#                bipartite, stack, random); [] if none in particular
+#   observable   yes | partial | no: can it be measured from AMLworld fields (timestamps, banks, accounts,
+#                entity_id, amounts, currencies, payment_format)? AMLworld has no KYC, income, business type or geography
+#   signal       what a question would measure (a hint for the expert list; questions are written in T2's DSL)
+
+source_notes:
+  FFIEC: 'Appendix F introduction: "The mere presence of a red flag is not by itself evidence of criminal activity."'
+  MAS: 'Appendix B-1-1 (paraphrased): one situation alone may not suggest ML/TF, but a combination of them may indicate a suspicious transaction.'
+
+red_flags:
+  # ---------------- FFIEC Appendix F: Funds Transfers ----------------
+  - flag_id: RF-US-01
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 1"
+    text: "Many funds transfers are sent in large, round dollar, hundred dollar, or thousand dollar amounts."
+    typologies: []
+    observable: "yes"
+    signal: share of an account's transfers with round amounts (multiples of 100 or 1,000)
+  - flag_id: RF-US-02
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 2"
+    text: "Funds transfer activity occurs to or from a financial secrecy haven, or to or from a higher-risk geographic location without an apparent business reason or when the activity is inconsistent with the customer's business or history."
+    typologies: []
+    observable: "no"
+    signal: none in AMLworld (no geography)
+  - flag_id: RF-US-03
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 4"
+    text: "Many small, incoming transfers of funds are received, or deposits are made using checks and money orders. Almost immediately, all or most of the transfers or deposits are wired to another city or country in a manner inconsistent with the customer's business or history."
+    typologies: [fan_in, gather_scatter, scatter_gather]
+    observable: "yes"
+    signal: number of distinct payers in a window, and the share of inflow sent onward within 24 h
+  - flag_id: RF-US-04
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 5"
+    text: "Large, incoming funds transfers are received on behalf of a foreign client, with little or no explicit reason."
+    typologies: []
+    observable: partial
+    signal: large inflow in a currency different from the account's usual currency
+  - flag_id: RF-US-05
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 6"
+    text: "Funds transfer activity is unexplained, repetitive, or shows unusual patterns."
+    typologies: [random, stack]
+    observable: "yes"
+    signal: repeated transfers of near-identical amounts between the same counterparties
+  - flag_id: RF-US-06
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 8"
+    text: "Funds transfers are sent or received from the same person to or from different accounts."
+    typologies: [fan_out, fan_in]
+    observable: "yes"
+    signal: transfers between one entity_id and several accounts, or among accounts of one entity_id
+  - flag_id: RF-US-07
+    jurisdiction: US
+    source: "FFIEC App. F, Funds Transfers, item 7"
+    text: "Payments or receipts with no apparent links to legitimate contracts, goods, or services are received."
+    typologies: []
+    observable: "no"
+    signal: none in AMLworld (no payment purpose)
+  # ---------------- FFIEC Appendix F: Efforts to Avoid Reporting or Recordkeeping ----------------
+  - flag_id: RF-US-08
+    jurisdiction: US
+    source: "FFIEC App. F, Efforts to Avoid Reporting or Recordkeeping Requirement, item 5"
+    text: "A person customarily uses the automated teller machine to make several bank deposits below a specified threshold."
+    typologies: []
+    observable: partial
+    signal: several cash deposits just below a reporting threshold (payment_format Cash)
+  - flag_id: RF-US-09
+    jurisdiction: US
+    source: "FFIEC App. F, Efforts to Avoid Reporting or Recordkeeping Requirement, item 6"
+    text: "A customer deposits funds into several accounts, usually in amounts of less than $3,000, which are subsequently consolidated into a master account and transferred outside of the country, particularly to or through a location of specific concern (e.g., countries designated by national authorities and Financial Action Task Force on Money Laundering (FATF) as noncooperative countries and territories)."
+    typologies: [scatter_gather, gather_scatter, fan_in]
+    observable: "yes"
+    signal: small inflows into several accounts that converge on one account, followed by one large outflow (often cross-bank or cross-currency)
+  - flag_id: RF-US-10
+    jurisdiction: US
+    source: "FFIEC App. F, Efforts to Avoid Reporting or Recordkeeping Requirement, item 7"
+    text: "A customer accesses a safe deposit box after completing a transaction involving a large withdrawal of currency, or accesses a safe deposit box before making currency deposits structured at or just under $10,000, to evade CTR filing requirements."
+    typologies: []
+    observable: partial
+    signal: amounts just under 10,000 (structuring); safe-deposit access is not in the data
+  # ---------------- FFIEC Appendix F: Activity Inconsistent with the Customer's Business ----------------
+  - flag_id: RF-US-11
+    jurisdiction: US
+    source: "FFIEC App. F, Activity Inconsistent with the Customer's Business, item 1"
+    text: "The currency transaction patterns of a business show a sudden change inconsistent with normal activities."
+    typologies: []
+    observable: "yes"
+    signal: an account's volume or count in a window compared with its own earlier windows
+  - flag_id: RF-US-12
+    jurisdiction: US
+    source: "FFIEC App. F, Activity Inconsistent with the Customer's Business, item 2"
+    text: "A large volume of cashier's checks, money orders, or funds transfers is deposited into, or purchased through, an account when the nature of the accountholder's business would not appear to justify such activity."
+    typologies: [fan_in]
+    observable: partial
+    signal: inflow volume high relative to the account's history (business type is not in the data)
+  - flag_id: RF-US-13
+    jurisdiction: US
+    source: "FFIEC App. F, Activity Inconsistent with the Customer's Business, item 4"
+    text: "Unusual transfers of funds occur among related accounts or among accounts that involve the same or related principals."
+    typologies: [cycle, stack]
+    observable: "yes"
+    signal: transfers among accounts sharing an entity_id, especially in chains or loops
+  # ---------------- FFIEC Appendix F: Other Unusual or Suspicious Customer Activity ----------------
+  - flag_id: RF-US-14
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 7"
+    text: "Suspicious movements of funds occur from one bank to another, and then funds are moved back to the first bank."
+    typologies: [cycle]
+    observable: "yes"
+    signal: money leaving the alert account's bank returns to that bank (or account) within the window
+  - flag_id: RF-US-15
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 8"
+    text: "Deposits are structured through multiple branches of the same bank or by groups of people who enter a single branch at the same time."
+    typologies: [fan_in]
+    observable: partial
+    signal: many payers depositing into one account in a short time (branches are not in the data)
+  - flag_id: RF-US-16
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 9"
+    text: "Currency is deposited or withdrawn in amounts just below identification or reporting thresholds."
+    typologies: []
+    observable: "yes"
+    signal: share of cash transfers in a band just below a threshold (e.g. 9,000-9,999)
+  - flag_id: RF-US-17
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 17"
+    text: "Customer has established multiple accounts in various corporate or individual names that lack sufficient business purpose for the account complexities or appear to be an effort to hide the beneficial ownership from the bank."
+    typologies: [bipartite, scatter_gather]
+    observable: partial
+    signal: one entity_id behind several accounts that trade with each other or with the same counterparties
+  - flag_id: RF-US-18
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 18"
+    text: "Customer makes multiple and frequent currency deposits to various accounts that are purportedly unrelated."
+    typologies: [fan_out]
+    observable: partial
+    signal: one payer sending cash-format payments to many distinct accounts
+  - flag_id: RF-US-19
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 19"
+    text: "Customer conducts large deposits and withdrawals during a short time period after opening and then subsequently closes the account or the account becomes dormant. Conversely, an account with little activity may suddenly experience large deposit and withdrawal activity."
+    typologies: [stack, fan_in, fan_out]
+    observable: "yes"
+    signal: an account's first appearance in the data or a dormant period, followed by large in- and outflows in a short window
+  - flag_id: RF-US-20
+    jurisdiction: US
+    source: "FFIEC App. F, Other Unusual or Suspicious Customer Activity, item 20"
+    text: "Customer makes high-value transactions not commensurate with the customer's known incomes."
+    typologies: []
+    observable: "no"
+    signal: none in AMLworld (no income)
+  # ---------------- FFIEC Appendix F: Shell Company Activity ----------------
+  - flag_id: RF-US-21
+    jurisdiction: US
+    source: "FFIEC App. F, Shell Company Activity, item 5"
+    text: "Unusually large number and variety of beneficiaries are receiving funds transfers from one company."
+    typologies: [fan_out, scatter_gather]
+    observable: "yes"
+    signal: number of distinct payees of one account in a window
+  - flag_id: RF-US-22
+    jurisdiction: US
+    source: "FFIEC App. F, Shell Company Activity, item 6"
+    text: "Frequent involvement of multiple jurisdictions or beneficiaries located in higher-risk offshore financial centers."
+    typologies: []
+    observable: partial
+    signal: number of distinct banks or currencies on an account's flows (no geography in the data)
+  - flag_id: RF-US-23
+    jurisdiction: US
+    source: "FFIEC App. F, Shell Company Activity, item 7"
+    text: "A foreign correspondent bank exceeds the expected volume in its client profile for funds transfers, or an individual company exhibits a high volume and pattern of funds transfers that is inconsistent with its normal business activity."
+    typologies: []
+    observable: "yes"
+    signal: an account's transfer volume compared with its own history and with similar accounts at its bank
+  - flag_id: RF-US-24
+    jurisdiction: US
+    source: "FFIEC App. F, Shell Company Activity, item 8"
+    text: "Multiple high-value payments or transfers between shell companies with no apparent legitimate business purpose."
+    typologies: [bipartite, cycle]
+    observable: partial
+    signal: repeated high-value transfers within a small closed group of accounts
+  - flag_id: RF-US-25
+    jurisdiction: US
+    source: "FFIEC App. F, Shell Company Activity, item 2"
+    text: "Payments to or from the company have no stated purpose, do not reference goods or services, or identify only a contract or invoice number."
+    typologies: []
+    observable: "no"
+    signal: none in AMLworld (no payment references)
+  # ---------------- FFIEC Appendix F: Trade Finance ----------------
+  - flag_id: RF-US-26
+    jurisdiction: US
+    source: "FFIEC App. F, Trade Finance, item 7"
+    text: "Transaction structure appears unnecessarily complex and designed to obscure the true nature of the transaction."
+    typologies: [stack, bipartite, scatter_gather, gather_scatter]
+    observable: "yes"
+    signal: number of hops and intermediary accounts between the first payer and the final payee within the window
+  - flag_id: RF-US-27
+    jurisdiction: US
+    source: "FFIEC App. F, Trade Finance, item 8"
+    text: "Customer requests payment of proceeds to an unrelated third party."
+    typologies: [stack]
+    observable: partial
+    signal: proceeds received and passed on to an account with no earlier relation to the payer
+  # ---------------- FFIEC Appendix F: Customers Who Provide Insufficient or Suspicious Information ----------------
+  - flag_id: RF-US-28
+    jurisdiction: US
+    source: "FFIEC App. F, Customers Who Provide Insufficient or Suspicious Information, item 7"
+    text: "A customer makes frequent or large transactions and has no record of past or present employment experience."
+    typologies: []
+    observable: "no"
+    signal: none in AMLworld (no KYC)
+
+  # ---------------- MAS Notice 626 Guidelines, Appendix B ----------------
+  - flag_id: RF-SG-01
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-2(ii)"
+    wording: paraphrase
+    text: "A customer holds many accounts at the same bank and moves money between them often."
+    typologies: [cycle, stack]
+    observable: "yes"
+    signal: transfers among accounts of one entity_id at one bank
+  - flag_id: RF-SG-02
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-2(iii)"
+    wording: paraphrase
+    text: "Funds are withdrawn immediately after being deposited, without a business reason for the immediate withdrawal."
+    typologies: [stack, fan_in, gather_scatter]
+    observable: "yes"
+    signal: share of an inflow sent out again within hours
+  - flag_id: RF-SG-03
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-2(iv)"
+    wording: paraphrase
+    text: "A previously inactive account is suddenly used to receive or pay out unusually large sums with no obvious purpose."
+    typologies: [stack]
+    observable: "yes"
+    signal: activity in the window compared with the account's earlier activity
+  - flag_id: RF-SG-04
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-2(x)"
+    wording: paraphrase
+    text: "Cash deposited at one location is withdrawn at another location almost immediately."
+    typologies: [stack]
+    observable: partial
+    signal: a cash inflow followed quickly by an outflow through a different bank
+  - flag_id: RF-SG-05
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-3(v)"
+    wording: paraphrase
+    text: "A large amount of cash is withdrawn and immediately deposited into another account."
+    typologies: [stack]
+    observable: partial
+    signal: a large cash-format outflow matched by a similar inflow elsewhere shortly after
+  - flag_id: RF-SG-06
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-3(ix)"
+    wording: paraphrase
+    text: "Many deposits that are each small but add up to a substantial total."
+    typologies: [fan_in]
+    observable: "yes"
+    signal: count of inflows and their total in a window, against the largest single inflow
+  - flag_id: RF-SG-07
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-3(iv)"
+    wording: paraphrase
+    text: "Large cash withdrawals from a dormant account, or from an account that has just received an unexpected large credit from abroad."
+    typologies: [stack]
+    observable: partial
+    signal: a large inflow (cross-currency as a proxy for abroad) followed by large outflows
+  - flag_id: RF-SG-08
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-4(i)"
+    wording: paraphrase
+    text: "High velocity of funds through an account: low starting and ending balances that do not reflect the large volume flowing through it."
+    typologies: [stack, fan_in, fan_out, gather_scatter]
+    observable: "yes"
+    signal: outflow / inflow ratio near 1 over the window, with high total volume
+  - flag_id: RF-SG-09
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-4(iii)"
+    wording: paraphrase
+    text: "Payments out match credits paid in on the same or the previous day."
+    typologies: [stack, cycle]
+    observable: "yes"
+    signal: an outflow within 24 h of an inflow of almost the same amount
+  - flag_id: RF-SG-10
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-4(v)"
+    wording: paraphrase
+    text: "Funds arrive from various third parties in a way that does not fit the nature of the customer's business."
+    typologies: [fan_in]
+    observable: partial
+    signal: number of distinct payers (business type is not in the data)
+  - flag_id: RF-SG-11
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-4(vi)"
+    wording: paraphrase
+    text: "Multiple depositors use a single account."
+    typologies: [fan_in]
+    observable: "yes"
+    signal: number of distinct payers into one account in a window
+  - flag_id: RF-SG-12
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-4(ix)"
+    wording: paraphrase
+    text: "An account held in the name of an offshore company shows structured movements of funds."
+    typologies: [scatter_gather, stack]
+    observable: partial
+    signal: regular, similar-sized transfers through the account (company type is not in the data)
+  - flag_id: RF-SG-13
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-5(i)"
+    wording: paraphrase
+    text: "A customer has accounts with several banks in the same area, and the bank sees funds regularly consolidated from those accounts before being sent on elsewhere."
+    typologies: [gather_scatter, scatter_gather, fan_in]
+    observable: "yes"
+    signal: inflows from accounts at several banks into one account, followed by a single onward transfer (cross-bank, the case private questions target)
+  - flag_id: RF-SG-14
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-5(iv)"
+    wording: paraphrase
+    text: "A substantial rise in deposits without apparent cause, especially if the money is transferred out within a short period or to a destination not normally associated with the customer."
+    typologies: [fan_in, stack]
+    observable: "yes"
+    signal: inflow spike followed by quick outflows to counterparties not seen before
+  - flag_id: RF-SG-15
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-5(v)"
+    wording: paraphrase
+    text: "Repeated transfers of large amounts abroad with an instruction to pay the beneficiary in cash."
+    typologies: [fan_out]
+    observable: partial
+    signal: repeated large cross-currency transfers (payout method is not in the data)
+  - flag_id: RF-SG-16
+    jurisdiction: SG
+    source: "MAS 626 Guidelines (2015), App. B-3(iii)"
+    wording: paraphrase
+    text: "Large and frequent cash deposits, while payments out of the account go mostly to people and firms not normally associated with the customer's business."
+    typologies: [fan_out]
+    observable: partial
+    signal: cash-format inflows with many distinct payees on the outflow side
