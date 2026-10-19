@@ -30,7 +30,7 @@ python scripts/train_gfp.py --data hi_medium --mode see_everything --neg-frac 0.
 
 **Train scores are out-of-fold**: the train period (by time) is cut into 3 contiguous blocks and each block is scored by a model fit on the other two (with the hyper-parameters chosen on val), then mapped through the same calibrator as val. This uses later train days to score earlier ones (no val or test data), so OOF scores are slightly more optimistic than a forward-only split but are not in-sample. OOF quality is lower than val quality for one-bank (PR-AUC 0.05 train OOF vs 0.20 val on HI-Small: the OOF models see only 2/3 of an already short train period, and train positives are fewer). T2 back-testing should use `split == "val"` and `val_part in {cal, eval}`; `fit` rows are in-sample for the calibrator.
 
-Load with `ftm.baselines.gfp_gbt.read_p0(ds, mode=..., split=...)`.
+Load with `ftm.baselines.gfp_gbt.read_p0(ds, mode=..., split=...)`. **Status:** `hi_small/p0.parquet` has both modes; `hi_medium` has only `p0_one_bank.parquet` (see-everything is blocked, below), so `read_p0("hi_medium")` needs `root`/the one-bank file directly until then.
 
 ## Features, and the leakage rule
 
@@ -101,7 +101,55 @@ Two things to know: bank 70 (the largest, 28 eval positives) is at base rate und
 
 ## HI-Medium
 
-HI_MEDIUM_SECTION
+Splits: train days 1-9, val 10-12. **One-bank: done for all 30 bank views**, `neg_frac 0.3` (all laundering rows plus 30% of clean train rows for fitting; the calibrator on val removes the bias), 6 isotonic and 24 Platt calibrators. Wall time: the 29 smaller banks took 200 s in total; **bank 70 alone took 7,213 s**, almost all of it GFP (a hub view where the streaming graph feature extraction slows to a few hundred rows/s; 2.09 M train+val rows). Bank 70 has 2,942 laundering transactions in train+val and is **at base rate under the model** (PR-AUC 0.0015 vs prevalence 0.0015), so a quarter of the HI-Medium one-bank laundering is invisible to GFP features on that view.
+
+**One-bank on val eval part, pooled over 30 views (320,372 rows, 527 laundering):** Brier 0.001451 vs constant 0.001644 (skill 0.117), PR-AUC 0.233, F1 at the best `fit`-part threshold 0.350; macro-average Brier over banks 0.001370. Per bank (the see-everything columns are n/a, see below):
+
+| bank | laundering (train+val) | eval rows | eval pos | Brier const | Brier one-bank | Brier see-all | PR-AUC one-bank | PR-AUC see-all | F1 one-bank | F1 see-all |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 323 | 10131 | 28 | 2.760e-3 | 2.377e-3 | n/a | 0.3530 | n/a | 0.4364 | n/a |
+| 3 | 166 | 5540 | 14 | 2.531e-3 | 1.838e-3 | n/a | 0.4695 | n/a | 0.4211 | n/a |
+| 4 | 91 | 5826 | 7 | 1.201e-3 | 1.009e-3 | n/a | 0.4381 | n/a | 0.5000 | n/a |
+| 6 | 178 | 5344 | 15 | 2.823e-3 | 2.432e-3 | n/a | 0.4274 | n/a | 0.3774 | n/a |
+| 11 | 314 | 10919 | 25 | 2.295e-3 | 1.542e-3 | n/a | 0.5185 | n/a | 0.5172 | n/a |
+| 12 | 247 | 10928 | 22 | 2.018e-3 | 1.620e-3 | n/a | 0.3642 | n/a | 0.4815 | n/a |
+| 14 | 153 | 6282 | 18 | 2.857e-3 | 1.435e-3 | n/a | 0.7023 | n/a | 0.5714 | n/a |
+| 15 | 101 | 6026 | 9 | 1.495e-3 | 1.518e-3 | n/a | 0.5121 | n/a | 0.2400 | n/a |
+| 20 | 368 | 9728 | 25 | 2.578e-3 | 1.991e-3 | n/a | 0.5995 | n/a | 0.6296 | n/a |
+| 25 | 112 | 5763 | 11 | 1.913e-3 | 1.562e-3 | n/a | 0.4950 | n/a | 0.3429 | n/a |
+| 26 | 57 | 3872 | 6 | 1.547e-3 | 1.411e-3 | n/a | 0.2285 | n/a | 0.1429 | n/a |
+| 27 | 156 | 10301 | 14 | 1.361e-3 | 2.055e-3 | n/a | 0.1170 | n/a | 0.2424 | n/a |
+| 28 | 31 | 4189 | 5 | 1.193e-3 | 1.110e-3 | n/a | 0.4579 | n/a | 0.2308 | n/a |
+| 29 | 92 | 6297 | 11 | 1.744e-3 | 1.367e-3 | n/a | 0.4803 | n/a | 0.0000 | n/a |
+| 70 | 2942 | 149662 | 218 | 1.454e-3 | 1.455e-3 | n/a | 0.0015 | n/a | 0.0000 | n/a |
+| 111 | 51 | 4910 | 4 | 0.814e-3 | 0.783e-3 | n/a | 0.1063 | n/a | 0.0000 | n/a |
+| 112 | 33 | 6690 | 4 | 0.598e-3 | 0.597e-3 | n/a | 0.0214 | n/a | 0.0299 | n/a |
+| 113 | 20 | 4814 | 1 | 0.208e-3 | 0.250e-3 | n/a | 0.0038 | n/a | 0.0000 | n/a |
+| 114 | 27 | 5627 | 1 | 0.179e-3 | 0.240e-3 | n/a | 0.0101 | n/a | 0.0000 | n/a |
+| 210 | 25 | 4294 | 3 | 0.701e-3 | 0.734e-3 | n/a | 0.0201 | n/a | 0.0290 | n/a |
+| 214 | 134 | 4892 | 12 | 2.449e-3 | 1.724e-3 | n/a | 0.5279 | n/a | 0.5000 | n/a |
+| 544 | 108 | 4359 | 10 | 2.298e-3 | 1.643e-3 | n/a | 0.6150 | n/a | 0.5217 | n/a |
+| 741 | 123 | 4103 | 11 | 2.680e-3 | 1.506e-3 | n/a | 0.6575 | n/a | 0.3750 | n/a |
+| 1046 | 73 | 3890 | 6 | 1.547e-3 | 1.731e-3 | n/a | 0.4781 | n/a | 0.3636 | n/a |
+| 1208 | 148 | 4780 | 3 | 0.650e-3 | 0.631e-3 | n/a | 0.4802 | n/a | 0.3333 | n/a |
+| 1601 | 112 | 3950 | 5 | 1.281e-3 | 0.908e-3 | n/a | 0.4897 | n/a | 0.5000 | n/a |
+| 1818 | 89 | 3983 | 4 | 1.006e-3 | 1.029e-3 | n/a | 0.3283 | n/a | 0.1667 | n/a |
+| 2310 | 175 | 4954 | 20 | 4.025e-3 | 1.927e-3 | n/a | 0.7266 | n/a | 0.6939 | n/a |
+| 2597 | 114 | 4449 | 6 | 1.366e-3 | 0.587e-3 | n/a | 0.8774 | n/a | 0.7059 | n/a |
+| 2776 | 98 | 3869 | 9 | 2.328e-3 | 2.102e-3 | n/a | 0.5523 | n/a | 0.4348 | n/a |
+
+
+**See-everything on HI-Medium: BLOCKED-COMPUTE.** The job (GFP over the full train+val graph, 23.1 M rows, then LightGBM with `--neg-frac 0.1`) fits in RAM (about 10 GB peak RSS with the Int16-encoded frame) but had not finished after more than 2 hours of wall time on the laptop (4-6 busy threads; HI-Small's 4.2 M rows took 17 minutes in total) and was stopped at the end of the session, so there is no `p0_see_everything.parquet` for HI-Medium and no HI-Medium one-bank vs see-everything gap yet. Ready to run on the 5070 Ti machine (needs >= 12 GB free RAM and many CPU threads; GFP is CPU-bound; expect several hours):
+
+```
+python scripts/train_gfp.py --data hi_medium --mode see_everything --neg-frac 0.1 --threads 16
+python scripts/train_gfp.py --data hi_medium --recalibrate     # refit calibrators with the signal rule
+python scripts/train_gfp.py --data hi_medium --report          # writes data/runs/gap_hi_medium_*.{md,csv,json}
+```
+
+Because of that, the "gap" (the project's denominator) is only measured on HI-Small (see above), where it is large.
+
+
 
 ## Multi-GNN reproduction (M2)
 
