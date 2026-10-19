@@ -71,6 +71,16 @@ def test_cluster_ids_union_attempts_and_shared_accounts():
     assert rep["n_clusters"] == 3 and rep["largest"] == 3 and rep["singletons"] == 1
 
 
+def test_hub_cap_breaks_giant_component_but_keeps_attempts():
+    # account 99 is a hub that every row touches; rows 0 and 1 also share attempt 3
+    att = [3, 3, None, None, None]
+    src = [1, 2, 4, 5, 6]
+    dst = [99, 99, 99, 99, 99]
+    assert len(set(bs.cluster_ids(att, [src, dst]))) == 1
+    cl = bs.cluster_ids(att, [src, dst], hub_cap=3)
+    assert cl[0] == cl[1] and len(set(cl)) == 4
+
+
 def test_cluster_ids_attempt_and_account_keys_do_not_collide():
     cl = bs.cluster_ids([5, None], [[1, 5]])  # attempt 5 and account 5 are different things
     assert cl[0] != cl[1]

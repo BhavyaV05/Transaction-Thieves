@@ -50,7 +50,7 @@ def load_frame(ds: str, on: str) -> pl.DataFrame:
     return f.with_columns(pl.col("label").cast(pl.Int8).alias("y")).sort("tx_id", "bank")
 
 
-def report(f: pl.DataFrame, n_boot: int, seed: int) -> dict:
+def report(f: pl.DataFrame, n_boot: int, seed: int, hub_cap: int | None = None) -> dict:
     y, pob, pse = f["y"].to_numpy(), f["p_ob"].to_numpy(), f["p_se"].to_numpy()
     att = f["attempt_id"].to_list()
     clusterings = {
@@ -58,6 +58,10 @@ def report(f: pl.DataFrame, n_boot: int, seed: int) -> dict:
         "attempt+tx": bs.cluster_ids(att, [f["tx_id"].to_list()]),  # a tx seen by two banks is one cluster
         "row": np.arange(len(y)),
     }
+    if hub_cap is not None:  # sensitivity: hub accounts (in more than hub_cap rows) do not link
+        clusterings[f"attempt+accounts(hub_cap={hub_cap})"] = bs.cluster_ids(
+            att, [f["src_id"].to_list(), f["dst_id"].to_list()], hub_cap=hub_cap
+        )
     out = {"n": int(len(y)), "n_pos": int(y.sum()), "n_boot": n_boot,
            "one_bank": mt.detection_summary(y, pob), "see_everything": mt.detection_summary(y, pse),
            "brier_diff_ob_minus_se": {}}  # fmt: skip
@@ -73,8 +77,9 @@ def main() -> None:
     ap.add_argument("--on", choices=["rows", "alerts"], default="alerts")
     ap.add_argument("--n-boot", type=int, default=bs.N_BOOT)
     ap.add_argument("--seed", type=int, default=bs.SEED)
+    ap.add_argument("--hub-cap", type=int, default=None, help="also report attempt+accounts without hub accounts")
     a = ap.parse_args()
-    out = report(load_frame(a.data, a.on), a.n_boot, a.seed)
+    out = report(load_frame(a.data, a.on), a.n_boot, a.seed, a.hub_cap)
     path = Path("data/runs") / f"eval_gap_{a.data}_{a.on}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=1))

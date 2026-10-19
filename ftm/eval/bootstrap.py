@@ -14,6 +14,7 @@ cluster weights, then weights @ sums. `cluster_bootstrap` handles any other stat
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Sequence
 
 import numpy as np
@@ -22,11 +23,14 @@ N_BOOT = 10_000
 SEED = 0
 
 
-def cluster_ids(attempt_id: Sequence, accounts: Sequence[Sequence]) -> np.ndarray:
+def cluster_ids(attempt_id: Sequence, accounts: Sequence[Sequence], hub_cap: int | None = None) -> np.ndarray:
     """Cluster label per row: union of rows sharing an attempt or any account (union-find).
 
     attempt_id: one entry per row, None/NaN when the row is in no attempt.
     accounts: one or more account-key columns, each one entry per row (e.g. [src_node, dst_node]).
+    hub_cap: if set, an account that appears in more than `hub_cap` rows does not link rows (hub
+      accounts chain unrelated alerts into one giant component). Attempts always link. None = the plan's
+      definition. Use it as a sensitivity check, and fix the value in prereg/ before test.
     Returns dense int labels 0..k-1 in first-seen order.
     """
     n = len(attempt_id)
@@ -40,13 +44,13 @@ def cluster_ids(attempt_id: Sequence, accounts: Sequence[Sequence]) -> np.ndarra
             parent[i], i = root, parent[i]
         return root
 
-    def link(columns) -> None:
+    def link(columns, skip=frozenset()) -> None:
         first: dict = {}  # one key space for all columns given: src of row i joins dst of row j
         for col in columns:
             if len(col) != n:
                 raise ValueError("every key column needs one entry per row")
             for i, key in enumerate(col):
-                if key is None or (isinstance(key, float) and np.isnan(key)):
+                if key is None or (isinstance(key, float) and np.isnan(key)) or key in skip:
                     continue
                 j = first.setdefault(key, i)
                 if j != i:
@@ -55,7 +59,11 @@ def cluster_ids(attempt_id: Sequence, accounts: Sequence[Sequence]) -> np.ndarra
                         parent[max(ri, rj)] = min(ri, rj)
 
     link([attempt_id])
-    link(accounts)
+    hubs: frozenset = frozenset()
+    if hub_cap is not None:
+        counts = Counter(k for col in accounts for k in col if k is not None)
+        hubs = frozenset(k for k, c in counts.items() if c > hub_cap)
+    link(accounts, hubs)
     roots = np.array([find(i) for i in range(n)])
     _, labels = np.unique(roots, return_inverse=True)
     return labels
