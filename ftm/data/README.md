@@ -28,7 +28,7 @@ Time-based, set by `split_days` in `configs/data/<ds>.yaml` (1-indexed, inclusiv
 | HI-Medium (16 days) | 1-9 | 10-12 | 13-16 |
 | HI-Small (18 calendar days) | 1-6 | 7-8 | 9-18 |
 
-**HI-Small rule.** The dataset paper says HI-Small spans 10 days, and 99.98% of the rows are in days 1-10; days 11-18 are a sparse tail (1,108 rows, 560 of them laundering: late legs of long attempts). We split the 10 bulk days in the HI-Medium proportions 9:3:4 (5.6 / 1.9 / 2.5 days, rounded to 6 / 2 / 2) and put the tail in test so time order is kept and nothing is dropped. Note this is not the 60/20/20 split by transaction index that the AMLworld paper and Multi-GNN use (ours is 64/19/17 of rows), so SOTA reproduction on "their" split needs their split, not ours.
+**HI-Small rule.** The dataset paper says HI-Small spans 10 days, and 99.98% of the rows are in days 1-10; days 11-18 are a sparse tail (1,108 rows, 655 of them laundering: late legs of long attempts). We split the 10 bulk days in the HI-Medium proportions 9:3:4 (5.6 / 1.9 / 2.5 days, rounded to 6 / 2 / 2) and put the tail in test so time order is kept and nothing is dropped. Note this is not the 60/20/20 split by transaction index that the AMLworld paper and Multi-GNN use (ours is 64/19/17 of rows), so SOTA reproduction on "their" split needs their split, not ours.
 
 **Alerts and attempts.** `attempts.parquet` marks `spans_split`; drop an alert whose laundering attempt spans a split boundary (plan 5.2 step 3). In HI-Small this is 147 of 370 attempts, because attempts last days. The 72-hour evidence-window rule is applied by whoever builds alerts (T1, week 3-4), using `timestamp`.
 

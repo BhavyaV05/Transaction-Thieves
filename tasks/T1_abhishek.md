@@ -4,15 +4,15 @@ Checklist generated from tracks.md section 3.9. Read the whole track section fir
 Tick items off in your PRs and post one line per week in STATUS.md. Weeks count from TA approval (G0).
 
 ## Week 0
-- [ ] Download both datasets
-- [ ] install snapml and PyG
-- [ ] trace the ~80 F1 source
-- [ ] check code/licence for Group A/B and pick the AML-specific federated method
-- [ ] report RAM/CPU
+- [x] Download both datasets (HI-Small done; HI-Medium: see ftm/data/README.md)
+- [x] install snapml and PyG
+- [x] trace the ~80 F1 source (ExSTraQt, arXiv:2604.02899; docs/t1_week0.md)
+- [x] check code/licence for Group A/B and pick the AML-specific federated method (Tian et al.; docs/t1_week0.md)
+- [x] report RAM/CPU
 - [ ] **test whether Qwen3-8B 4-bit runs on your GPU at the harness context cap** (and run the conversion benchmark)
 
 ## Week 1
-- [ ] Parquet, splits, pattern parsing, bank views, aliasing, time guard. **Hand off to everyone by end of week**
+- [x] Parquet, splits, pattern parsing, bank views, aliasing, time guard (HI-Small; docs in ftm/data/README.md). **Hand off to everyone by end of week**
 
 ## Week 2
 - [ ] GFP+GBT per bank and full
