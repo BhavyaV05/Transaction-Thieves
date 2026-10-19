@@ -118,6 +118,20 @@ def ece(y, p, n_bins: int = 15) -> float:
     return float(total / len(y))
 
 
+def end_to_end_probability(probability, p0) -> tuple[np.ndarray, float]:
+    """Fill missing verdicts (an agent that never gave a probability, e.g. ReAct without finish) with p0.
+
+    Rule agreed with T3 (PR #7): no verdict = the agent changed nothing. Returns the filled probabilities and the
+    no-verdict rate, which is reported next to every end-to-end score so abstaining cannot look calibrated.
+    """
+    p0 = np.asarray(p0, dtype="f8")
+    p = np.array([np.nan if v is None else v for v in probability], dtype="f8")
+    if p.shape != p0.shape:
+        raise ValueError("probability and p0 need one entry per alert")
+    missing = np.isnan(p)
+    return np.where(missing, p0, p), float(missing.mean()) if len(p) else float("nan")
+
+
 def detection_summary(y, p, threshold: float | None = None) -> dict:
     """The detection row of plan.md 9.2 for one system. Threshold-free unless `threshold` is given."""
     out = {"n": int(len(np.asarray(y))), "n_pos": int(np.asarray(y).sum()), "brier": brier(y, p),

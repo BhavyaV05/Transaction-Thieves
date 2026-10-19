@@ -6,7 +6,7 @@ Owner: T4 (Shreyas). numpy + scipy only, so everything runs in CI on the base in
 
 | Module | What |
 |---|---|
-| `metrics` | `brier`, `brier_skill`, `gap_closed` (NaN below `MIN_GAP_DENOMINATOR` = 1e-5: report raw Brier differences instead), `pr_auc` (average precision, same as sklearn), `balanced_accuracy`, `caught_at_capacity` (top-k per day), `flips` (right→wrong and back), `ece` (equal-mass bins), `detection_summary` |
+| `metrics` | `brier`, `brier_skill`, `gap_closed` (NaN below `MIN_GAP_DENOMINATOR` = 1e-5: report raw Brier differences instead), `pr_auc` (average precision, same as sklearn), `balanced_accuracy`, `caught_at_capacity` (top-k per day), `flips` (right→wrong and back), `ece` (equal-mass bins), `end_to_end_probability` (a missing verdict is scored as p₀; returns the no-verdict rate to report alongside), `detection_summary` |
 | `bootstrap` | `cluster_ids` (attempt + shared accounts, union-find), `cluster_report`, `bootstrap_means` (fast path, 10,000 resamples), `cluster_bootstrap` (any statistic), `brier_diff`, `gap_closed_ci`, `bootstrap_pvalue` |
 | `stats` | `holm`, `fixed_sequence`, `equivalence_margin`, `equivalent`, `non_inferior` |
 | `runlog` | shared run-log schema (draft, to agree with T2) |

@@ -51,6 +51,11 @@ def test_balanced_accuracy_caught_and_flips():
     assert f["wrong_to_right"] == 2 and f["right_to_wrong"] == 0
 
 
+def test_end_to_end_probability_fills_missing_with_p0():
+    p, rate = mt.end_to_end_probability([0.9, None, 0.2, None], [0.1, 0.3, 0.5, 0.7])
+    assert p.tolist() == [0.9, 0.3, 0.2, 0.7] and rate == 0.5
+
+
 def test_ece_zero_when_calibrated_and_large_when_not():
     rng = np.random.default_rng(1)
     p = rng.random(100_000)
