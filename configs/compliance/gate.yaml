@@ -1,5 +1,6 @@
 # Compliance gate (C6) settings. Owner: T4. Same file for every system (fairness protocol, plan.md 7.2).
 rules_file: configs/compliance/rules.yaml
+red_flags_file: configs/compliance/red_flags.yaml   # searched by lookup_rules; never a citation
 # Everything not listed is blocked (default deny).
 allowed_actions: [ask_bank, draft_sar, escalate_to_human, lookup_rules, local_graph, search_library, stop]
 eps_levels: [0.25, 0.5, 1.0, 2.0]       # matches EPS_LEVELS in ftm/planners/llm_prompt.py (PR #6)

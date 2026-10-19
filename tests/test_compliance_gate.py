@@ -121,3 +121,25 @@ def test_lookup_rules_keyword(gate):
     top = gate.lookup_rules("314(b) sharing money laundering")
     assert top[0]["rule_id"] == "US-314B-SHARE"
     assert all(r["jurisdiction"] in ("SG", "ANY") for r in gate.lookup_rules("request", jurisdiction="SG"))
+
+
+TYPOLOGIES = {"fan_in", "fan_out", "cycle", "scatter_gather", "gather_scatter", "bipartite", "stack", "random"}
+
+
+def test_red_flag_corpus_integrity():
+    flags = g.load_red_flags()
+    assert len(flags) >= 40
+    assert {f.jurisdiction for f in flags.values()} == {"US", "SG"}
+    for f in flags.values():
+        assert f.flag_id.startswith(f"RF-{f.jurisdiction}-")
+        assert set(f.typologies) <= TYPOLOGIES, f.flag_id
+        assert f.observable in {"yes", "partial", "no"}
+        assert f.text and f.source and f.signal
+    assert sum(f.observable == "yes" for f in flags.values()) >= 20  # enough to seed the expert question list
+
+
+def test_lookup_finds_red_flags_but_they_are_not_citations(gate):
+    hits = gate.lookup_rules("consolidated several banks onward", jurisdiction="SG")
+    assert hits[0]["rule_id"] == "RF-SG-13" and hits[0]["kind"] == "red_flag"
+    assert ask(gate, rule_id="RF-US-14").decision == "blocked"  # a red flag is not a legal basis
+    assert any(h["rule_id"] == "RF-US-14" for h in gate.lookup_rules("moved back to the first bank cycle"))

@@ -88,6 +88,25 @@ def load_rules(path: str | Path = ROOT / "configs" / "compliance" / "rules.yaml"
                                tuple(r.get("permits", [])), tuple(r.get("kinds", []))) for r in raw}  # fmt: skip
 
 
+@dataclass(frozen=True)
+class RedFlag:
+    flag_id: str
+    jurisdiction: str
+    text: str
+    source: str
+    typologies: tuple[str, ...]
+    observable: str  # yes | partial | no (in AMLworld fields)
+    signal: str
+
+
+def load_red_flags(path: str | Path = ROOT / "configs" / "compliance" / "red_flags.yaml") -> dict[str, RedFlag]:
+    """The red-flag corpus (FFIEC App. F, MAS 626 Guidelines App. B) for lookup_rules and the expert questions."""
+    path = Path(path)
+    raw = yaml.safe_load((path if path.is_absolute() else ROOT / path).read_text())["red_flags"]
+    return {f["flag_id"]: RedFlag(f["flag_id"], f["jurisdiction"], f["text"].strip(), f["source"],
+                                  tuple(f.get("typologies") or ()), f["observable"], f["signal"]) for f in raw}  # fmt: skip
+
+
 def identifying_literals(program: str) -> list[str]:
     """Literals that would point a question at a specific account or day instead of an alert-relative slot."""
     return ALIAS_RE.findall(program) + RAW_ACCOUNT_RE.findall(program) + DATE_RE.findall(program)
@@ -104,6 +123,7 @@ class Gate:
     default_jurisdiction: str = "US"
     jurisdiction_by_bank: dict = field(default_factory=dict)
     allow_raw_share: bool = False
+    red_flags: dict = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, path: str | Path = GATE_CONFIG, **overrides) -> Gate:
@@ -112,7 +132,8 @@ class Gate:
                   eps_levels=tuple(float(e) for e in cfg["eps_levels"]), require_citation=cfg["require_citation"],
                   default_jurisdiction=cfg["default_jurisdiction"],
                   jurisdiction_by_bank={str(k): v for k, v in (cfg.get("jurisdiction_by_bank") or {}).items()},
-                  allow_raw_share=cfg["allow_raw_share"])  # fmt: skip
+                  allow_raw_share=cfg["allow_raw_share"],
+                  red_flags=load_red_flags(cfg["red_flags_file"]) if cfg.get("red_flags_file") else {})  # fmt: skip
         kw.update(overrides)
         return cls(**kw)
 
@@ -173,17 +194,24 @@ class Gate:
         return Decision("allowed", rule_id=r.rule_id)
 
     def lookup_rules(self, query: str, jurisdiction: str | None = None, k: int = 5) -> list[dict]:
-        """v0 keyword lookup (the BM25 + embedding RAG is secondary). Returns rule_id, jurisdiction, text, source."""
+        """v0 keyword lookup over legal bases and red flags (the BM25 + embedding RAG is secondary).
+
+        Returns dicts with rule_id (a legal-basis rule id or a red-flag id), kind ("rule" | "red_flag"),
+        jurisdiction, text, source. Only `kind == "rule"` ids are valid citations for ask_bank.
+        """
         words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2}
+        docs = [(r.rule_id, "rule", r.jurisdiction, r.text, r.source, "") for r in self.rules.values()]
+        docs += [(f.flag_id, "red_flag", f.jurisdiction, f.text, f.source, " ".join(f.typologies) + " " + f.signal)
+                 for f in self.red_flags.values()]  # fmt: skip
         scored = []
-        for r in self.rules.values():
-            if jurisdiction and not r.applies_to(jurisdiction):
+        for rid, kind, jur, text, source, extra in docs:
+            if jurisdiction and jur not in (jurisdiction, "ANY"):
                 continue
-            hay = f"{r.rule_id} {r.text} {r.source}".lower()
-            scored.append((sum(w in hay for w in words), r.rule_id, r))
+            hay = f"{rid} {text} {source} {extra}".lower()
+            scored.append((sum(w in hay for w in words), rid, kind, jur, text, source))
         scored.sort(key=lambda t: (-t[0], t[1]))
-        return [{"rule_id": r.rule_id, "jurisdiction": r.jurisdiction, "text": r.text, "source": r.source}
-                for s, _, r in scored[:k] if s > 0 or not words]  # fmt: skip
+        return [{"rule_id": rid, "kind": kind, "jurisdiction": jur, "text": text, "source": source}
+                for s, rid, kind, jur, text, source in scored[:k] if s > 0 or not words]  # fmt: skip
 
 
 class GatedToolBox:
