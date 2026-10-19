@@ -17,10 +17,10 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] top-40-by-amount evidence stub (`ftm/retrieval/views.py`, through `ftm.data.io`, aliased). **G1** support
 
 ## Week 3
-- [ ] LLM planner end-to-end on 20 val alerts. **G2**
+- [ ] LLM planner end-to-end on 20 val alerts. **G2**: planner loop, 5 modes and run script done and tested on mocks (`ftm/planners/llm.py`, `scripts/run_llm_agent.py`, `docs/t3_planner_agents.md`); the real run waits for harness v0 + banks (T2), the endpoint and val alerts on this machine
 
 ## Week 4
-- [ ] **ReAct through the harness on 50 val alerts**
+- [ ] **ReAct through the harness on 50 val alerts**: ReAct reimplemented (`ftm/external/react.py`) and runs through the shared `Investigation` layer; same blockers as G2
 - [ ] teacher runs start. **G3** (library schema and keying frozen)
 
 ## Week 5
