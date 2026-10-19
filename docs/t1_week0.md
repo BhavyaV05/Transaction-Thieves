@@ -47,7 +47,7 @@ FraudGT needs a licence question to the authors before we copy code into `ftm/ba
 ## 5. Week-0 items and status
 
 - Qwen3-8B 4-bit on the 3070 Ti: **ran as an ollama GGUF Q4_K_M proxy, not vLLM** (section 6). A vLLM check is still open.
-- HI-Medium download and conversion: see `ftm/data/README.md` (added after the HI-Small hand-off; status there).
+- HI-Medium: downloaded by the parent agent and converted with the same pipeline (30 s, 4.8 GB peak RSS); stats in `ftm/data/README.md`. Raw Trans.csv deleted afterwards (re-downloadable).
 - Conversion benchmark (laptop hours to reference hours): **not run**, T3's benchmark script is not published yet (`docs/hardware.md` section 4).
 - Not downloaded by design: LI-* datasets, HI-Large.
 

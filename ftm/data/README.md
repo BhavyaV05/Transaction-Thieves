@@ -5,7 +5,7 @@ Everything below is produced by one command and is deterministic (no randomness 
 
 ```
 python scripts/prepare_data.py --data hi_small        # ~5 s on HI-Small, idempotent; --force rebuilds
-python scripts/prepare_data.py --data hi_medium       # same code, streaming; see the HI-Medium status below
+python scripts/prepare_data.py --data hi_medium       # same code, streaming; HI-Medium stats and notes at the bottom
 ```
 
 Raw files go in `data/raw/<ds>/` first (Kaggle, CDLA-Sharing):
@@ -25,7 +25,7 @@ Time-based, set by `split_days` in `configs/data/<ds>.yaml` (1-indexed, inclusiv
 
 | | train | val | test |
 |---|---|---|---|
-| HI-Medium (16 days) | 1-9 | 10-12 | 13-16 |
+| HI-Medium (16 bulk days + sparse tail to day 28) | 1-9 | 10-12 | 13-28 |
 | HI-Small (18 calendar days) | 1-6 | 7-8 | 9-18 |
 
 **HI-Small rule.** The dataset paper says HI-Small spans 10 days, and 99.98% of the rows are in days 1-10; days 11-18 are a sparse tail (1,108 rows, 655 of them laundering: late legs of long attempts). We split the 10 bulk days in the HI-Medium proportions 9:3:4 (5.6 / 1.9 / 2.5 days, rounded to 6 / 2 / 2) and put the tail in test so time order is kept and nothing is dropped. Note this is not the 60/20/20 split by transaction index that the AMLworld paper and Multi-GNN use (ours is 64/19/17 of rows), so SOTA reproduction on "their" split needs their split, not ours.
@@ -139,4 +139,41 @@ Cross-check against the AMLworld paper (arXiv:2306.16424, Table 4): HI-Small has
 
 ### HI-Medium
 
-(status below)
+| | HI-Medium |
+|---|---|
+| Transactions | 31,898,238 |
+| Laundering transactions | 35,230 (0.110%) |
+| Accounts | 2,087,786 (0 not in accounts csv) |
+| Time range | 2022-09-01 00:00:00 to 2022-09-28 15:58:00 (28 calendar days) |
+| Split days | train 1-9, val 10-12, test 13-28 |
+| train split | 19,487,126 tx, 15,713 laundering (0.081%) |
+| val split | 3,592,257 tx, 6,226 laundering (0.173%) |
+| test split | 8,818,855 tx, 13,291 laundering (0.151%) |
+| Pattern attempts / lines | 2756 / 22,743 |
+| Unmatched pattern lines | 0 |
+| Pattern lines matching more than one tx | 0 |
+| Laundering tx not in any attempt | 12,487 |
+| Attempts spanning a split boundary | 1046 of 2756 |
+| Top-30 bank views cover | 19.5% of tx, 26.8% of laundering tx |
+| Largest bank | bank 70: 2,979,311 tx |
+| Smallest view | bank 2776: 81,322 tx |
+| Raw Trans.csv sha256 | 3126afb8155e7c88... |
+
+Typologies:
+
+| typology | attempts | transactions | attempts spanning splits |
+|---|---|---|---|
+| bipartite | 369 | 2135 | 63 |
+| cycle | 367 | 2235 | 161 |
+| fan_in | 355 | 2315 | 131 |
+| fan_out | 345 | 2128 | 117 |
+| gather_scatter | 322 | 4289 | 183 |
+| random | 331 | 1667 | 106 |
+| scatter_gather | 331 | 3988 | 163 |
+| stack | 336 | 3986 | 122 |
+
+Built with the same command (`python scripts/prepare_data.py --data hi_medium`) on the 15 GB / 3070 Ti laptop: **30 s wall clock, 4.8 GB peak RSS**; Parquet 876 MB, views 117 MB. No code change was needed to stream it. It matches the dataset paper (32M tx, 35K laundering, 1 per 905: 31,898,238 / 35,230 = 905).
+
+HI-Medium also has a sparse tail: days 17-28 hold 6,987 rows (4,084 of them laundering). `configs/data/hi_medium.yaml` therefore sets `test: [13, 28]` (the canonical days 13-16 plus the tail), the same rule as HI-Small. Row shares are train 61% / val 11% / test 28%.
+
+The raw `HI-Medium_Trans.csv` (3 GB) was deleted after the build to save disk; its sha256 is in the manifest. To rebuild, download it again with the Kaggle command above (file `HI-Medium_Trans.csv`) and run with `--force`.
