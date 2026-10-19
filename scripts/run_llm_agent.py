@@ -32,6 +32,9 @@ import polars as pl  # noqa: E402
 
 from ftm import guards  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS  # noqa: E402
+from ftm.external.dspy_react import DspyReact  # noqa: E402
+from ftm.external.lats import Lats  # noqa: E402
+from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
@@ -46,7 +49,8 @@ from ftm.planners.llm_prompt import Mode  # noqa: E402
 from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
-GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo}
+GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
+           "dspy_react": DspyReact}
 
 
 def git_commit() -> str:

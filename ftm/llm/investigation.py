@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import bisect
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -167,6 +168,7 @@ class Investigation:
     sim_days: float = 0.0
     posterior: float = field(init=False)
     _asked: set = field(default_factory=set, repr=False)
+    _batch: list | None = field(default=None, repr=False)
 
     def __post_init__(self):
         self.eps_left = self.limits.eps_per_alert
@@ -198,11 +200,28 @@ class Investigation:
             self._asked.add(key)
             r = entry.response
             self.eps_left -= float(getattr(r, "eps_spent", 0.0) or 0.0)
-            self.sim_days += r.latency_days if isinstance(r, Reply) else r.after_days if isinstance(r, Timeout) else 0.0
+            days = r.latency_days if isinstance(r, Reply) else r.after_days if isinstance(r, Timeout) else 0.0
+            if self._batch is None:
+                self.sim_days += days
+            else:
+                self._batch.append(days)
         self.log.append(entry)
         self.posterior = self.fusion.posterior(self.alert.p0, self.log)
         entry.posterior_after = self.posterior
         return entry
+
+    @contextmanager
+    def parallel(self) -> Iterator[None]:
+        """Questions asked inside this block are sent at once: simulated time advances by the SLOWEST answer,
+        not the sum (RQ5 / E13; LLMCompiler). Calls still run one by one, so ToolBox needs no thread safety."""
+        if self._batch is not None:
+            raise RuntimeError("parallel blocks do not nest")
+        self._batch = []
+        try:
+            yield
+        finally:
+            self.sim_days += max(self._batch, default=0.0)
+            self._batch = None
 
     def answers_so_far(self) -> list[AnswerSoFar]:
         out = []
