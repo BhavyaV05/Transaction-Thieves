@@ -25,7 +25,8 @@ from ftm.intake import conformal as cf  # noqa: E402
 
 
 def thresholds(cal: pl.DataFrame, a_l: float, a_c: float, cfg: dict) -> dict:
-    p, y, d = cal["p0"].to_numpy(), cal["label"].cast(pl.Int8).to_numpy(), cal["day"].to_numpy()
+    p, y = cal["p0"].to_numpy(), cal["label"].cast(pl.Int8).to_numpy()
+    d = (cal["timestamp"] - cal["timestamp"].min()).dt.total_seconds().to_numpy() / 86400  # fractional days: the cal part is < 1 day
     tl, tc = cf.mondrian_thresholds(p, y, a_l, a_c, days=d, half_life_days=cfg["half_life_days"])
     lam = cf.selective_clear_threshold(p, y, cfg["scrc_beta"], cfg["scrc_delta"]) if cfg.get("scrc_beta") else None
     # alert <=> launder in the prediction set <=> p >= t_launder. With apply_scrc the auto-clear region is also
@@ -50,7 +51,7 @@ def main() -> None:
     ap.add_argument("--alpha-launder", type=float, default=None)
     a = ap.parse_args()
     cfg = yaml.safe_load(Path(a.config).read_text())
-    a_l = a.alpha_launder if a.alpha_launder is not None else cfg["alpha_launder"]
+    a_l = a.alpha_launder if a.alpha_launder is not None else cfg["alpha_launder"][a.data]
     a_c = cfg["alpha_clean"]
     dcfg = io.load_config(a.data)
     pq = dcfg["parquet_dir"]
@@ -74,6 +75,16 @@ def main() -> None:
     miss = cf.achieved_miss_rates(ev["p0"].to_numpy(), ev["label"].cast(pl.Int8).to_numpy(), th["t_launder"], th["t_clean"])
     cleared = ev.filter(pl.col("p0") < th["t_alert"])
     out["thresholds"] = th
+    # time-weighting ablation: same target, different half-lives; achieved miss on the untouched eval part
+    tw = []
+    for hl in (None, cfg["half_life_days"], 0.25, 0.1):
+        c2 = {**cfg, "half_life_days": hl}
+        t2 = thresholds(cal, a_l, a_c, c2)
+        m2 = cf.achieved_miss_rates(ev["p0"].to_numpy(), ev["label"].cast(pl.Int8).to_numpy(), t2["t_launder"], t2["t_clean"])
+        tw.append({"half_life_days": hl, "t_launder": t2["t_launder"], "t_clean": t2["t_clean"],
+                   "launder_miss": m2["launder_miss"], "clean_miss": m2["clean_miss"],
+                   "alerts_eval": int((ev["p0"].to_numpy() >= t2["t_launder"]).sum())})  # fmt: skip
+    out["time_weighting_ablation"] = tw
     out["achieved_vs_target"] = {
         "launder_miss_target": a_l, "launder_miss_achieved": miss["launder_miss"], "n_launder_eval": miss["n_launder"],
         "clean_miss_target": a_c, "clean_miss_achieved": miss["clean_miss"], "n_clean_eval": miss["n_clean"],

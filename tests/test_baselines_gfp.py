@@ -106,3 +106,9 @@ def test_edge_scorer_features_are_past_only():
     a = feats.filter(pl.col("tx_id").is_in(ids)).sort("tx_id").select(FEATURES)
     b = feats2.sort("tx_id").select(FEATURES)
     assert a.equals(b)
+
+
+def test_read_p0_test_split_is_locked(monkeypatch):
+    monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
+    with pytest.raises(guards.TestSplitLocked):
+        g.read_p0("hi_small", split="test")

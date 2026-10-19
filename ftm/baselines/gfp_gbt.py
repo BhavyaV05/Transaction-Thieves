@@ -292,3 +292,17 @@ def p0_table(res: dict, mode: str, bank: int | None, cm: str, seed: int = 0) -> 
         "model": ["gfp_lgbm"] * n, "split": f["split"], "val_part": res["part"], "p0": pl.Series(res["p0"]).fill_nan(None),
         "score_raw": pl.Series(res["raw"]).fill_nan(None), "label": f["is_laundering"], "seed": [seed] * n, "commit": [cm] * n,
     }).with_columns(pl.col("val_part").replace("", None))  # fmt: skip
+
+
+def read_p0(ds: str, mode: str | None = None, split: str | None = None, root: str = "data/scores") -> pl.DataFrame:
+    """Load the p0 hand-off table `root/<ds>/p0.parquet` (train and val rows only; there are no test scores).
+
+    mode: 'one_bank' | 'see_everything' | None for both; split: 'train' | 'val' | None. Asking for 'test'
+    raises TestSplitLocked unless FTM_FINAL_RUN=1 (and the file has no test rows even then).
+    """
+    if split == "test":
+        guards.require_final_run("p0 scores of the test split")
+    df = pl.read_parquet(f"{root}/{ds}/p0.parquet")  # time-guard: not transactions
+    if mode is not None:
+        df = df.filter(pl.col("mode") == mode)
+    return df if split is None else df.filter(pl.col("split") == split)

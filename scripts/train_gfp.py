@@ -169,7 +169,8 @@ def report(ds: str) -> None:
         fit, ev = vb.filter(pl.col("val_part") == "fit"), vb.filter(pl.col("val_part") == "eval")
         y = ev["label"].cast(pl.Int8).to_numpy()
         const = float(fit["label"].cast(pl.Float64).mean())
-        r = {"bank": b, "n_eval": len(y), "n_pos": int(y.sum()), "brier_const": float(np.mean((const - y) ** 2))}
+        allb = ob.filter(pl.col("bank") == b)
+        r = {"bank": b, "n_laundering_train_val": int(allb["label"].sum()), "n_eval": len(y), "n_pos": int(y.sum()), "brier_const": float(np.mean((const - y) ** 2))}
         for tag, col in (("ob", "p0"), ("se", "p0_se")):
             thr = g.metrics(fit["label"].cast(pl.Int8).to_numpy(), fit[col].to_numpy())["thr"]
             m = g.metrics(y, ev[col].to_numpy(), thr)
@@ -199,6 +200,12 @@ def report(ds: str) -> None:
     out = Path("data/runs")
     tab.write_csv(out / f"gap_{ds}_per_bank.csv")
     (out / f"gap_{ds}_pooled.json").write_text(json.dumps(pooled, indent=1))
+    md = ["| bank | laundering (train+val) | eval rows | eval pos | Brier const | Brier one-bank | Brier see-all | PR-AUC one-bank | PR-AUC see-all | F1 one-bank | F1 see-all |",
+          "|---|---|---|---|---|---|---|---|---|---|---|"]  # fmt: skip
+    f = lambda x: "n/a" if x is None or x != x else f"{x:.4f}"  # noqa: E731
+    for r in tab.iter_rows(named=True):
+        md.append(f"| {r['bank']} | {r['n_laundering_train_val']} | {r['n_eval']} | {r['n_pos']} | {r['brier_const'] * 1e3:.3f}e-3 | {r['brier_ob'] * 1e3:.3f}e-3 | {r['brier_se'] * 1e3:.3f}e-3 | {f(r['prauc_ob'])} | {f(r['prauc_se'])} | {f(r['f1_ob'])} | {f(r['f1_se'])} |")  # fmt: skip
+    (out / f"gap_{ds}_per_bank.md").write_text("\n".join(md) + "\n")
     with pl.Config(tbl_rows=40, tbl_cols=12, float_precision=5):
         print(tab)
     print(json.dumps(pooled, indent=1))
