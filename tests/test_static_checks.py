@@ -14,6 +14,8 @@ def test_every_tool_applies_time_guard():
 
     Nothing under ftm/ outside ftm/data/ may scan/read Parquet or import duckdb. ftm/data/ build
     steps read their own freshly written output; io.py must call both guards.
+    A line that reads other Parquet (run logs, back-test caches) is allowed if it ends with the
+    marker `# time-guard: not transactions`.
     """
     root = Path(__file__).resolve().parents[1] / "ftm"
     banned_calls = {"scan_parquet", "read_parquet", "read_table", "ParquetFile"}
@@ -21,7 +23,13 @@ def test_every_tool_applies_time_guard():
     for path in root.rglob("*.py"):
         if path.relative_to(root).parts[0] == "data":
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
+        src = path.read_text()
+        exempt = {
+            i for i, line in enumerate(src.splitlines(), 1) if "# time-guard: not transactions" in line
+        }
+        for node in ast.walk(ast.parse(src)):
+            if getattr(node, "lineno", None) in exempt:
+                continue
             if isinstance(node, ast.Attribute) and node.attr in banned_calls:
                 offenders.append(f"{path.relative_to(root)}:{node.lineno} {node.attr}")
             if isinstance(node, ast.Name) and node.id in banned_calls:

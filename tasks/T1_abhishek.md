@@ -4,7 +4,7 @@ Checklist generated from tracks.md section 3.9. Read the whole track section fir
 Tick items off in your PRs and post one line per week in STATUS.md. Weeks count from TA approval (G0).
 
 ## Week 0
-- [x] Download both datasets (HI-Small done; HI-Medium: see ftm/data/README.md)
+- [x] Download both datasets (HI-Small and HI-Medium built; see ftm/data/README.md)
 - [x] install snapml and PyG
 - [x] trace the ~80 F1 source (ExSTraQt, arXiv:2604.02899; docs/t1_week0.md)
 - [x] check code/licence for Group A/B and pick the AML-specific federated method (Tian et al.; docs/t1_week0.md)
@@ -13,7 +13,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] run the conversion benchmark (waiting for the T3 script)
 
 ## Week 1
-- [x] Parquet, splits, pattern parsing, bank views, aliasing, time guard (HI-Small; docs in ftm/data/README.md). **Hand off to everyone by end of week**
+- [x] Parquet, splits, pattern parsing, bank views, aliasing, time guard (HI-Small and HI-Medium; docs in ftm/data/README.md). **Hand off to everyone by end of week**
 
 ## Week 2
 - [ ] GFP+GBT per bank and full

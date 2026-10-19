@@ -87,7 +87,7 @@ view = alias.apply_aliases(seen, alias.read_aliases(cfg["parquet_dir"], seed=0))
 
 - Every reader needs `split=` and/or `as_of=`; there is no read-everything call. `as_of` applies `ftm.guards.enforce_as_of` (`timestamp <= as_of`).
 - `split="test"` (or a list containing it) raises `TestSplitLocked` unless `FTM_FINAL_RUN=1`. With `as_of` only (no split), test rows are removed unless `FTM_FINAL_RUN=1`, so a late `as_of` cannot reach the test days.
-- `tests/test_static_checks.py::test_every_tool_applies_time_guard` fails if any file under `ftm/` outside `ftm/data/` scans or reads Parquet or imports duckdb/pyarrow. **Do not read `data/parquet` or `data/views` directly in tools**; call `ftm.data.io`. Ad-hoc analysis in notebooks may use DuckDB, but never for results.
+- `tests/test_static_checks.py::test_every_tool_applies_time_guard` fails if any file under `ftm/` outside `ftm/data/` scans or reads Parquet or imports duckdb/pyarrow. **Do not read `data/parquet` or `data/views` directly in tools**; call `ftm.data.io`. To read Parquet that is not transaction data (run logs, back-test caches), end that line with `# time-guard: not transactions`. Ad-hoc analysis in notebooks may use DuckDB, but never for results.
 - Tools must still pass `as_of` per question; the guard is only as good as its callers. Labels in `patterns.parquet` have no `as_of` (they are labels for training and back-testing, not evidence).
 
 ## Held-out cycles (E12)
