@@ -15,14 +15,14 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 
 | | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
-| GPU / VRAM (check `nvidia-smi`) | | | RTX 5070 Ti / 16 GB | none |
-| RAM | | | 32 GB | |
-| CPU model / cores | | | | |
-| Free disk | | | | |
-| OS | | | | |
-| WSL2 works? | | | | |
-| Python version | | | | |
-| Benchmark tokens/s (see 4) | | | (reference) | n/a |
+| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) | | RTX 5070 Ti / 16 GB | none |
+| RAM | 15 GiB (about 9.5 GiB available) | | 32 GB | |
+| CPU model / cores | i7-12650H, 10 cores / 16 threads | | | |
+| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup | | | |
+| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | | | |
+| WSL2 works? | n/a (native Linux) | | | |
+| Python version | 3.12.13 (system, user site; no venv) | | | |
+| Benchmark tokens/s (see 4) | pending T3 benchmark script (Qwen3-8B Q4_K_M ollama proxy numbers in `docs/t1_week0.md`) | | (reference) | n/a |
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 
@@ -32,7 +32,7 @@ HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-
 - [ ] **T1:** Qwen3-8B 4-bit loads and answers a 6,000-token prompt on the 3070 Ti. This decides whether T1 is a second LLM server.
 - [ ] **T2:** Qwen3-1.7B / 4B-4bit run on the 3050 Ti (for harness smoke tests).
 - [ ] **T4:** the mock LLM / record-replay mode works (no GPU needed); a request to the shared endpoint succeeds.
-- [ ] **T1:** snapml and PyG install; the snapml licence is checked.
+- [x] **T1:** snapml and PyG install; the snapml licence is checked. snapml 1.17.2 has a cp312 wheel and the GraphFeaturePreprocessor runs on a 5-edge toy graph; PyG 2.7.0 two-layer GCN runs on the 3070 Ti (CUDA); pcst_fast solves a toy tree. snapml licence is proprietary (IBM ILAN), see `docs/t1_week0.md`.
 - [ ] **T2:** SimPy and Lark install and a toy grammar parses.
 
 ## 4. Benchmark for converting laptop hours to reference-hours
