@@ -1,0 +1,11 @@
+# C2 conformal intake (T1). Read by scripts/make_alerts.py.
+alpha_launder: 0.50       # target miss rate among laundering rows (share NOT alerted); sweep in the report
+alpha_clean: 0.02         # target miss rate among clean rows (clean label dropped from the set)
+half_life_days: 1.5       # time weighting of calibration rows (None = equal weights)
+scrc_beta: 0.0005         # max laundering share among auto-cleared transactions (selective risk bound)
+scrc_delta: 0.1           # confidence level of the bound
+fixed_window: [0.15, 0.85]  # ablation
+evidence_window_hours: 72
+seed: 0
+bulk_days: {hi_small: 10, hi_medium: 16}   # days that hold 99.9% of rows (AMLworld paper table 4); test = bulk_days - last val day
+targets: {train: 20000, val_min: 1000, test: [2500, 4000], test_pos_min: 375}

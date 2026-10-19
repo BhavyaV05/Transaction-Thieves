@@ -1,11 +1,168 @@
 """GFP+LightGBM per bank and full; calibrated probabilities per transaction.
 
-Owner: T1 (Abhishek).  Run from the repo root, e.g. python scripts/train_gfp.py
+Owner: T1 (Abhishek).  Run from the repo root:
+  python scripts/train_gfp.py --repro                      # E1/G1: reproduce F1 63.23 on the paper split
+  python scripts/train_gfp.py --data hi_small --mode both  # p0 hand-off (#5, #17), see ftm/baselines/README.md
 """
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import polars as pl
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ftm.baselines import gfp_gbt as g  # noqa: E402
+
+SEED = 0
+
+
+def commit() -> str:
+    return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def repro(csv: str, out: str, threads: int) -> None:
+    """E1/G1 reproduction on the published split. REPRODUCTION ONLY, behind --repro because the
+    published 60/20/20 split overlaps our test days: it reads the raw CSV, uses only the paper's
+    hyper-parameter families (fixed small grid, tuned on its own val part), writes nothing to
+    data/scores or data/alerts, and nothing from it feeds any later model or decision (tracks.md 3.5).
+    """
+    import xgboost as xgb
+    from sklearn.metrics import average_precision_score
+
+    t0 = time.time()
+    raw = pl.read_csv(csv, infer_schema_length=10000, schema_overrides={"Account": pl.Utf8, "Account_duplicated_0": pl.Utf8})
+    cols = raw.columns  # duplicated header "Account" is renamed by polars
+    acc = [c for c in cols if c.startswith("Account")]
+    df = raw.rename({
+        "Timestamp": "timestamp_s", "From Bank": "from_bank", "To Bank": "to_bank", acc[0]: "from_account",
+        acc[1]: "to_account", "Amount Received": "amount_received", "Amount Paid": "amount_paid",
+        "Receiving Currency": "receiving_currency", "Payment Currency": "payment_currency",
+        "Payment Format": "payment_format", "Is Laundering": "is_laundering",
+    }).with_row_index("tx_id")  # fmt: skip
+    df = df.with_columns(
+        pl.col("tx_id").cast(pl.Int64),
+        pl.col("timestamp_s").str.to_datetime("%Y/%m/%d %H:%M").alias("timestamp"),
+        pl.col("from_bank").cast(pl.Int64), pl.col("to_bank").cast(pl.Int64),
+        (pl.col("from_bank").cast(pl.Utf8) + "_" + pl.col("from_account")).alias("fk"),
+        (pl.col("to_bank").cast(pl.Utf8) + "_" + pl.col("to_account")).alias("tk"),
+    )  # fmt: skip
+    nodes = pl.concat([df["fk"], df["tk"]]).unique().sort().to_frame("k").with_row_index("node")
+    df = df.join(nodes.rename({"k": "fk", "node": "src_id"}), on="fk").join(nodes.rename({"k": "tk", "node": "dst_id"}), on="tk")
+    df = df.sort(["timestamp", "tx_id"])
+    n = df.height
+    split = np.where(np.arange(n) < 0.6 * n, "train", np.where(np.arange(n) < 0.8 * n, "val", "paper_test"))
+    df = df.with_columns(pl.Series("split", split), pl.col("src_id").cast(pl.Int64), pl.col("dst_id").cast(pl.Int64))
+    print(f"loaded {n} rows in {time.time() - t0:.0f}s", flush=True)
+    codes = g.category_codes(df.filter(pl.col("split") != "paper_test"))
+    t1 = time.time()
+    X, names, f = g.build_features(df, codes, threads=threads)
+    t_feat = time.time() - t1
+    y = f["is_laundering"].to_numpy().astype(int)
+    sp = f["split"].to_numpy()
+    tr, va, te = sp == "train", sp == "val", sp == "paper_test"
+    print(f"features {X.shape} in {t_feat:.0f}s", flush=True)
+    res = {"commit": commit(), "seed": SEED, "n": int(n), "feature_seconds": t_feat, "n_features": X.shape[1],
+           "published": {"GFP+XGBoost batch128": 63.23, "GFP+LightGBM batch128": 62.86}, "models": {}}  # fmt: skip
+
+    t2 = time.time()
+    m, p, log = g.fit_lgbm(X[tr], y[tr], X[va], y[va], seed=SEED, threads=threads)
+    sv, st = m.predict_proba(X[va])[:, 1], m.predict_proba(X[te])[:, 1]
+    mv = g.metrics(y[va], sv)
+    res["models"]["lightgbm"] = {"params": p, "grid": log, "val": mv, "test": g.metrics(y[te], st, mv["thr"]),
+                                  "test_f1_at_0.5": g.metrics(y[te], st, 0.5)["f1"], "seconds": time.time() - t2}  # fmt: skip
+    best = None
+    t2 = time.time()
+    xlog = []
+    for depth in (6, 10):
+        for w in (1.0, 8.0):
+            xm = xgb.XGBClassifier(n_estimators=600, max_depth=depth, learning_rate=0.05, scale_pos_weight=w,
+                                   tree_method="hist", subsample=0.8, colsample_bytree=0.8, n_jobs=threads,
+                                   random_state=SEED, eval_metric="aucpr", early_stopping_rounds=30)  # fmt: skip
+            xm.fit(X[tr], y[tr], eval_set=[(X[va], y[va])], verbose=False)
+            ap = float(average_precision_score(y[va], xm.predict_proba(X[va])[:, 1]))
+            xlog.append({"max_depth": depth, "scale_pos_weight": w, "val_ap": ap})
+            if best is None or ap > best[0]:
+                best = (ap, xm, {"max_depth": depth, "scale_pos_weight": w})
+    xm = best[1]
+    sv, st = xm.predict_proba(X[va])[:, 1], xm.predict_proba(X[te])[:, 1]
+    mv = g.metrics(y[va], sv)
+    res["models"]["xgboost"] = {"params": best[2], "grid": xlog, "val": mv, "test": g.metrics(y[te], st, mv["thr"]),
+                                 "test_f1_at_0.5": g.metrics(y[te], st, 0.5)["f1"], "seconds": time.time() - t2}  # fmt: skip
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(json.dumps(res, indent=1))
+    for k, v in res["models"].items():
+        t = v["test"]
+        print(k, f"test F1 {100 * t['f1']:.2f} P {t['precision']:.3f} R {t['recall']:.3f} PR-AUC {t['pr_auc']:.3f}", flush=True)
+
+
+COLS = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amount_received", "amount_paid",
+        "receiving_currency", "payment_currency", "payment_format", "is_laundering", "split"]  # fmt: skip
+
+
+def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None) -> None:
+    from ftm.data import io
+
+    cfg = io.load_config(ds)
+    pq = cfg["parquet_dir"]
+    v = io.scan_transactions(pq, split="val", columns=["timestamp"]).select(
+        pl.col("timestamp").min().alias("a"), pl.col("timestamp").max().alias("b")).collect()  # fmt: skip
+    cut = (v["a"][0], v["b"][0])
+    out_dir = Path("data/scores") / ds
+    out_dir.mkdir(parents=True, exist_ok=True)
+    Path("data/runs").mkdir(parents=True, exist_ok=True)
+    cm = commit()
+    meta = {"dataset": ds, "mode": mode, "commit": cm, "seed": SEED, "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}}
+    parts = []
+    t0 = time.time()
+    if mode == "see_everything":
+        frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS).collect()
+        res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads)
+        meta["graphs"]["all"] = res["meta"] | {"importances": res.get("importances")}
+        parts.append(g.p0_table(res, mode, None, cm))
+        del frame, res
+    else:
+        todo = banks or io.read_banks(cfg["views_dir"])["bank"].to_list()
+        for b in todo:
+            frame = io.scan_view(cfg["views_dir"], b, split=["train", "val"], columns=COLS).collect()
+            frame = frame.with_columns((pl.col("from_bank") == b).cast(pl.Int8).alias("out"))  # bank knows its direction
+            res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads, extra_cols=["out"])
+            meta["graphs"][str(b)] = res["meta"]
+            parts.append(g.p0_table(res, mode, b, cm))
+            print(f"bank {b}: {res['meta'].get('status')} {time.time() - t0:.0f}s", flush=True)
+    df = pl.concat(parts)
+    df.write_parquet(out_dir / f"p0_{mode}.parquet")
+    meta["seconds"] = time.time() - t0
+    Path(f"data/runs/p0_{ds}_{mode}.json").write_text(json.dumps(meta, indent=1, default=str))
+    other = out_dir / f"p0_{'one_bank' if mode == 'see_everything' else 'see_everything'}.parquet"
+    if other.exists():
+        pl.concat([pl.read_parquet(out_dir / f"p0_{m}.parquet") for m in ("one_bank", "see_everything")]).write_parquet(out_dir / "p0.parquet")
+    print("done", ds, mode, f"{time.time() - t0:.0f}s", flush=True)
 
 
 def main() -> None:
-    raise NotImplementedError("scripts/train_gfp.py: not implemented yet")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repro", action="store_true", help="reproduction on the published split (raw CSV)")
+    ap.add_argument("--csv", default="data/raw/hi_small/HI-Small_Trans.csv")
+    ap.add_argument("--out", default="data/runs/gfp_repro_hi_small.json")
+    ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--data", default=None)
+    ap.add_argument("--mode", choices=["one_bank", "see_everything"], default=None)
+    ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
+    a = ap.parse_args()
+    if a.repro:
+        repro(a.csv, a.out, a.threads)
+    elif a.data and a.mode:
+        run_dataset(a.data, a.mode, a.threads, a.banks)
+    else:
+        raise SystemExit("give --repro, or --data hi_small --mode one_bank|see_everything")
 
 
 if __name__ == "__main__":
