@@ -4,8 +4,13 @@ Owner: T4 (Shreyas). Thresholds for H1-H4, H9 (and H10) are fixed on **validatio
 
 Holm order for the primary tests: H1 → H2 → H3 → H4 → H9. Secondary hypotheses are corrected separately; exploratory ones (H5, H8) get no significance claims.
 
-Files to add here (week 4 draft, week 13 freeze):
+Files (drafts until the G3 commit; frozen at week 13):
 
-- `hypotheses.yaml`: thresholds and equivalence margin per hypothesis
-- `external_list.yaml`: locked list of external systems and modes (native/ported), backbone and caps
-- `subset_manifest.txt`: hash of the frozen 1,000-alert external subset
+| File | What | Status |
+|---|---|---|
+| `hypotheses.yaml` | Every hypothesis: tier, statistic, decision rule, threshold; bootstrap, clusters, Holm families, equivalence margin, gap-closed rules | draft; values marked `fix_on_val` are set from validation before G3 |
+| `e18_decision.yaml` | Backbone-size decision rule (stages, pick rule, thinking arm) | draft; **must be committed before E18 stage 1 runs** (week 3) |
+| `external_list.yaml` | External systems, modes, tiers, owners, implementation; backbone and caps; settings fixed before each reimplementation runs | draft; locked at G3 |
+| `subset_manifest.txt` | Rule for the frozen 1,000-alert subset now, the sha256 of its IDs at G5 | draft |
+
+`tests/test_prereg.py` checks that the files parse and agree with the plan (primary family, tiers, experiments).
