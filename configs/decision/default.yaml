@@ -1,0 +1,11 @@
+# C14 decision and stopping (ftm/decision/threshold.py). Owner: T4. Same for every system that uses our formula.
+# The objective and its costs or capacity are pre-registered (prereg/hypotheses.yaml) before G3; the threshold
+# itself is fitted on HI-Medium validation alerts and frozen before test.
+objective: capacity          # cost | f1 | capacity; capacity matches the plan.md 9.2 "caught at a fixed daily review capacity"
+capacity_per_day: null       # fix on validation (investigator reviews per day); required for objective: capacity
+cost_fn: null                # for objective: cost (cost of a missed launderer)
+cost_fp: null                # for objective: cost (cost of a false alarm)
+stop:
+  min_eps: 0.25              # smallest eps level (configs/compliance/gate.yaml)
+  max_delta: 1.0             # ceiling per unit eps: 1 for yes/no answers; raise to the largest count gap in use
+  max_weight: 1.0            # largest fusion weight a, w_f after fitting (1 = naive Bayes)
