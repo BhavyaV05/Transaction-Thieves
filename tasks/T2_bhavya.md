@@ -4,9 +4,9 @@ Checklist generated from tracks.md section 4.10. Read the whole track section fi
 Tick items off in your PRs and post one line per week in STATUS.md. Weeks count from TA approval (G0).
 
 ## Week 0
-- [ ] Install SimPy, Lark
-- [ ] DSL grammar sketch
-- [ ] report RAM/CPU
+- [x] Install SimPy, Lark
+- [x] DSL grammar sketch
+- [x] report RAM/CPU
 - [ ] small-model smoke test (Qwen3-1.7B / 4B-4bit)
 
 ## Week 1

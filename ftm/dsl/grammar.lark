@@ -1,0 +1,17 @@
+// Question language (C4), SKETCH v0 (week 0). Owner: T2 (Bhavya).
+// Surface syntax follows the stand-in in ftm/planners/llm_dsl.py (name(SLOT, key=value, ...)) so T3's adapter
+// stays small. Week 1 adds the type checker, canonical form and sensitivity; this file only fixes the shape.
+//   passthrough(ALERT.receiver, min_frac=0.8, within_h=24)
+// No account id, alias, date or amount literal is part of the language: slots are relative to the alert.
+
+start: NAME "(" [arg ("," arg)*] ")"
+?arg: kwarg | value
+kwarg: NAME "=" value
+?value: slot | NUMBER -> number | NAME -> ident | list
+slot: "ALERT" "." NAME
+list: "[" [value ("," value)*] "]"
+
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+NUMBER: /-?\d+(\.\d+)?/
+%import common.WS
+%ignore WS

@@ -15,14 +15,14 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 
 | | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
-| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) |  | RTX 5070 Ti / 16 GB (16,303 MiB, driver 610.88) | none |
-| RAM | 15 GiB (about 9.5 GiB available) |  | 31.1 GiB usable (32 GB) | 14 GiB (about 5 GiB available) |
-| CPU model / cores | i7-12650H, 10 cores / 16 threads |  | Ryzen 9 7900X, 12 cores / 24 threads | i7-12650H, 10 cores / 16 threads |
-| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup |  | E: 406 GB (use this); C: 38 GB (keep off it) | 19 GB |
-| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) |  | Windows 11 Pro (build 26200) | Ubuntu 26.04.1 LTS (Linux 7.0.0) |
-| WSL2 works? | n/a (native Linux) |  | Yes (Docker Desktop 29.6.2, WSL2 backend; no Ubuntu distro) | n/a (native Linux) |
-| Python version | 3.12.13 (system, user site; no venv) |  | 3.12.10 (`.venv`, uv) | 3.12 venv via uv (system Python is 3.14) |
-| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) |  | (reference) pending the vLLM smoke test | n/a |
+| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) | RTX 3050 Laptop / 4 GB (4,096 MiB, driver 581.83) | RTX 5070 Ti / 16 GB (16,303 MiB, driver 610.88) | none |
+| RAM | 15 GiB (about 9.5 GiB available) | 15.7 GiB (about 5.4 GiB free at the time of the report) | 31.1 GiB usable (32 GB) | 14 GiB (about 5 GiB available) |
+| CPU model / cores | i7-12650H, 10 cores / 16 threads | i7-12650H, 10 cores / 16 threads | Ryzen 9 7900X, 12 cores / 24 threads | i7-12650H, 10 cores / 16 threads |
+| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup | C: 12.4 GB free (keep off it); D: 220 GB free (use this) | E: 406 GB (use this); C: 38 GB (keep off it) | 19 GB |
+| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | Windows 11 Pro (build 26200) | Windows 11 Pro (build 26200) | Ubuntu 26.04.1 LTS (Linux 7.0.0) |
+| WSL2 works? | n/a (native Linux) | WSL2 installed (Ubuntu 26.04 and Ubuntu, both stopped); not tested with a GPU workload | Yes (Docker Desktop 29.6.2, WSL2 backend; no Ubuntu distro) | n/a (native Linux) |
+| Python version | 3.12.13 (system, user site; no venv) | 3.12.10 (system, no venv) | 3.12.10 (`.venv`, uv) | 3.12 venv via uv (system Python is 3.14) |
+| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) | pending: needs T3's vLLM reference run and a small model on this machine | (reference) pending the vLLM smoke test | n/a |
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 
@@ -33,7 +33,7 @@ HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-
 - [ ] **T2:** Qwen3-1.7B / 4B-4bit run on the 3050 Ti (for harness smoke tests).
 - [ ] **T4:** the mock LLM / record-replay mode works (no GPU needed); a request to the shared endpoint succeeds.
 - [x] **T1:** snapml and PyG install; the snapml licence is checked. snapml 1.17.2 has a cp312 wheel and the GraphFeaturePreprocessor runs on a 5-edge toy graph; PyG 2.7.0 two-layer GCN runs on the 3070 Ti (CUDA); pcst_fast solves a toy tree. snapml licence is proprietary (IBM ILAN), see `docs/t1_week0.md`.
-- [ ] **T2:** SimPy and Lark install and a toy grammar parses.
+- [x] **T2:** SimPy 4.1.2 and Lark 1.3.1 install and a toy grammar parses (`ftm/dsl/grammar.lark`, `tests/test_dsl_sketch.py`).
 
 ## 4. Benchmark for converting laptop hours to reference-hours
 
