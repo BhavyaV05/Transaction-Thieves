@@ -44,6 +44,27 @@ def summarize(df: pl.DataFrame, t_alert: float, days: float) -> dict:
             "precision": float(y[a].sum() / max(a.sum(), 1)), "laundering_rows": int(y.sum())}  # fmt: skip
 
 
+def part_report(df: pl.DataFrame, th: dict, a_l: float, a_c: float) -> dict:
+    """Alerts, positives, empty sets, achieved vs target miss and the intake miss rate for one set of p0 rows.
+
+    Empty set = neither label in the prediction set (t_clean < p0 < t_launder); not an alert, counted as an
+    intake miss (decision 5). Intake miss (end-to-end, decision 2) = share of laundering rows not alerted,
+    by view row and by unique transaction (a transaction is alerted if any bank view alerts it).
+    """
+    p, y = df["p0"].to_numpy(), df["label"].cast(pl.Int8).to_numpy()
+    hl, hc = cf.prediction_sets(p, th["t_launder"], th["t_clean"])
+    alert = p >= th["t_alert"]
+    miss = cf.achieved_miss_rates(p, y, th["t_launder"], th["t_clean"])
+    tx = df.with_columns(pl.Series("a", alert), pl.col("label").cast(pl.Int8).alias("y")).group_by("tx_id").agg(pl.col("a").any(), pl.col("y").max())
+    pos_tx, hit_tx = int(tx["y"].sum()), int(tx.filter(pl.col("a"))["y"].sum())
+    return {"rows": df.height, "laundering_rows": int(y.sum()), "alerts": int(alert.sum()), "positives": int(y[alert].sum()),
+            "empty_set_rows": int((~hl & ~hc).sum()), "empty_set_laundering": int(y[~hl & ~hc].sum()),
+            "launder_miss_target": a_l, "launder_miss_achieved": miss["launder_miss"],
+            "clean_miss_target": a_c, "clean_miss_achieved": miss["clean_miss"],
+            "intake_miss_rows": 1 - float(y[alert].sum()) / max(int(y.sum()), 1),
+            "laundering_tx": pos_tx, "laundering_tx_alerted": hit_tx, "intake_miss_tx": 1 - hit_tx / max(pos_tx, 1)}  # fmt: skip
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
@@ -77,6 +98,8 @@ def main() -> None:
     out["thresholds"] = th
     hl, hc = cf.prediction_sets(ev["p0"].to_numpy(), th["t_launder"], th["t_clean"])
     yy = ev["label"].cast(pl.Int8).to_numpy()
+    out["val_parts"] = {part: part_report(val.filter(pl.col("val_part") == part), th, a_l, a_c) for part in ("fit", "cal", "eval")}
+    out["val_parts"]["val_all"] = part_report(val, th, a_l, a_c)
     out["set_types_eval"] = {name: {"rows": int(m.sum()), "laundering": int(yy[m].sum())} for name, m in (
         ("launder_and_clean", hl & hc), ("launder_only", hl & ~hc), ("clean_only", ~hl & hc), ("empty", ~hl & ~hc))}  # fmt: skip
     # time-weighting ablation: same target, different half-lives; achieved miss on the untouched eval part
@@ -120,31 +143,28 @@ def main() -> None:
     out["projection_note"] = "PROJECTION from val alert rates per day x bulk test days; no test row was read."
 
     # alert sets for train and val at the chosen alpha
-    starts = {s: io.scan_transactions(pq, split=s, columns=["timestamp"]).select(pl.col("timestamp").min()).collect()["timestamp"][0]
-              for s in ("train", "val")}  # fmt: skip
     adir = Path(dcfg["alerts_dir"])
     adir.mkdir(parents=True, exist_ok=True)
     cols = ["alert_id", "tx_id", "bank", "timestamp", "p0", "label", "attempt_id", "typology", "split", "val_part",
-            "drop_spans_split", "drop_window", "keep"]  # fmt: skip
+            "spans_split"]  # fmt: skip
     counts = {}
     for split in ("train", "val"):
         d = p0.filter((pl.col("split") == split) & (pl.col("p0") >= th["t_alert"])).join(pat, on="tx_id", how="left")
         d = d.sort(["timestamp", "tx_id", "bank"]).with_columns(
             (pl.lit(split[0].upper()) + pl.int_range(pl.len()).cast(pl.Utf8).str.zfill(6)).alias("alert_id"))  # fmt: skip
-        d = al.add_drop_flags(d, att, {split: starts[split]}, window_hours=cfg["evidence_window_hours"])
+        d = al.add_span_flag(d, att)
         d.select(cols).write_parquet(adir / f"{split}.parquet")
         # attempt-level recall: attempts with >= 1 laundering tx in this split that have >= 1 alerted tx (any bank view)
         att_all = (pat.join(p0.filter(pl.col("split") == split).select("tx_id").unique(), on="tx_id")["attempt_id"].n_unique())
         att_hit = d.filter(pl.col("attempt_id").is_not_null())["attempt_id"].n_unique()
         counts[split] = {"alerts": d.height, "positives": int(d["label"].sum()),
-                         "keep_spans_rule_only": int((~d["drop_spans_split"]).sum()),
-                         "keep_spans_rule_pos": int(d.filter(~pl.col("drop_spans_split"))["label"].sum()),
-                         "keep_both_rules": int(d["keep"].sum()), "keep_both_rules_pos": int(d.filter(pl.col("keep"))["label"].sum()),
+                         "spans_split_flagged": int(d["spans_split"].sum()),  # sensitivity analysis only, never a filter
+                         "kept_if_span_rule": int((~d["spans_split"]).sum()), "kept_if_span_rule_pos": int(d.filter(~pl.col("spans_split"))["label"].sum()),
                          "unique_tx": d["tx_id"].n_unique(), "attempts_in_split_views": att_all, "attempts_with_alert": att_hit}  # fmt: skip
     out["alert_sets"] = counts
     Path("data/runs").mkdir(parents=True, exist_ok=True)
     Path(f"data/runs/alerts_{a.data}.json").write_text(json.dumps(out, indent=1, default=str))
-    print(json.dumps({k: out[k] for k in ("thresholds", "set_types_eval", "achieved_vs_target", "eval_conformal", "eval_fixed_window", "alert_sets")}, indent=1, default=str))
+    print(json.dumps({k: out[k] for k in ("thresholds", "val_parts", "set_types_eval", "achieved_vs_target", "eval_conformal", "eval_fixed_window", "alert_sets")}, indent=1, default=str))
     for s in sweep:
         print({k: (round(v, 4) if isinstance(v, float) else v) for k, v in s.items()})
 
