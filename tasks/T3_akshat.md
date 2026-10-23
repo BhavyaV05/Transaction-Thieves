@@ -21,14 +21,14 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 
 ## Week 4
 - [ ] **ReAct through the harness on 50 val alerts**: ReAct reimplemented (`ftm/external/react.py`) and runs through the shared `Investigation` layer; same blockers as G2
-- [ ] teacher runs start. **G3** (library schema and keying frozen)
+- [ ] teacher runs start (blocked on the GPU smoke test and the harness). **G3** (library schema and keying frozen): schema v1 written (`ftm/library/shape.py`, `store.py`); freeze it at G3 with the team
 
 ## Week 5
-- [ ] Strategy library build
+- [ ] Strategy library build: builder, search, freeze/hash, E11 account keying and `scripts/build_library.py` done and tested; the real build needs teacher/planner runs and the back-test table
 - [ ] teacher runs continue
 
 ## Week 6
-- [ ] Reflexion, ReWOO ports
+- [x] Reflexion, ReWOO ports (reimplementations; `ftm/external/reflexion.py`, `rewoo.py`; adaptations in `docs/t3_planner_agents.md` §3)
 - [ ] small-decision dataset arrives
 
 ## Week 7

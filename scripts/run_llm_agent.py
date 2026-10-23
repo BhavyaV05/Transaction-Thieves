@@ -9,7 +9,7 @@ Owner: T3 (Akshat).  Spec: tracks.md 5.8 weeks 3-4 (planner on 20 val alerts for
     python scripts/run_llm_agent.py --system react   --alerts val --data hi_small --n 50 --llm endpoint --toolbox harness
 
 Writes outputs/runs/<run_id>/: runlog.parquet (ftm.eval.runlog schema), traces.jsonl (per-step LLM text, for case
-studies and distillation; aliased only), questions.jsonl (composed questions, hand-off #8), summary.json.
+studies and distillation; aliased only), alerts.jsonl (p0 + shape, for build_library.py), questions.jsonl (composed questions, hand-off #8), summary.json.
 `--toolbox dev` answers randomly (ftm/llm/devtools.py) and is labelled variant=devtools: never a result.
 """
 
@@ -33,6 +33,10 @@ import polars as pl  # noqa: E402
 from ftm import guards  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS  # noqa: E402
 from ftm.external.react import React  # noqa: E402
+from ftm.external.reflexion import Reflexion  # noqa: E402
+from ftm.external.rewoo import Rewoo  # noqa: E402
+from ftm.library.shape import shape_from_rows  # noqa: E402
+from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
 from ftm.llm.mock import MockLLM, RecordingClient  # noqa: E402
@@ -42,6 +46,7 @@ from ftm.planners.llm_prompt import Mode  # noqa: E402
 from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
+GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo}
 
 
 def git_commit() -> str:
@@ -87,9 +92,11 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int) -> list[tuple[
         a = alerts.row(i, named=True)
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
-        _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)
+        ev_rows, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
+        summary["shape"] = {**shape_from_rows(ev_rows.to_dicts(), summary["receiver"], row["timestamp"]).as_dict(),
+                            "receiver": summary["receiver"]}  # receiver: only the E11 account-keyed ablation reads it
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
         out.append((ctx, int(a["label"])))
     return out
@@ -121,7 +128,7 @@ def verdict_rows(v: Verdict, base: dict, label: int | None) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--system", choices=["planner", "react"], default="planner")
+    ap.add_argument("--system", choices=["planner", *GROUP_D], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
     ap.add_argument("--data", default="hi_small")
@@ -132,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--replay", type=Path, default=None, help="replay a cassette (implies --llm mock, strict)")
     ap.add_argument("--toolbox", choices=["dev", "harness"], default="dev")
     ap.add_argument("--thinking", action="store_true", help="Qwen3 thinking mode (off by default, see docs/t3_week0.md)")
+    ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
     ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "runs")
@@ -153,18 +161,30 @@ def main(argv: list[str] | None = None) -> int:
 
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
     if a.system == "planner":
-        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra)
+        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra,
+                            use_library=a.library is not None)
         system_name = system.system_name
     else:
-        system = React(llm, seed=a.seed, extra=extra)
-        system_name = "react"
+        system = GROUP_D[a.system](llm, seed=a.seed, extra=extra)
+        system_name = a.system
     alerts = synthetic_alerts(a.n, a.seed) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k)
     tools = make_toolbox(a.toolbox, a.seed)
+    library_hash = None
+    if a.library is not None:
+        library = StrategyLibrary.load(a.library)
+        if not library.frozen:
+            raise SystemExit(f"{a.library} is not frozen; freeze it before using it in a run (plan.md 6.13)")
+        library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
     limits = Limits()
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": "devtools" if a.toolbox == "dev" else "harness", "seed": a.seed}  # fmt: skip
 
     rows, sq, n_scored, seconds = [], 0.0, 0, []
+    with (out / "alerts.jsonl").open("w", encoding="utf-8") as f:  # server side, no labels (for build_library.py)
+        for ctx, _ in alerts:
+            shape = dict(ctx.summary.get("shape") or {})
+            f.write(json.dumps({"alert_id": ctx.alert_id, "split": ctx.split, "p0": ctx.p0,
+                                "receiver": shape.pop("receiver", ctx.summary.get("receiver")), "shape": shape}) + "\n")
     with (out / "traces.jsonl").open("w", encoding="utf-8") as traces:
         for ctx, label in alerts:
             t0 = time.perf_counter()
@@ -179,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "data": a.data, "model": model,
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
-               "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n,
+               "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n, "library_hash": library_hash,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()

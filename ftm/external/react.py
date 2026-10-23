@@ -58,17 +58,15 @@ class React:
     def system_prompt(self, alert: AlertContext, banks: list, eps_left: float) -> str:
         return f"{INSTRUCTION}\n\n{tools_doc(self.dsl, banks, eps_left)}\n\n{EXEMPLAR}"
 
-    def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
+    def start(self, alert: AlertContext, tools: ToolBox, limits: Limits, tag: str):
         session = Investigation(alert, tools, limits, fusion=self.fusion)
-        budget = BudgetedClient(self.llm, limits, tag=f"react:{alert.alert_id}")
-        banks = list(alert.summary.get("partner_banks", []))
-        ex = ToolExecutor(alert, tools, session, self.dsl, banks)
-        messages = [
-            {"role": "system", "content": self.system_prompt(alert, banks, session.eps_left)},
-            {"role": "user", "content": case_text(alert, str(alert.summary.get("evidence", ""))) + "\nThought 1:"},
-        ]
-        step = 0
-        while ex.finished is None and budget.calls_left > 0 and not session.out_of_time:
+        budget = BudgetedClient(self.llm, limits, tag=f"{tag}:{alert.alert_id}")
+        ex = ToolExecutor(alert, tools, session, self.dsl, list(alert.summary.get("partner_banks", [])))
+        return session, budget, ex
+
+    def episode(self, messages: list[dict], ex: ToolExecutor, budget: BudgetedClient, step: int = 0) -> int:
+        """Run Thought/Action/Observation turns until finish, calls or simulated time run out. Returns the last step."""
+        while ex.finished is None and budget.calls_left > 0 and not ex.session.out_of_time:
             step += 1
             try:
                 resp = budget.chat(messages, max_tokens=self.max_tokens_per_step, temperature=self.temperature,
@@ -80,5 +78,17 @@ class React:
             messages.append({"role": "assistant", "content": thought_action})
             if ex.finished is None:
                 messages.append({"role": "user", "content": f"Observation {step}: {obs}\nThought {step + 1}:"})
+        return step
+
+    def first_messages(self, alert: AlertContext, ex: ToolExecutor, preface: str = "") -> list[dict]:
+        case = case_text(alert, str(alert.summary.get("evidence", "")))
+        return [
+            {"role": "system", "content": self.system_prompt(alert, ex.banks, ex.session.eps_left)},
+            {"role": "user", "content": f"{preface}{case}\nThought 1:"},
+        ]
+
+    def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
+        session, budget, ex = self.start(alert, tools, limits, self.name)
+        self.episode(self.first_messages(alert, ex), ex, budget)
         self.last_trace = ex.log
         return session.verdict(ex.finished, budget.usage)

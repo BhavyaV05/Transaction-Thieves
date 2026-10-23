@@ -89,6 +89,14 @@ def dev_responder(messages: list[dict], kw: dict, n_questions: int = 2) -> str:
         else:
             out["action"] = "stop"
         return json.dumps(out)
+    system = messages[0]["content"]
+    if "variable #E" in system:  # ReWOO planner
+        bank = _first_bank(messages)
+        return "\n".join(f"Plan: check {i}\n#E{i + 1} = ask_bank[{bank} | 0.5 | {examples[i]}]" for i in range(n_questions))
+    if "as finish[p]" in system:  # ReWOO solver
+        return "finish[0.4]"
+    if system.startswith("You are checking"):  # Reflexion evaluator
+        return "CONFIDENT. The answers agree."
     asked = sum(1 for m in messages if m["role"] == "user" and m["content"].startswith("Observation"))
     if asked < n_questions:
         return f"I should check the receiver.\nAction: ask_bank[{_first_bank(messages)} | 0.5 | {examples[asked]}]"

@@ -62,18 +62,35 @@ The tool grammar is the same for every port (`text_agent.py`): `ask_bank[bank | 
 | System | Status | Source and licence | What we keep from the paper |
 |---|---|---|---|
 | ReAct | **done** (week 4) | Reimplementation; official code MIT, nothing copied | Interleaved Thought/Action/Observation, a stop sequence before Observation, Finish ends the episode. One in-domain exemplar, written by us and shared by every port |
-| Reflexion | week 6 | | |
-| ReWOO | week 6 | | |
+| Reflexion | **done** (week 6) | Reimplementation; official code MIT, nothing copied | Actor (our ReAct loop), Evaluator, verbal Self-Reflection, episodic memory across trials on the same alert. **Adaptations:** the evaluator is the LLM judging itself (labels are never shown); all trials share one ε budget, call cap and `Investigation`, so later trials see the real answers already received |
+| ReWOO | **done** (week 6) | Reimplementation; official code MIT, nothing copied | Planner writes the whole plan (`#E<n> = tool[args]`, later steps may cite `#E<k>`), the Worker runs it with no LLM call, the Solver gives `finish[p]`. 2 LLM calls per alert. The Solver output must be `finish[p]` or a bare number; a stray number is never taken as the answer |
 | LATS, LLMCompiler, DSPy-ReAct | weeks 8–9 | | |
 
 End-to-end probability is the number in `finish[...]`. It is `None` if the calls run out first. The run script scores a `None` as `p0` and counts these cases in `summary.json`; T4's eval code should use the same rule (to agree). Questions-only scoring uses the questions log, as for every system.
 
-## 4. Running
+## 4. Strategy library (C12)
+
+- **Key** (`ftm/library/shape.py`, schema v1, **frozen at G3** once the team agrees): typology guess (or `any`), in-degree and out-degree buckets of the receiver in the evidence, number of banks, median-amount bucket + flat/varied, and the time span. No account id. The buckets are coarse on purpose.
+- **Build** (`ftm/library/build.py`, `scripts/build_library.py`):
+  - Input is one record per (past train/val alert, question asked).
+  - Gain = Brier(before) − Brier(after) for that alert's label.
+  - Records are grouped by (shape key, question, ε). A group needs **≥ `n_min` = 20 alerts** before it can produce anything:
+    - **success:** the question was accepted in back-testing and mean gain − 2·se > 0;
+    - **failure:** it was rejected, or mean gain + 2·se < 0.
+  - So a failure note never comes from one noisy answer. Test records raise an error.
+- **Search** (`StrategyLibrary.search`): exact key first, then the nearest shape with the same typology (or `any`); successes before failures. The planner looks up once at the start (typology `any`) and again whenever its typology guess changes.
+- **Lifecycle:** `freeze()` returns the content hash. A frozen library refuses `add`. `load` checks the schema versions and the hash. `run_llm_agent.py --library` refuses an unfrozen file and writes the hash into `summary.json`.
+- **E11 ablation:** `keying="account"` files strategies by the receiver alias, to show that this memorises known criminals. Never use it in the main system.
+- **Until T2/T4 wire it**, `LibraryToolBox(tools, library)` makes any ToolBox's `search_library` answer from a library file.
+
+## 5. Running
 
 ```bash
 # offline smoke run: no GPU, no data, random dev answers (variant=devtools, never a result)
 python scripts/run_llm_agent.py --system planner --mode compose --n 5
 python scripts/run_llm_agent.py --system react --n 5
+
+python scripts/run_llm_agent.py --system reflexion --n 5        # or rewoo
 
 # record a real run, replay it later without a GPU (token counts and latency replay too)
 python scripts/run_llm_agent.py --system planner --llm endpoint --record outputs/cassettes/p20.jsonl ...
@@ -90,7 +107,7 @@ Real-alert runs build the evidence with `ftm.retrieval.views.top_k_by_amount_vie
 - `questions.jsonl` (hand-off #8)
 - `summary.json`
 
-## 5. Blocked on other tracks
+## 6. Blocked on other tracks
 
 | Needed for | What | From | Workaround now |
 |---|---|---|---|
@@ -100,3 +117,4 @@ Real-alert runs build the evidence with `ftm.retrieval.views.top_k_by_amount_vie
 | How gate and accountant refusals arrive | Exception types from harness v0 | T2, T4 | Classified by class name (`Investigation` docstring); unknown errors propagate |
 | Real val alerts on this machine | `data/alerts/<ds>/val.parquet`, views, aliases | T1 (rebuild with `prepare_data.py` and `make_alerts.py`) | synthetic alerts |
 | Real LLM | Endpoint | T3 (GPU smoke test) | `MockLLM` + `dev_responder` |
+| A real strategy library | Teacher / planner runs on train+val, and the back-test table (accepted flags) | T3 runs, T2 table | `build_library.py` takes the back-test table as `LRTable.from_rows` JSONL until hand-off #9 fixes the format |

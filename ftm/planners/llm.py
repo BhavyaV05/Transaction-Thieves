@@ -129,10 +129,14 @@ class LLMPlanner:
         if self.use_rules:
             for r in tools.lookup_rules(RULES_QUERY)[:5]:
                 rules.append({"rule_id": str(r.get("rule_id")), "text": str(r.get("text") or r.get("snippet", ""))[:300]})
-        strategies = []
-        if self.use_library:
-            strategies = [{"text": str(s.get("text", ""))[:300]} for s in tools.search_library(alert.summary.get("shape", {}))[:5]]
-        return evidence, rules, strategies
+        return evidence, rules, self._strategies(alert, tools, None)
+
+    def _strategies(self, alert: AlertContext, tools: ToolBox, typology: str | None) -> list[dict]:
+        """C12 lookup by situation shape; the typology part of the key is the planner's current guess."""
+        if not self.use_library:
+            return []
+        shape = {**alert.summary.get("shape", {}), "typology": typology or "any"}
+        return [{"text": str(s.get("text", ""))[:300]} for s in tools.search_library(shape)[:5]]
 
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         t0 = time.perf_counter()
@@ -142,7 +146,7 @@ class LLMPlanner:
         banks = list(alert.summary.get("partner_banks", []))
         summary = {k: v for k, v in alert.summary.items() if k not in _SUMMARY_HIDDEN}
         trace: list[dict] = []
-        feedback, failures, belief = None, 0, None
+        feedback, failures, belief, typology = None, 0, None, None
         step = 0
         while (budget.calls_left > 0 and session.eps_left + 1e-9 >= min(EPS_LEVELS) and not session.out_of_time
                and failures < self.max_failures_in_row):  # fmt: skip
@@ -174,6 +178,9 @@ class LLMPlanner:
             rec.update(action=action.action, typology=action.typology, rationale=action.rationale, belief=action.belief)
             if action.belief is not None:
                 belief = action.belief
+            if self.use_library and action.typology not in (None, "none", "unsure", typology):
+                typology = action.typology
+                strategies = self._strategies(alert, tools, typology)
             if action.action == "stop":
                 self.stats.stops += 1
                 break
