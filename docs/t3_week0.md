@@ -2,20 +2,20 @@
 
 Owner: T3 (Akshat). Covers the week-0 row of `tracks.md` §5.8 (serving smoke test, recipe, conversion benchmark, report specs) and the model-card check that `plan.md` §6.11 asks T3 to do in week 0.
 
-**Status (2026-10-19).** The scripts, the recipe and the model-card check are done. **The GPU smoke test has not been run yet.** Docker's disk image is still on C:, which has only 38 GB free, and the vLLM image plus three checkpoints need about 35 GB. Section 4 has the exact steps; the results table there is empty until they run. Nothing in this document is a measured GPU number.
+**Status (2026-10-23).** The scripts, the recipe and the model-card check are done. The GPU smoke test ran on native Linux (no Docker, no WSL) on the reference PC: **Qwen3-8B-AWQ and Qwen3-4B-AWQ start on sm_120 and are benchmarked (section 4); gpt-oss-20b does not fit in 16 GB while the Linux desktop is running (needs about 1 GiB more), so it has no number.** Section 4 lists the one config change (`qwen3-8b` `gpu_memory_utilization` 0.90 to 0.85). The week-0 "load each E18 candidate at the context cap" check is not done in week 0: it moves into the E18 sweep itself (`docs/t3_e18.md`, per-candidate procedure).
 
 ## 1. Machine report (reference machine)
 
 | | T3 Akshat |
 |---|---|
-| GPU / VRAM | NVIDIA GeForce RTX 5070 Ti (Blackwell, sm_120) / 16,303 MiB, driver 610.88 |
+| GPU / VRAM | NVIDIA GeForce RTX 5070 Ti (Blackwell, sm_120) / 16,303 MiB, driver 580.178.04 on Linux (CUDA 13.0); the same PC ran 610.88 under Windows |
 | RAM | 31.1 GiB usable (32 GB installed) |
 | CPU | AMD Ryzen 9 7900X, 12 cores / 24 threads |
-| Free disk | E: 406 GB free of 467 GB (all project data, caches and weights go here); C: 38 GB free of 269 GB (keep off it) |
-| OS | Windows 11 Pro, build 26200 |
-| WSL2 | Yes: default version 2, Docker Desktop 29.6.2 with the WSL2 backend. No Ubuntu distro yet, so vLLM runs in Docker (`--backend docker`, the default on Windows) |
-| Python | 3.12.10 in `.venv` (uv); CI uses 3.11 |
-| Benchmark | Reference machine (factor 1.0 by definition); tokens/s pending the smoke test |
+| Free disk | / (btrfs, 463 GB): 126 GB free after downloading the three profiles (22 GB in `~/hf_cache`; weights go there via `FTM_HF_HOME`) |
+| OS | Fedora Linux 43 (kernel 7.2.10), KDE/Wayland. Dual boot on the same physical PC as the Windows 11 reference machine, so timings here are the reference timings (factor 1.0) |
+| WSL2 / Docker | Not used. Native vLLM 0.31.0 (torch 2.13.0+cu130) in a separate uv venv, `~/projects/vllm-venv`; the Windows install has Docker Desktop 29.6.2 and WSL2 but they were not needed |
+| Python | 3.12.12 in `.venv` (uv); CI uses 3.11 |
+| Benchmark | Reference machine (factor 1.0 by definition). Measured, qwen3-8b (vLLM 0.31.0): prefill 5,138 tok/s, decode 117.4 tok/s, batch (4 parallel) 112.6 tok/s (section 4) |
 
 ## 2. Model-card check (`plan.md` §6.11)
 
@@ -29,7 +29,7 @@ Checked on 2026-10-19 against the Hugging Face API (`/api/models/<repo>` for lic
 | QLoRA base (planner SFT) | `Qwen/Qwen3-8B` | `b968826d9c46` | Apache-2.0 | 40,960 | bf16 (QLoRA loads in 4-bit) | ≈16 GB |
 | QLoRA base (fast model) | `Qwen/Qwen3-4B` | `1cfa9a720891` | Apache-2.0 | 40,960 | bf16 | ≈8 GB |
 
-E18 backbone-sweep candidates (not downloaded; checked so the sweep can be planned):
+E18 backbone-sweep candidates (not downloaded; the licence and context were checked so the sweep can be planned. The load check at the 8,192 context cap is not part of week 0: it happens in the sweep, one candidate at a time, see `docs/t3_e18.md`):
 
 | Model | Repo | Licence | Native context | Note |
 |---|---|---|---|---|
@@ -56,33 +56,46 @@ All are open-weight and allowed for research use. None conflicts with plan §10 
 
 Server flags that matter for parity: `--seed 0`, `--generation-config vllm` (ignore each model's default sampling; the client always sends `temperature`), `--max-model-len 8192` (the 6,000-token prompt cap from `Limits.max_tokens` plus room for the answer), `--enable-prefix-caching`, and `--reasoning-parser qwen3` for Qwen3, so thinking text comes back separately from the JSON answer.
 
-## 4. Smoke test: steps and results (to run)
+## 4. Smoke test: steps and results (run 2026-10-23, native Linux)
 
-Steps, in order. The recipe in `docs/hardware.md` §5 is the short version.
+Steps that ran, in order (the recipe in `docs/hardware.md` §5 is the short version). The same dual-boot PC is the Windows reference machine, so these numbers are the reference numbers.
 
-1. **Move Docker's data off C:** Docker Desktop → Settings → Resources → Advanced → *Disk image location* → `E:\DockerDesktop` → Apply & restart. Today `docker_data.vhdx` is at `%LOCALAPPDATA%\Docker\wsl\disk` on C:.
-2. `setx FTM_HF_HOME E:\hf_cache`, then open a new shell. Weights go to `E:\hf_cache\hub`.
-3. GPU visible in Docker: `docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu24.04 nvidia-smi`.
-4. `python scripts/serve_llm.py --gen-key`, then load `.env` into the shell (see the recipe).
-5. For each of `qwen3-8b`, `qwen3-4b`, `gpt-oss-20b` (one at a time; gpt-oss-20b needs the whole GPU):
-   - `python scripts/serve_llm.py --model <profile>` and wait for `Application startup complete`
-   - `python scripts/bench_llm.py --machine t3-5070ti` in a second shell
-   - write down the load time and peak VRAM (`nvidia-smi`) in the table below
-6. Post the `qwen3-8b` JSON (`outputs/bench/t3-5070ti_qwen3-8b.json`) so the other machines can pass it as `--reference`.
+1. `git checkout -b t3/week0-smoke-test`; `export FTM_HF_HOME=$HOME/hf_cache`; `export PATH=$HOME/projects/vllm-venv/bin:$PATH` (so `vllm` resolves for `--backend native`).
+2. `.venv/bin/python scripts/serve_llm.py --gen-key`, then `set -a && source .env && set +a`.
+3. Download each model at its pinned revision before timing the load: `HF_HOME=$HOME/hf_cache ~/projects/vllm-venv/bin/hf download <repo> --revision <rev>`. For gpt-oss-20b add `--exclude "original/*" --exclude "metal/*"`: the repo also holds `original/` and `metal/` copies of the weights that vLLM does not use (about 40 GB in total). Sizes on disk: Qwen3-8B-AWQ 5.7 GB, Qwen3-4B-AWQ 2.5 GB, gpt-oss-20b 13 GB.
+4. For each of `qwen3-8b`, `qwen3-4b`, `gpt-oss-20b`: `serve_llm.py --model <profile> --dry-run` (binds 127.0.0.1, flags as in `serving.yaml`), start the server (`--backend native` is the default on Linux), wait for `Application startup complete` (load time = launch to that line, weights already on disk), sample VRAM with `nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -lms 500`, then `FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1 python scripts/bench_llm.py --machine t3-5070ti` in a second shell. Stop the server before the next profile.
+5. The `qwen3-8b` JSON (`outputs/bench/t3-5070ti_qwen3-8b.json`, not committed) is the `--reference` for the other machines.
 
-| Profile | Starts on sm_120? | Load time | Peak VRAM | Prefill tok/s | Decode tok/s | Batch tok/s (4 parallel) | Notes |
+Idle VRAM before any server: 1,329 to 1,600 MiB (KDE/Wayland desktop; it drifted between the two values, 1,600 MiB at every server start). Peak VRAM below is the maximum of the sampler (absolute, including the desktop) and the same minus 1,600 MiB.
+
+| Profile | Starts on sm_120? | Load time | Peak VRAM (abs / over idle) | Prefill tok/s | Decode tok/s | Batch tok/s (4 parallel) | Notes |
 |---|---|---|---|---|---|---|---|
-| qwen3-8b | pending | | | | | | |
-| qwen3-4b | pending | | | | | | |
-| gpt-oss-20b | pending | | | | | | |
+| qwen3-8b | Yes. AWQ via `MarlinLinearKernel`, `FLASH_ATTN` attention | 159 s (cold: first `torch.compile` and CUDA-graph capture) | 15,020 / 13,420 MiB | 5,138 | 117.4 | 112.6 | `gpu_memory_utilization` 0.90 fails, 0.85 works (below). KV cache 40,496 tokens |
+| qwen3-4b | Yes. Same kernels | 102 s | 10,938 / 9,338 MiB | 8,412 | 172.1 | 167.0 | Profile unchanged (0.60). KV cache 38,560 tokens |
+| gpt-oss-20b | Loads the MXFP4 MoE with the `MARLIN` backend and `FLASHINFER` attention, then **runs out of memory while allocating weights** | n/a | 14,894 / 13,294 MiB at the failure | n/a | n/a | n/a | Fails with the desktop running; see below. No number |
+
+The benchmark prompt is 7,498 tokens with the Qwen3 tokenizer (the docstring in `bench_llm.py` says about 3,000 and `Limits.max_tokens` is 6,000), so the prefill figure is for a long prompt; with 256 forced output tokens it still fits the 8,192 context. `bench_version` was left at 1 so results stay comparable. No WARNING from `bench_llm.py` (`short_outputs` 0). vLLM logs `FlashInfer top-p/top-k sampling unavailable: SM 12.x requires CUDA >= 12.9; falling back` and `Failed to get device capability: SM 12.x requires CUDA >= 12.9`; both are harmless here (the torch build is cu130 and the kernels ran).
+
+Thinking stays off: the client sends `enable_thinking: false` through `chat_template_kwargs` (`ftm/fastmodel/model.py`, `scripts/run_llm_agent.py`); `bench_llm.py` itself sends no `reasoning_effort` and no thinking switch, so the Qwen benchmark ran with the Qwen3 default chat template, which has thinking on (with 256 forced tokens the decode rate is unaffected, but the benchmark is not the thinking-off setting the agents use). Not changed here; decide whether `bench_llm.py` should pass `enable_thinking: false` (that would bump `bench_version`).
+
+**Errors and fixes.**
+
+| Profile | Error | Fix |
+|---|---|---|
+| qwen3-8b | `ValueError: Free memory on device cuda:0 (13.68/15.47 GiB) on startup is less than desired GPU memory utilization (0.9, 13.92 GiB)`. Twice, identical. vLLM sees 15.47 GiB total and the desktop holds about 1.6 GB, so 0.90 is 0.25 GiB too much | `configs/llm/serving.yaml`, `qwen3-8b`: `gpu_memory_utilization` 0.90 to 0.85 (13.15 GiB). Only the KV-cache budget changes (40,496 tokens, 4.9x concurrency at 8,192). Not a behaviour change, but the other serving machines should use the same value for parity |
+| gpt-oss-20b | Attempt 1 (0.92): the same free-memory `ValueError` (0.92 = 14.23 GiB, 13.68 free). Attempt 2 (0.88, the most the free-memory check allows): `torch.OutOfMemoryError ... Tried to allocate 1.08 GiB ... 817 MiB free`, raised in `ParallelLMHead` creation, with 13.10 GiB already in use. Attempt 3 (0.88 plus `PYTORCH_ALLOC_CONF=expandable_segments:True`): the same OOM, 943 MiB free | None worked, so `serving.yaml` is unchanged for this profile (0.92). It is a weight-allocation OOM, so the fallback table's `--max-model-len 6656` cannot help, and `--gpu-memory-utilization 0.95` is refused by the free-memory check on this machine. The model needs roughly 1 GiB more than the GPU has left next to the desktop. Not tried: running the GPU headless (stop the display manager, SSH in), which would free the desktop's 1.3 to 1.6 GB; that is the next thing to try, otherwise Qwen3-14B as teacher (`tracks.md` §5.10) |
+
+Download and run time: about 10 minutes of server time in total (8B 253 s including two failed starts, 4B 165 s, gpt-oss 3 failed starts about 75 s), 0.17 GPU-hours, logged in `GPU_CALENDAR.md`.
+
+**Windows (Docker) alternative.** The Windows steps are kept for completeness: move Docker's disk image off C: (Docker Desktop, Settings, Resources, Advanced, Disk image location), `setx FTM_HF_HOME E:\hf_cache`, check `docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu24.04 nvidia-smi`, then `python scripts/serve_llm.py --model <profile>`. The reference machine now uses Linux (this section); the Windows image (about 10 GB compressed) was not pulled.
 
 **If something fails on Blackwell:**
 
 | Failure | Fallback (in order) |
 |---|---|
-| AWQ kernels missing for sm_120 | `Qwen/Qwen3-8B-FP8` (Blackwell has FP8 tensor cores; ≈9 GB, still fits 16 GB at 8k context), then bitsandbytes 4-bit on the bf16 checkpoint |
-| The v0.31.0 image lacks sm_120 kernels | The `cu13x` build of the same version, if one exists; otherwise WSL2 Ubuntu with `pip install vllm==0.31.0` |
-| gpt-oss-20b runs out of memory at 8k | `--max-model-len 6656` (6,000 prompt + 656 out), then `--gpu-memory-utilization 0.95`; else Qwen3-14B as teacher (`tracks.md` §5.10) |
+| AWQ kernels missing for sm_120 | `Qwen/Qwen3-8B-FP8` (Blackwell has FP8 tensor cores; ≈9 GB, still fits 16 GB at 8k context), then bitsandbytes 4-bit on the bf16 checkpoint. Not needed: AWQ runs through Marlin on sm_120 |
+| vLLM lacks sm_120 kernels | Not the case for the 0.31.0 wheel with torch 2.13.0+cu130 |
+| gpt-oss-20b runs out of memory | Observed: weight-allocation OOM with the desktop on, so context length does not help. Headless GPU, else Qwen3-14B as teacher (`tracks.md` §5.10) |
 
 ## 5. Open points for the team
 
