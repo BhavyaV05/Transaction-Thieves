@@ -89,3 +89,13 @@ def test_cli_shards_write_one_cache_and_assemble_builds_the_lr_table(dataset, mo
     table = [json.loads(line) for line in (ns_dir / "lr_table.jsonl").read_text().splitlines()]
     assert {r["program_canonical"]: r["accepted"] for r in table}[INFORMATIVE] is True
     assert (ns_dir / "report.json").exists() and list(ns_dir.glob("eps_cal_shard*"))
+
+
+def test_cli_can_enumerate_the_search_space():
+    spec = importlib.util.spec_from_file_location("backtest_cli2", Path(__file__).resolve().parents[1] / "scripts" / "backtest.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+    ns = type("A", (), {"questions": ["enumerate"], "max_size": 3, "questions_file": None})()
+    progs = cli.read_programs(ns)
+    assert len(progs) == len(set(progs)) > 400
+    assert any("ALERT.sender" in p for p in progs) and any("ALERT.receiver" in p for p in progs)

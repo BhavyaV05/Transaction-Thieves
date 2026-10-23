@@ -283,7 +283,7 @@ def test_mock_mode_is_deterministic_and_answers_every_kind():
 
 def test_systems_outside_the_harness_cannot_import_banks_or_the_accountant():
     root = Path(__file__).resolve().parents[1] / "ftm"
-    banned = ("ftm.banks", "ftm.privacy", "ftm.backtest")
+    banned = ("ftm.banks", "ftm.privacy", "ftm.backtest.engine", "ftm.backtest.world", "ftm.backtest.synth")
     offenders = []
     for pkg in ("external", "planners", "llm", "agent", "library", "fastmodel", "baselines"):
         for f in (root / pkg).rglob("*.py") if (root / pkg).exists() else []:

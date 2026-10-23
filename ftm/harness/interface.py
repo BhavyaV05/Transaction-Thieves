@@ -1,6 +1,10 @@
 """The shared agent harness interface (C16). EVERY investigator, ours or external, implements `Investigator`.
 
-CONTRACT. Frozen at week 4 (harness v1). Owner: T2 (Bhavya). Consumers: T3 (planner, Group D), T4 (gate, Group C).
+CONTRACT. FROZEN at harness v1 (week 4, `HARNESS_VERSION` below). A change to anything pinned in
+tests/test_harness_contract.py (this file, ftm/types.py, ftm/eval/runlog.py) needs the agreement of all four owners
+and a bump of HARNESS_VERSION. Extensions go in as new optional protocols or keyword arguments with defaults, never as
+changes to an existing signature (`SessionToolBox` below is an example).
+Owner: T2 (Bhavya). Consumers: T3 (planner, Group D), T4 (gate, Group C).
 `ask_bank` always goes through the compliance gate (T4, ftm/compliance) and the privacy accountant
 (T2, ftm/privacy), so no system can exceed budgets. See plan.md 6.16.
 """
@@ -10,6 +14,8 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from ftm.types import AlertContext, BankResponse, DslProgram, Limits, Verdict
+
+HARNESS_VERSION = "1.0"  # frozen at week 4
 
 
 @runtime_checkable

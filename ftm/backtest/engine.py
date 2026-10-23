@@ -47,6 +47,7 @@ class BtAlert:
     alert_id: str
     label: bool
     binding: AlertBinding
+    p0: float = 0.5  # the one-bank score the alert was raised with
 
 
 @dataclass(frozen=True)
@@ -194,13 +195,21 @@ def assemble(cache: BacktestCache, fdr: float = 0.10) -> list[dict]:
 
 
 def lr_table_rows(entries: Iterable[dict]) -> list[dict]:
-    """Rows in the format of T3's `LRTable.from_rows` (hand-off #9): program_canonical, eps, accepted, lr, family, bins."""
-    return [
-        {"program_canonical": e["program_canonical"], "eps": e["eps"], "accepted": bool(e["accepted"]),
-         "lr": e["lr"], "family": e["family"], "bins": e["bins"] or None}  # fmt: skip
-        for e in entries
-        if e["eligible"]
-    ]
+    """Rows in the format of T3's `LRTable.from_rows` (hand-off #9): program_canonical, eps, accepted, lr, family, bins.
+
+    Extra keys (ignored by `from_rows`): `kind`, `p_cell` = {cell: [P(cell | clean), P(cell | launder)]} measured on the
+    noisy back-test answers, which the non-LLM planners' expected-information-gain needs."""
+    rows = []
+    for e in entries:
+        if not e["eligible"]:
+            continue
+        p_cell = {k: [c[0] / max(e["n_clean"], 1), c[1] / max(e["n_launder"], 1)] for k, c in e["cells"].items()}
+        rows.append(
+            {"program_canonical": e["program_canonical"], "eps": e["eps"], "accepted": bool(e["accepted"]),
+             "lr": e["lr"], "family": e["family"], "bins": e["bins"] or None, "kind": e["kind"],
+             "p_cell": p_cell}  # fmt: skip
+        )
+    return rows
 
 
 @dataclass

@@ -69,3 +69,18 @@ def bind_alert(alert_id: str, tx: dict, home_bank: int, home_view: pl.DataFrame)
         sender_bank=int(tx["from_bank"]) if "from_bank" in tx else None,
         receiver_bank=int(tx["to_bank"]) if "to_bank" in tx else None,
     )  # fmt: skip
+
+
+def alert_context(binding: AlertBinding, p0: float, split: str = "val", partner_banks: list[int] | None = None):
+    """The aliased view of an alert that investigators see: no real ids, only public bank ids, the direction of the
+    alerted transfer and its amount. `direction` is 'out' when the home bank sent the money (the partner holds the
+    receiver) and 'in' otherwise; `counterparty_bank` is the bank on the other side."""
+    from ftm.types import AlertContext
+
+    cp = binding.partner_bank
+    return AlertContext(
+        alert_id=binding.alert_id, home_bank=str(binding.home_bank), as_of=binding.t0.isoformat(), split=split, p0=p0,
+        summary={"direction": "out" if binding.sender_bank == binding.home_bank else "in", "counterparty_bank": cp,
+                 "partner_banks": partner_banks if partner_banks is not None else [cp], "amount": binding.amount,
+                 "currency": binding.currency},
+    )  # fmt: skip

@@ -78,3 +78,11 @@ def expert_programs(subject: str = "receiver", specs: list[dict] | None = None) 
                 }
             )
     return out
+
+
+def expert_ranking(subject: str = "receiver") -> list[str]:
+    """DSL family keys (`ftm.dsl.parser.family`) in the order of the expert list: the 'expert-ranked order' of the
+    fixed-order planner. T4 owns the order of configs/questions/expert_specs.yaml; reorder the yaml to re-rank."""
+    from ftm.dsl.parser import family, parse
+
+    return list(dict.fromkeys(family(parse(p["program"])) for p in expert_programs(subject)))

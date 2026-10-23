@@ -1,6 +1,6 @@
 # ftm/harness: the shared agent harness, v0 (C16)
 
-Owner: T2 (Bhavya). Spec: `plan.md` 6.16, `tracks.md` 4.8. **Harness v0 (hand-off to T3 and T4). The interface (`interface.py`) freezes at v1, week 4.**
+Owner: T2 (Bhavya). Spec: `plan.md` 6.16, `tracks.md` 4.8. **Harness v1 (week 4): the interface is FROZEN.** `HARNESS_VERSION = "1.0"`; `tests/test_harness_contract.py` pins the `ToolBox` and `Investigator` signatures, the shared types and their defaults, the run-log columns and the refusal classes. A change needs all four owners and a version bump; extensions are new optional protocols or keyword arguments with defaults (as `SessionToolBox` and `rule_id` are). If anything pinned there does not suit you, say so now.
 
 ```python
 from ftm.harness import make_toolbox
@@ -27,12 +27,12 @@ Always the same road: **gate** (T4: default deny, valid question, no identifying
 
 ## Bypass tests (`tests/test_harness.py`)
 
-Eleven kinds of malformed or forbidden question never reach a bank; the third question over budget never reaches a bank; the per-account cap holds across alerts; a bank with a ledger refuses to answer without the alert's real ids; nothing public on the toolbox hands out a bank, the gate or the accountant (the public surface is pinned); 360 random asks over three alerts never exceed any budget; and a static test checks that nothing in `ftm/external`, `planners`, `llm`, `agent`, `library`, `fastmodel` or `baselines` imports `ftm.banks`, `ftm.privacy` or `ftm.backtest`.
+Eleven kinds of malformed or forbidden question never reach a bank; the third question over budget never reaches a bank; the per-account cap holds across alerts; a bank with a ledger refuses to answer without the alert's real ids; nothing public on the toolbox hands out a bank, the gate or the accountant (the public surface is pinned); 360 random asks over three alerts never exceed any budget; and a static test checks that nothing in `ftm/external`, `planners`, `llm`, `agent`, `library`, `fastmodel` or `baselines` imports `ftm.banks`, `ftm.privacy` or the back-test engine, world and synth modules.
 
 ## Mock mode
 
 `MockBank`s 1 to 30 answer at random (bool 50/50, counts Poisson, k-ary uniform), seeded per question; replies are never results. Everything else is real, so a system developed against the mock meets the same refusals as on the real run. Mode `world` needs T1's data on the machine.
 
-## Not in v0
+## Not in v1
 
-Orchestrator (sequential and batched SimPy mode, run-log writer), the batched asks of RQ5, and the harness-level fairness report: weeks 4 to 5. The `ToolBox` contract is unchanged; `SessionToolBox` is an added protocol.
+The batched asks of RQ5 (async mode, weeks 8 to 11) and the harness-level fairness report. The sequential orchestrator for the non-LLM arms is `ftm/orchestrator/runner.py`, the run-log writer `ftm/harness/runlog_rows.py`. The `ToolBox` contract is unchanged since v0; `SessionToolBox` is an added protocol.
