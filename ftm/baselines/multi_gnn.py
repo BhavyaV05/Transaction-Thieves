@@ -80,7 +80,7 @@ def _hetero(ei, ea, y, n_nodes, ns, mean=None, std=None):
 
 
 def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epochs: int, fit_mask: np.ndarray,
-                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None) -> dict:  # fmt: skip
+                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False) -> dict:  # fmt: skip
     """Train Multi-PNA+EU on the train rows of `frame` (time-sorted, split in {train, val}), pick the epoch by AP on
     the val `fit` rows, return raw P(laundering) for every val row.
 
@@ -167,6 +167,11 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
         return float(average_precision_score(y[sel][ok], p[ok], sample_weight=sw[ok])) if y[sel][ok].sum() else 0.0, int((~ok).sum())
 
     hist, best = [], (-1.0, None)
+    if resume and ckpt is not None and Path(ckpt).exists():  # continue from the best checkpoint (fresh Adam state)
+        model.load_state_dict(torch.load(ckpt)["state"])
+        ap0, miss0 = fit_ap()
+        best = (ap0, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+        log(json.dumps({"resumed_from": str(ckpt), "fit_ap": ap0, "seed_edges_not_sampled": miss0}))
     t_start = time.time()
     for ep in range(max_epochs):
         model.train()

@@ -33,8 +33,8 @@ from ftm.baselines import gfp_gbt as g  # noqa: E402
 from ftm.baselines import multi_gnn  # noqa: E402
 from ftm.data import io  # noqa: E402
 
-MIN_TRAIN_POS = 30  # one-bank: skip views with fewer train positives (logged)
-TOP_BANKS = 10
+MIN_TRAIN_POS = 5  # one-bank: skip views with fewer train positives (logged with the count); same rule as GFP
+TOP_BANKS = 30  # every view
 EXTRA = ["from_bank", "to_bank"]
 
 
@@ -52,20 +52,23 @@ def val_cut(pq) -> tuple:
     return v["a"][0], v["b"][0]
 
 
-def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_epochs: int, clone: Path, cm: str, workers: int, ckpt, batch_size: int = 2048):
+def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_epochs: int, clone: Path, cm: str, workers: int, ckpt, batch_size: int = 2048, resume: bool = False):
     """Train + score one graph, calibrate on the val `fit` part, return (p0 table of the val rows, metadata)."""
     frame = frame.sort(["timestamp", "tx_id"])
     sp = frame["split"].to_numpy()
     part = np.full(frame.height, "", dtype="U4")
     part[sp == "val"] = g.val_parts(frame["timestamp"].filter(pl.Series(sp == "val")), *cut)
-    res = multi_gnn.train_and_score(frame, clone, budget_s, max_epochs, part == "fit", num_workers=workers, log=log, ckpt=ckpt, batch_size=batch_size)
+    res = multi_gnn.train_and_score(frame, clone, budget_s, max_epochs, part == "fit", num_workers=workers, log=log, ckpt=ckpt, batch_size=batch_size, resume=resume)
     v = frame.filter(pl.col("split") == "val")
     raw, y, vpart = res["raw"], v["is_laundering"].cast(pl.Int8).to_numpy(), part[sp == "val"]
     ok, fit = ~np.isnan(raw), vpart == "fit"
     p0 = np.full(len(raw), np.nan)
-    sig = g.has_signal(y[fit & ok], raw[fit & ok])  # signal check on the fit part itself (the part the calibrator sees)
-    cal, name = g.fit_calibrator(raw[fit & ok], y[fit & ok], has_signal=sig)
-    p0[ok] = cal(raw[ok])
+    if y[fit & ok].sum() < 1:  # no laundering row in the val fit part: no calibrator can be fit, p0 stays null (GFP skips such views too)
+        sig, name = False, "skipped: no val-fit positives"
+    else:
+        sig = g.has_signal(y[fit & ok], raw[fit & ok])  # signal check on the fit part itself (the part the calibrator sees)
+        cal, name = g.fit_calibrator(raw[fit & ok], y[fit & ok], has_signal=sig)
+        p0[ok] = cal(raw[ok])
     tab = pl.DataFrame({"tx_id": v["tx_id"], "bank": pl.Series([bank] * v.height, dtype=pl.Int64), "mode": [mode] * v.height,
                         "model": ["multi_gnn"] * v.height, "split": ["val"] * v.height, "val_part": vpart,
                         "p0": pl.Series(p0).fill_nan(None), "score_raw": pl.Series(raw.astype("f8")).fill_nan(None),
@@ -84,11 +87,18 @@ def our_split(a) -> None:
     Path("data/runs").mkdir(exist_ok=True)
     meta = {"dataset": a.data, "mode": a.mode, "commit": cm, "seed": 1, "batch_size": a.batch_size, "neighbours": list(multi_gnn.N_NEIGHS), "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}, "skipped": {}}
     t0, parts = time.time(), []
+    f_tab, f_meta = out / f"p0_multi_gnn__{a.mode}.parquet", Path(f"data/runs/p0_{a.data}_multi_gnn_{a.mode}.json")
+    base = None  # --banks resumes: the other banks' rows already on disk stay (written back with every checkpoint)
+    if a.mode == "one_bank" and a.banks and f_tab.exists():
+        base = pl.read_parquet(f_tab).filter(~pl.col("bank").is_in(list(a.banks)))  # time-guard: not transactions
+
+    def write_table(ps):
+        pl.concat(([base] if base is not None else []) + ps).write_parquet(f_tab)
     ckdir = Path("models/multi_gnn")  # gitignored
     ckdir.mkdir(parents=True, exist_ok=True)
     if a.mode == "see_everything":
         frame = io.scan_transactions(pq, split=["train", "val"], columns=cols).collect()
-        tab, m = run_graph(frame, cut, a.mode, None, a.budget_s, a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_see.pt", a.batch_size)
+        tab, m = run_graph(frame, cut, a.mode, None, a.budget_s, a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_see.pt", a.batch_size, a.resume)
         meta["graphs"]["all"] = m
         parts.append(tab)
     else:
@@ -110,11 +120,15 @@ def our_split(a) -> None:
             meta["graphs"][str(b)] = m
             parts.append(tab)
             log(f"bank {b} done, {time.time() - t0:.0f}s")
-            pl.concat(parts).write_parquet(out / f"p0_multi_gnn__{a.mode}.parquet")  # checkpoint of the table
-    df = pl.concat(parts)
-    df.write_parquet(out / f"p0_multi_gnn__{a.mode}.parquet")
+            write_table(parts)  # checkpoint of the table
+    write_table(parts)
+    if a.mode == "one_bank" and a.banks:  # keep the other banks' metadata if it exists
+        if f_meta.exists():
+            old = json.loads(f_meta.read_text())
+            meta["graphs"] = old["graphs"] | meta["graphs"]
+            meta["skipped"] = old["skipped"] | meta["skipped"]
     meta["seconds"] = time.time() - t0
-    Path(f"data/runs/p0_{a.data}_multi_gnn_{a.mode}.json").write_text(json.dumps(meta, indent=1, default=str))
+    f_meta.write_text(json.dumps(meta, indent=1, default=str))
     combine(a.data)
     log(f"done {a.mode} {meta['seconds']:.0f}s")
 
@@ -188,6 +202,7 @@ def main() -> None:
     ap.add_argument("--banks", type=int, nargs="*", default=None)
     ap.add_argument("--max-epochs", type=int, default=30)
     ap.add_argument("--batch-size", type=int, default=2048, help="2048 = reproduction config; 1024 if VRAM is short")
+    ap.add_argument("--resume", action="store_true", help="see_everything: continue from models/multi_gnn/<ds>_see.pt (best epoch so far)")
     ap.add_argument("--workers", type=int, default=0, help="LinkNeighborLoader workers")
     ap.add_argument("--clone", default="~/Documents/t1_external/Multi-GNN")
     ap.add_argument("--budget-s", type=int, default=8700, help="stop after the epoch that passes this many seconds")

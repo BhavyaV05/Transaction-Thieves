@@ -172,6 +172,56 @@ Because of that, the "gap" (the project's denominator) is only measured on HI-Sm
 Model selection by best val F1 (epoch 5): **test F1 67.64 vs the paper's Multi-PNA+EU 68.16 +- 2.65 on AML Small HI** (Table 2 of arXiv:2306.11586; Multi-GIN+EU is 64.79; Multi-PNA without EU 64.59). Reproduced (inside one paper standard deviation) even though it is a short, single-seed run; the curve was still rising at epoch 5 on val and fell at epoch 6, so longer training or more seeds could move it a point or two either way. Metrics: `data/multignn/pna_metrics.jsonl`, log `data/multignn/pna_train.log` (gitignored). Our-split Multi-GNN (one-bank, see-everything) is not done.
 
 
+## DP-FedAvg over the bank views (Group B, M5)
+
+`ftm/baselines/federated.py` + `scripts/train_federated.py`; Flower 1.42 (clip and noise helpers from `flwr.supercore.differential_privacy`) and Opacus 1.5.4 (`GradSampleModule`, `DPOptimizer`, RDP accounting). 30 clients = the 30 HI-Small bank views, **train split only** for training, val for evaluation, no test row anywhere. Rounds run in-process and sequentially; Flower's own simulation engine needs Ray, which was not installed (the 1.42 strategy classes are message-based and need a grid), so only its DP helper functions are used and the FedAvg loop is ours. The model is a tiny MLP (hidden 16, about 1,000 parameters), CPU only (the GPU was busy with Multi-GNN; a run takes 10-120 s).
+
+```
+python scripts/train_federated.py --data hi_small --unit edge   --eps 1 2 4 8        # ~10 min, 3 seeds each
+python scripts/train_federated.py --data hi_small --unit client --eps 1 2 4 8 16     # ~35 min
+```
+
+Two privacy units, **never on one axis**. delta = 1e-5 for both.
+
+| | client-level DP-FedAvg (McMahan et al. 2018) | edge-level DP-SGD (Opacus) |
+|---|---|---|
+| privacy unit | one bank's whole dataset | one transaction |
+| mechanism | each client trains locally (no per-example mechanism); its update is clipped to S = 1; the 30 updates are averaged with equal weight; Gaussian noise of std sigma S / 30 is added (Flower `compute_stdv`, `add_gaussian_noise_inplace`) | per client and round: Poisson-sampled batches (rate q = 0.02, the same for every client), per-example clipping to C = 1, Gaussian noise sigma C, 50 local steps; server FedAvg weighted by client train size (sizes treated as public) |
+| accountant | Gaussian mechanism over R = 10 rounds, all clients every round (q = 1), RDP | subsampled Gaussian over R x 50 = 500 steps, RDP, **composed twice** because a transaction between two top-30 banks sits in two clients' data |
+| features | `ctx`: the transaction's own attributes plus past-only 24 h aggregates of the two endpoints inside the bank's own view (56 features) | `tx`: the transaction's own attributes only (42 features: log amount, log paid/received, same bank, hour sin/cos, one-hot currencies and format) |
+| any model? | yes (local training is non-private; only the update is protected) | only a model whose per-example gradient depends on **one** transaction |
+
+**Why the edge-level arm cannot use a message-passing GNN.** The edge-level guarantee needs the summed clipped gradient to change by at most C when one transaction is added or removed. In a GNN the loss of every training edge in the k-hop neighbourhood depends on the neighbours' attributes, so one transaction changes the gradients of many other examples (a hub edge, of thousands), and per-sample clipping bounds none of that. A valid guarantee would need degree-bounded neighbour sampling plus node-level clipping. `tests/test_federated.py` checks the premise on the features: dropping other transactions leaves `tx` features unchanged and changes the `ctx` ones.
+
+Training hyper-parameters are fixed, not tuned on private data (SGD lr 0.5, positive weight 20 in the loss, no search over sigma schedules). The noise multiplier for a target epsilon comes from bisection on the RDP bound. Every number is on the val `eval` part (96,318 bank-view rows, 127 laundering rows, 30 views); one Platt calibrator (2 parameters) is fit on the pooled val `fit` rows (post-processing with val labels, the same protocol as the other models), F1 at the best `fit`-part threshold. Mean of 3 seeds (0, 1, 2); the Brier column shows the seed standard deviation. Constant-predictor Brier on these rows: 0.001317. Skill = 1 - Brier / constant.
+
+**Client-level (unit = one bank's dataset), `ctx` features, R = 10 rounds x 600 local steps** (local steps cost no privacy; rounds do, so few rounds and many local steps; R = 30 x 300 reached 0.056 skill without noise but needs 3x the noise):
+
+| epsilon (client) | noise multiplier | Brier | seed sd | Brier skill | PR-AUC | F1 |
+|---|---|---|---|---|---|---|
+| 1 | 12.79 | 0.001315 | 2e-6 | 0.002 | 0.0085 | 0.034 |
+| 2 | 6.80 | 0.001306 | 2e-6 | 0.008 | 0.0213 | 0.065 |
+| 4 | 3.66 | 0.001291 | 2e-6 | 0.020 | 0.0533 | 0.124 |
+| 8 | 2.02 | 0.001281 | 7e-6 | 0.027 | 0.0695 | 0.144 |
+| 16 | 1.15 | 0.001277 | 3e-6 | 0.030 | 0.0817 | 0.159 |
+| inf (no clipping, no noise) | 0 | 0.001267 | 4e-6 | 0.037 | 0.0949 | 0.183 |
+
+**Edge-level (unit = one transaction), `tx` features, R = 10 x 50 steps:**
+
+| epsilon (per transaction, incl. the 2-view composition) | noise multiplier | Brier | Brier skill | PR-AUC | F1 |
+|---|---|---|---|---|---|
+| 1 | 2.71 | 0.001317 | 0.000 | 0.0015 | 0.003 |
+| 2 | 1.58 | 0.001317 | 0.000 | 0.0015 | 0.002 |
+| 4 | 1.04 | 0.001317 | 0.000 | 0.0015 | 0.002 |
+| 8 | 0.77 | 0.001317 | 0.000 | 0.0015 | 0.002 |
+| inf (no clipping, no noise) | 0 | 0.001305 | 0.009 | 0.0216 | 0.066 |
+
+**Reading.** (1) Client-level: the Brier-vs-epsilon curve is monotone and recovers about 70 % of the non-private federated skill at epsilon 8-16, but it is below 1 % under epsilon 2; with 30 clients the noise on the averaged update (std sigma S / 30 per coordinate) swamps the signal at small epsilon. (2) Edge-level: the transaction's own attributes (amount, currency, format, hour) carry almost no laundering signal on HI-Small (non-private skill 0.009), so the DP curve is flat at the constant predictor for every epsilon; nothing is lost and nothing is gained. The edge-level guarantee is therefore only available for a model that cannot see the structure that makes laundering detectable; getting that signal back needs neighbour features, which break the unit. (3) The federated models are far weaker than GFP (one-bank Brier skill 0.107, 28 views, `0.001167` vs `0.001307`) because they are a 1,000-parameter MLP on 14 aggregates, not a GBT on 55 graph features; the curve shows the privacy cost relative to the same non-private federated model, not to the project's strongest one-bank model. The 30 views here include banks 19 and 1674, which GFP skipped.
+
+**Caveat for the report (tracks.md 3.7).** The training-time epsilon above is a guarantee about the released federated model for the stated unit. It is **not** the per-question epsilon the project reports for its answers: the values come from different mechanisms and units (a bank's dataset or a transaction vs a query answer), and epsilons of different units or different accountants must not be compared or added. The calibrator and the epoch/hyper-parameter choices use val labels outside the DP accounting. Server weights in the edge arm depend on client sizes (not protected). Results are for HI-Small only.
+
+Json (settings, per-seed rows, commit): `data/runs/federated_hi_small_{edge,client}.json` (gitignored). The runs used the code of commit `4c13ffe` (the json records the parent commit `f5fb9ae` because the code was uncommitted when they ran).
+
 ## Files
 
 - `gfp_gbt.py`: GFP wrapper, features, LightGBM fit, calibrators, metrics, `score_graph`, `p0_table`, `read_p0`.
