@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -109,7 +109,7 @@ def synthetic_experiment(system: str, n_alerts: int = 360, seed: int = 0, eps_le
     cut = int(len(alerts) * train_frac)
     train, val = alerts[:cut], alerts[cut:]
     rate = sum(a.label for a in train) / len(train)
-    val = [BtAlert(a.alert_id, a.label, a.binding, rate) for a in val]  # p0 = the base rate of the training period
+    val = [replace(a, p0=rate, split="val") for a in val]  # p0 = the base rate of the training period
     if programs is None:
         if system == "enumerator":
             programs = [canonical(n) for n in enumerate_programs(max_size, ("receiver",))]

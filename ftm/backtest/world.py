@@ -10,7 +10,7 @@ The alert's label comes from the alert set and goes into `BtAlert.label`, which 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import polars as pl
@@ -33,6 +33,7 @@ class RealWorld:
     alerts: list[BtAlert]
     alert_set_id: str
     n_skipped: int  # alerts with no partner bank (both parties at the home bank) or no ledger
+    ledgers: dict = field(default_factory=dict)  # bank -> its view of the split (the home banks' views too)
 
 
 def load_world(data: str, split: str = "train", seed: int = 0, bank_config: BankConfig | None = None,
@@ -49,7 +50,9 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
     if max_alerts:
         alerts = alerts.head(max_alerts)
     tx = io.scan_transactions(pq, split=split, columns=ALERT_TX_COLUMNS).collect()
-    joined = alerts.select("alert_id", "tx_id", "bank", "label", "p0").join(tx, on="tx_id", how="left")
+    if "typology" not in alerts.columns:
+        alerts = alerts.with_columns(pl.lit(None, dtype=pl.String).alias("typology"))
+    joined = alerts.select("alert_id", "tx_id", "bank", "label", "p0", "typology").join(tx, on="tx_id", how="left")
     if joined["timestamp"].null_count():
         raise ValueError("some alerts point at transactions outside the requested split")
     entity_of = _entities(pq)
@@ -70,10 +73,10 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
         if b.partner_bank is None:
             skipped += 1
             continue
-        out.append(BtAlert(row["alert_id"], bool(row["label"]), b, float(row["p0"])))
+        out.append(BtAlert(row["alert_id"], bool(row["label"]), b, float(row["p0"]), row["typology"], split))
     partners = {a.binding.partner_bank for a in out}
     banks = {p: PartnerBank(p, view(p), bank_config or BankConfig.load(), seed, entity_of) for p in sorted(partners)}
-    return RealWorld(banks, out, f"{data}-{split}-{len(out)}-{_digest(out)}", skipped)
+    return RealWorld(banks, out, f"{data}-{split}-{len(out)}-{_digest(out)}", skipped, ledgers)
 
 
 def _digest(alerts: list[BtAlert]) -> str:
