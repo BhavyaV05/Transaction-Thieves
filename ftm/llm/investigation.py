@@ -183,6 +183,9 @@ class Investigation:
     def out_of_time(self) -> bool:
         return self.sim_days >= self.limits.max_sim_time_days
 
+    def already_asked(self, canonical: str, bank: int | str) -> bool:
+        return (canonical, str(bank)) in self._asked
+
     def ask(self, bank: int | str, check: DslCheck, eps: float, step: int) -> QuestionLogEntry:
         """Ask one validated question. Raises DuplicateQuestion; never raises for gate/budget refusals."""
         if not check.ok:

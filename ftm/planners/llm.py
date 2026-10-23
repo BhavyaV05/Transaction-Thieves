@@ -241,7 +241,9 @@ class LLMPlanner:
                 entry = session.ask(action.bank, check, eps, step)
             except DuplicateQuestion as e:
                 self.stats.duplicates += 1
-                feedback = f"{e} (the answer is under Answers so far). Ask a different question or another bank, or stop."
+                fresh = next((b for b in banks if not session.already_asked(check.canonical, b)), None)
+                feedback = (f"{e} (the answer is under Answers so far). Ask a different question"
+                            + (f", or this question to another bank such as {fresh}" if fresh is not None else "") + ", or stop.")
                 failures += 1
                 rec["error"] = "duplicate"
                 continue
@@ -254,6 +256,8 @@ class LLMPlanner:
                 feedback = f"the {entry.gate_decision} refusal for bank {action.bank}: {why}. Ask a different question or bank, or stop."
                 failures += 1
                 rec["error"] = f"refused: {why}"
+                if "used up" in why:  # the clock or the per-alert eps budget is spent: no question can succeed any more
+                    break
                 continue
             failures, feedback = 0, None
             if isinstance(entry.response, Reply):  # the answer, so distillation can re-fuse with the real fusion model

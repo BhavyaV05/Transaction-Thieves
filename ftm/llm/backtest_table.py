@@ -139,8 +139,9 @@ def accepted_menu(table: LRTable, id_prefix: str = "B") -> list[dict]:
     items = []
     for prog, es in by_prog.items():
         es.sort(key=lambda e: e.eps)
+        lr_text = _lr_text(es[0].lr) if len(es) == 1 else "; ".join(f"eps {e.eps:g}: {_lr_text(e.lr)}" for e in es)
         items.append({"program": prog, "family": es[0].family or "", "eps": [e.eps for e in es],
-                      "slots": sorted(program_slots(prog)), "lr_text": _lr_text(es[0].lr)})  # fmt: skip
+                      "slots": sorted(program_slots(prog)), "lr_text": lr_text})  # fmt: skip
     items.sort(key=lambda x: (x["family"], x["program"]))
     width = max(2, len(str(len(items))))
     return [{"id": f"{id_prefix}{i + 1:0{width}d}", **it} for i, it in enumerate(items)]

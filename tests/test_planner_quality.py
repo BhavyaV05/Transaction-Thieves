@@ -69,7 +69,7 @@ def test_accepted_menu_merges_eps_keeps_only_accepted_and_has_stable_ids():
     assert [x["program"] for x in m] == sorted((x["program"] for x in m), key=lambda p: next(i["family"] for i in m if i["program"] == p) + p)
     assert {x["program"] for x in m} == {canon(Q_DORM), canon(Q_NEW), canon(Q_SET)}  # rejected rows are not offered
     dorm = next(x for x in m if x["program"] == canon(Q_DORM))
-    assert dorm["eps"] == [1.0, 2.0] and dorm["family"] == "dormant" and "yes x0.60" in dorm["lr_text"] and "no x1.50" in dorm["lr_text"]
+    assert dorm["eps"] == [1.0, 2.0] and dorm["family"] == "dormant" and "eps 1: yes x0.60" in dorm["lr_text"] and "eps 2: yes x0.40" in dorm["lr_text"]
     assert [x["id"] for x in m] == ["B01", "B02", "B03"] and accepted_menu(table()) == m
 
 
@@ -81,8 +81,8 @@ def test_menu_applicability_follows_slot_binding():
 
 
 def _state(menu, **kw):
-    return PlannerState(alert_summary={"amount": 1.0}, evidence_text="row", partner_banks=[220], eps_left=2.0, calls_left=20,
-                        questions=menu, **kw)  # fmt: skip
+    return PlannerState(**{"alert_summary": {"amount": 1.0}, "evidence_text": "row", "partner_banks": [220], "eps_left": 2.0, "calls_left": 20, **kw},
+                        questions=menu)  # fmt: skip
 
 
 def test_compose_prompt_shows_menu_with_eps_and_lr_but_no_backtest_shows_none():
@@ -96,6 +96,17 @@ def test_compose_prompt_shows_menu_with_eps_and_lr_but_no_backtest_shows_none():
     assert all(set(q) <= {"id", "program", "family", "note"} for q in p.questions.values())
     p.investigate(alert(), ScriptedToolBox(), Limits())
     assert "LR " not in p.llm.requests[0]["messages"][1]["content"]
+
+
+def test_trim_budgets_dense_evidence_rows_above_the_prose_estimate():
+    from ftm.llm.budget import estimate_messages
+    from ftm.planners.llm_prompt import EVIDENCE_EXTRA_TOKENS_PER_CHAR
+
+    big = "\n".join(f"2022-09-0{i % 9} 10:{i % 60:02d} | A{i:07x} -> A01bc22d | {i},000.00 US Dollar | ACH" for i in range(120))
+    msgs = build_messages(Mode.COMPOSE, _state([], evidence_text=big), DSL, 3500)
+    kept = msgs[1]["content"].split("## Evidence")[1].split("## ")[0]
+    assert estimate_messages(msgs) + len(kept) * EVIDENCE_EXTRA_TOKENS_PER_CHAR <= 3500 + 60  # rows kept were budgeted densely
+    assert "omitted to fit" in kept and "A0000000" not in kept
 
 
 def test_select_asks_at_a_back_tested_eps_and_moves_the_posterior():
@@ -136,6 +147,23 @@ def test_examples_by_function_and_retry_hint():
     assert "payees_pay_each_other(ALERT.receiver, window=after(72))" in h2
 
 
+def test_program_pattern_in_schema_accepts_every_documented_example_and_rejects_bare_names():
+    import re
+
+    from ftm.planners.llm_prompt import PROGRAM_PATTERN, planner_schema
+
+    examples = examples_by_function(DSL.reference_text())
+    assert len(examples) >= 20
+    for name, eg in examples.items():
+        assert re.match(PROGRAM_PATTERN, eg), name  # the outline never rejects a valid question
+        assert DSL.validate(eg).ok
+    for bad in ("n_counterparties", "passed_on()", "n_tx(A0000001, dir=in)", "ALERT.receiver", ""):
+        assert not re.match(PROGRAM_PATTERN, bad)
+    schema = planner_schema(Mode.COMPOSE, _state([]))
+    assert schema["properties"]["program"]["anyOf"][0]["pattern"] == PROGRAM_PATTERN
+    assert planner_schema(Mode.FIXED_LIST, _state(accepted_menu(table())))["properties"]["program"] == {"type": "null"}
+
+
 def test_planner_feedback_after_bare_function_name_has_an_example():
     llm = MockLLM(script=[step(program="n_counterparties"), STOP])
     LLMPlanner(llm).investigate(alert(), ScriptedToolBox(), Limits())
@@ -152,6 +180,22 @@ def test_refusals_count_as_failures_with_reason_and_stop_the_loop():
     assert v.llm_calls == 3 and p.stats.refusals == 1 and p.stats.refused_repeats == 2
     assert "is not a partner bank" in llm.requests[1]["messages"][1]["content"]
     assert len(v.questions_log) == 1
+
+
+def test_duplicate_feedback_names_a_bank_that_was_not_asked_yet():
+    llm = MockLLM(script=[step(bank=220), step(bank=220), STOP])
+    LLMPlanner(llm).investigate(alert(), ScriptedToolBox([reply(True)]), Limits())
+    assert "such as 1588" in llm.requests[2]["messages"][1]["content"]
+
+
+def test_a_used_up_refusal_ends_the_loop_at_once():
+    class TimeUp(ScriptedToolBox):
+        def ask_bank(self, bank, program, eps):
+            raise GateBlocked("simulated time for this alert is used up")
+
+    llm = MockLLM(script=[step(), step(program=Q_NEW), step(program=Q_DORM, bank=1588), STOP])
+    v = LLMPlanner(llm).investigate(alert(), TimeUp(), Limits())
+    assert v.llm_calls == 1 and len(v.questions_log) == 1
 
 
 def test_refusal_does_not_reset_the_failure_count_but_a_reply_does():
