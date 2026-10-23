@@ -181,3 +181,15 @@ def test_mock_harness_runs_never_write_test_rows(tmp_path):
         mod.refuse_devtools_test("harness_mock", "test")
     mod.refuse_devtools_test("harness", "test")
     mod.refuse_devtools_test("harness_mock", "val")
+
+
+@pytest.mark.parametrize("system", ["co_investigator_ported", "co_investigator_native", "finfre_rag_ported", "finfre_rag_native"])
+def test_t2_group_c_ports_run_through_harness(tmp_path, system):
+    mod = _script()
+    run = _run(mod, tmp_path, system=system, n="2")
+    log = pl.read_parquet(run / "runlog.parquet")
+    assert (log["system"] == system).all() and (log["variant"] == "harness_mock").all()
+    v = log.filter(pl.col("event") == "verdict")
+    assert v.height == 2 and (v["mode"] == ("native" if system.endswith("native") else "ported")).all()
+    if system.endswith("native"):
+        assert log.filter(pl.col("event") == "step").height == 0  # no ask_bank in native mode

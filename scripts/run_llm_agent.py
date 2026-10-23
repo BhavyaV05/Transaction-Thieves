@@ -37,7 +37,11 @@ import polars as pl  # noqa: E402
 from ftm import guards  # noqa: E402
 from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
+from ftm.external.co_investigator import CoInvestigator  # noqa: E402
+from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
 from ftm.external.dspy_react import DspyReact  # noqa: E402
+from ftm.external.finfre_rag import ExemplarPool, FinfreRag  # noqa: E402
+from ftm.external.finfre_rag import dev_responder as finfre_dev_responder  # noqa: E402
 from ftm.external.lats import Lats  # noqa: E402
 from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.react import React  # noqa: E402
@@ -66,8 +70,14 @@ GROUP_C = {  # T4 ports (Group C, native and ported modes)
     "sharma_ported": lambda llm, **kw: Sharma(llm, mode="ported", **kw),
     "torres_native": lambda llm, **kw: Torres(llm, mode="native", **kw),
     "torres_ported": lambda llm, **kw: Torres(llm, mode="ported", **kw),
+    # T2 ports (Group C secondary). FinFRE-RAG retrieves labelled TRAIN exemplars: main() passes `pool`
+    "co_investigator_native": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="native", **kw),
+    "co_investigator_ported": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="ported", **kw),
+    "finfre_rag_native": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="native", **kw),
+    "finfre_rag_ported": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="ported", **kw),
 }
-DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder}
+DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
+                  "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
            "dspy_react": DspyReact}
 
@@ -131,6 +141,15 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
         out.append((ctx, int(a["label"])))
     return out
+
+
+def exemplar_pool(a) -> ExemplarPool:
+    """FinFRE-RAG's labelled pool: TRAIN alerts only (the pool refuses anything else). Synthetic runs get toy ones."""
+    if a.alerts == "synthetic":
+        toy = synthetic_alerts(max(a.pool_n, 40), a.seed + 1, labelled=True)
+        return ExemplarPool.from_alerts([replace(c, split="train") for c, _ in toy], [y for _, y in toy], seed=a.seed)
+    train = data_alerts(a.data, "train", a.pool_n, a.seed + 1, a.k)
+    return ExemplarPool.from_alerts([c for c, _ in train], [y for _, y in train], seed=a.seed)
 
 
 def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic"):
@@ -233,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
+    ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
     ap.add_argument("--record", type=Path, default=None, help="record LLM calls to this cassette")
@@ -291,7 +311,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.llm == "endpoint":
         llm = HttpChatClient.from_env(endpoint=a.endpoint, model=a.model)
     else:
-        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.split("_")[0], dev_responder))
+        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.rsplit("_", 1)[0], dev_responder))
     model = getattr(llm, "model", "mock")
     if a.record:
         llm = RecordingClient(llm, a.record)
@@ -303,7 +323,9 @@ def main(argv: list[str] | None = None) -> int:
                             max_output_tokens=a.max_output_tokens)
         system_name = system.system_name
     else:
-        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion)
+        pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
+        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
+                                                  **({"pool": pool} if a.system in GROUP_C else {}))
         system_name = a.system
     tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts)
     refuse_devtools_test(variant, a.alerts)
