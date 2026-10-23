@@ -87,10 +87,14 @@ class React:
         no further question can be asked, so it only turns what was learnt into the answer the system owes."""
         if ex.finished is not None or budget.calls_left <= 0:
             return
-        note = ("\n\nNo further question can be asked (time or privacy budget used up). Give your final answer now: "
-                "Action: finish[<probability of laundering, 0 to 1>]")
-        msgs = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + note}] if messages[-1]["role"] == "user" \
-            else [*messages, {"role": "user", "content": note.strip() + "\nThought:"}]  # fmt: skip
+        # A compact prompt (system + case + one line per question asked), not the whole history: on dense alerts the
+        # history is what hit the shared prompt cap and ended the loop in the first place.
+        asked = [f"- {c['arg']} -> {str(c['observation']).splitlines()[0]}" for c in ex.log if c["tool"] == "ask_bank"]
+        case = messages[1]["content"].rsplit("\nThought 1:", 1)[0]
+        note = ("\n\nWhat was asked and answered so far:\n" + ("\n".join(asked) or "(nothing)")
+                + "\n\nNo further question can be asked (time or privacy budget used up). Give your final answer now: "
+                "Action: finish[<probability of laundering, 0 to 1>]\nThought:")
+        msgs = [messages[0], {"role": "user", "content": case + note}]
         try:
             resp = budget.chat(msgs, max_tokens=self.max_tokens_per_step, temperature=self.temperature,
                                stop=["\nObservation", "Observation:"], seed=self.seed, extra=self.extra)  # fmt: skip

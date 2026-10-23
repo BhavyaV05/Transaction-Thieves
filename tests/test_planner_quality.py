@@ -219,6 +219,16 @@ def test_react_wrap_up_asks_for_finish_once_when_time_runs_out():
     assert "No further question can be asked" in llm.requests[1]["messages"][-1]["content"]
 
 
+def test_react_wrap_up_prompt_is_compact_and_lists_what_was_asked():
+    long_thought = "Thought 1: " + "reasoning " * 400
+    llm = MockLLM(script=[long_thought + "\nAction 1: ask_bank[220 | 1.0 | " + Q_DORM + "]", "Action 2: finish[0.4]"])
+    React(llm).investigate(alert(), ScriptedToolBox([reply(True, days=6.0)]), Limits())
+    msgs = llm.requests[1]["messages"]
+    assert len(msgs) == 2 and "reasoning" not in msgs[1]["content"]  # the long history is not replayed
+    assert "- 220 | 1.0 | " + Q_DORM in msgs[1]["content"] and "answered True" in msgs[1]["content"]
+    assert msgs[1]["content"].endswith("Thought:") and "Alert:" in msgs[1]["content"]
+
+
 def test_react_wrap_up_never_exceeds_the_call_cap_and_keeps_none_when_no_finish():
     llm = MockLLM(script=["Thought: hmm"] * 4)
     v = React(llm).investigate(alert(), ScriptedToolBox(), Limits(max_llm_calls=2))
