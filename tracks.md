@@ -745,6 +745,7 @@ All tuning on validation. **One** final test run (G5) runs every experiment.
 - **Weekly:** a 30-minute sync; each track posts one line in `STATUS.md`; each machine posts its GPU/CPU hours; the GPU calendar is updated before blocking a machine.
 - **Interfaces are contracts.** The week-1 data schemas, DSL grammar v0, run-log schema, and the week-4 harness freeze are changed only by agreement of the owners involved (for the harness, all four).
 - **PRs** are reviewed by your pair partner within two working days. A change that needs checking on the real model goes in a PR whose description says explicitly that **Akshat should close it** (§1.2 rule 8). Unit tests for every tool cover the `as_of` time guard; tests for the gate, the accountant and the "no raw rows" static check run in CI.
+- **No AI-assistant attribution.** Commit messages and PR descriptions carry no `Co-Authored-By:` trailers for AI tools and no "Generated with ..." footers. This applies to everyone, including anyone using a coding assistant.
 - **Mocks first.** Everyone ships a mock or toy version of their interface early (mock harness, toy graphs, mock LLM) so others are never blocked on a real run.
 - **Never run on test.** `FTM_FINAL_RUN=1` is set only for G5, only by the agreed final-run script, after the pre-registration hash has been sent.
 - **Slipping?** Tell the group the week it happens. Cuts follow the order in `plan.md` §14: stretch before secondary, secondary before core, and the core is never cut. The per-track "never cut" lists above are what each owner protects first.
