@@ -41,7 +41,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] dataset to Akshat: the builder and format are ready (week 5); the real 50k run needs `data/`
 
 ## Week 7
-- [ ] Co-Investigator / FinFRE-RAG ports (secondary)
+- [x] Co-Investigator / FinFRE-RAG ports (secondary), native + ported (`ftm/external/GROUPC_T2.md`); runs on the real backbone need the endpoint
 
 ## Week 8
 - [ ] Async mode (stretch prep)
