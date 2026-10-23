@@ -42,7 +42,7 @@ from ftm.external.sharma import Sharma  # noqa: E402
 from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
 from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
-from ftm.library.shape import shape_from_rows  # noqa: E402
+from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
@@ -107,10 +107,11 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int) -> list[tuple[
         a = alerts.row(i, named=True)
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
-        ev_rows, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)
+        _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
-        summary["shape"] = {**shape_from_rows(ev_rows.to_dicts(), summary["receiver"], row["timestamp"]).as_dict(),
+        edges = receiver_edges(cfg["views_dir"], a["bank"], row["dst_id"], row["timestamp"])  # not the evidence view
+        summary["shape"] = {**shape_from_edges(edges, row["dst_id"], row["timestamp"]).as_dict(),
                             "receiver": summary["receiver"]}  # receiver: only the E11 account-keyed ablation reads it
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
         out.append((ctx, int(a["label"])))

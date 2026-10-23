@@ -4,13 +4,14 @@ import json
 import random
 from datetime import datetime, timedelta
 
+import polars as pl
 import pytest
 
 from ftm.external.reflexion import Reflexion
 from ftm.external.rewoo import Rewoo, parse_plan, solver_probability
 from ftm.harness.interface import Investigator, ScriptedToolBox
 from ftm.library.build import build_library
-from ftm.library.shape import SituationShape, shape_from_rows
+from ftm.library.shape import SHAPE_SCHEMA_VERSION, SituationShape, shape_from_edges, shape_from_rows
 from ftm.library.store import FrozenLibraryError, LibraryToolBox, StrategyLibrary
 from ftm.llm.mock import MockLLM
 from ftm.planners.llm import LLMPlanner
@@ -38,6 +39,50 @@ def test_shape_buckets_and_no_account_in_key():
     assert SituationShape.from_dict(s.as_dict()) == s
     assert shape_from_rows(rows(1, hours=2), "R", T0).key()[1:] == ("1", "1", "3-4", "1k-10k varied", "<6h")
     assert s.with_typology(None).typology == "any"
+
+
+def edge_frame(n_payers=5, extra=()):
+    """Synthetic 1-hop edges of receiver 1 (node ids), plus an unrelated edge and any `extra` rows."""
+    out = [{"tx_id": i, "timestamp": T0 - timedelta(hours=30 - i), "src_id": 100 + i, "dst_id": 1, "from_bank": 220,
+            "to_bank": 70, "amount_paid": 900.0 + i} for i in range(n_payers)]  # fmt: skip
+    out.append({"tx_id": 50, "timestamp": T0, "src_id": 1, "dst_id": 9, "from_bank": 70, "to_bank": 1588, "amount_paid": 4500.0})
+    out.append({"tx_id": 51, "timestamp": T0 - timedelta(hours=1), "src_id": 7, "dst_id": 8, "from_bank": 3402,
+                "to_bank": 3402, "amount_paid": 5.0})  # not touching the receiver
+    return pl.DataFrame([*out, *extra])
+
+
+def test_shape_from_edges_matches_rows_and_ignores_unrelated_edges():
+    s = shape_from_edges(edge_frame(), 1, T0, typology="fan_in")
+    assert s.key() == shape_from_rows(rows(), "R", T0, typology="fan_in").key()
+    assert SHAPE_SCHEMA_VERSION == 2
+
+
+def test_shape_is_identical_under_different_evidence_views():
+    full = edge_frame(10)
+    top3 = full.sort("amount_paid", descending=True).head(3)  # a thin "top-k" view of the same alert
+    assert shape_from_edges(full, 1, T0).key() == shape_from_edges(full.sample(fraction=1.0, shuffle=True, seed=1), 1, T0).key()
+    assert shape_from_rows(top3.rename({"src_id": "src_alias", "dst_id": "dst_alias"}).to_dicts(), 1, T0).key() != \
+        shape_from_edges(full, 1, T0).key()  # the old rows-based key does depend on the view
+    assert shape_from_edges(full, 1, T0).in_deg == "8+"
+
+
+def test_shape_ignores_edges_after_the_alert_and_before_the_window():
+    late = [{"tx_id": 90 + i, "timestamp": T0 + timedelta(hours=1 + i), "src_id": 500 + i, "dst_id": 1, "from_bank": 1588,
+             "to_bank": 70, "amount_paid": 1e6} for i in range(10)]  # fmt: skip
+    old = [{"tx_id": 80, "timestamp": T0 - timedelta(hours=200), "src_id": 600, "dst_id": 1, "from_bank": 3402,
+            "to_bank": 70, "amount_paid": 2e6}]  # fmt: skip
+    assert shape_from_edges(edge_frame(extra=late + old), 1, T0).key() == shape_from_edges(edge_frame(), 1, T0).key()
+    assert shape_from_edges(edge_frame(), 1, T0 - timedelta(hours=1)).key() != shape_from_edges(edge_frame(), 1, T0).key()
+
+
+def test_library_with_old_shape_schema_is_refused(tmp_path):
+    p = tmp_path / "lib.json"
+    StrategyLibrary("shape").save(p)
+    doc = json.loads(p.read_text())
+    doc["shape_schema_version"] = 1
+    p.write_text(json.dumps(doc))
+    with pytest.raises(ValueError, match="schema"):
+        StrategyLibrary.load(p)
 
 
 # -- build + search ---------------------------------------------------------------------------------------
