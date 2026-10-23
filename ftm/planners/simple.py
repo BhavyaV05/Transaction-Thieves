@@ -60,6 +60,7 @@ class _Base:
     one_per_family: bool = True
     max_delta: float = 1.0
     max_weight: float = 1.0
+    waves: tuple[int, ...] | None = None  # batched mode (E13): wave sizes, e.g. (2, 1); None = one question at a time
     name: str = "planner"
 
     def choose(self, s: PlanSession, options: list[Candidate]) -> Candidate | None:
@@ -68,6 +69,8 @@ class _Base:
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         s = PlanSession(alert, tools, limits, self.fusion, self.threshold, self.max_delta, self.max_weight)
         pool = self.pool.applicable(s.direction)
+        if self.waves:
+            return self._investigate_in_waves(s, pool)
         while len(s.log) < limits.max_llm_calls * 5:  # a hard cap on loop length: refusals also use a turn
             if s.stop().stop:
                 break
@@ -76,6 +79,32 @@ class _Base:
             if pick is None:
                 break
             s.ask(pick)
+        return s.verdict()
+
+
+    def choose_wave(self, s: PlanSession, options: list[Candidate], k: int) -> list[Candidate]:
+        """Up to k questions for one wave: the planner's own choice repeated, never two of one family, all fitting the
+        eps left together."""
+        picks: list[Candidate] = []
+        while len(picks) < k and options:
+            pick = self.choose(s, options)
+            if pick is None:
+                break
+            picks.append(pick)
+            spent = sum(c.cost for c in picks)
+            options = [o for o in options if o.family != pick.family and o.program != pick.program
+                       and spent + o.cost <= s.eps_left + 1e-9]  # fmt: skip
+        return picks
+
+    def _investigate_in_waves(self, s: PlanSession, pool: list[Candidate]) -> Verdict:
+        for k in self.waves:
+            if s.stop().stop:
+                break
+            options = s.affordable(pool, self.one_per_family)
+            picks = self.choose_wave(s, options, k) if options else []
+            if not picks:
+                break
+            s.ask_batch(picks)
         return s.verdict()
 
 

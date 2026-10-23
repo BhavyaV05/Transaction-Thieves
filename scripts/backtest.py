@@ -69,6 +69,8 @@ def main(argv=None):
     ap.add_argument("--exact", action="store_true", help="no-noise variant (eps = inf) on the same alerts")
     ap.add_argument("--exact-labels", action="store_true",
                     help="exact mode proper: every bank's labels (a label-stratified sample of cross-bank transactions), no noise")
+    ap.add_argument("--heldout-cycles", action="store_true",
+                    help="E12: back-test on a train split without the cycle attempts (rows and alerts dropped)")
     ap.add_argument("--n-pos", type=int, default=2000, help="laundering transactions sampled for --exact-labels")
     ap.add_argument("--neg-ratio", type=int, default=4, help="clean per laundering transaction for --exact-labels")
     ap.add_argument("--compare", nargs=2, metavar=("REALISTIC_DIR", "EXACT_DIR"),
@@ -94,7 +96,8 @@ def main(argv=None):
 
         world = load_exact_world(a.data, a.split, a.n_pos, a.neg_ratio, a.seed)
     else:
-        world = load_world(a.data, a.split, a.seed, max_alerts=a.max_alerts, only_keep=a.only_keep)
+        world = load_world(a.data, a.split, a.seed, max_alerts=a.max_alerts, only_keep=a.only_keep,
+                           heldout_cycles=a.heldout_cycles)
     cfg = BacktestConfig(mode="exact" if exact else "realistic")
     ns = cfg.namespace(world.alert_set_id, a.seed)
     cache = BacktestCache(Path(a.out) / Path(a.data).stem, ns)

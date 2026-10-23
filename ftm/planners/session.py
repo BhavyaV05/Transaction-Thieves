@@ -75,17 +75,47 @@ class PlanSession:
             entry.gate_decision = "blocked"
         except BudgetRefused:
             entry.gate_decision = "over_budget"
+        wait = self._absorb(c, entry)
+        self.sim_days += wait
+        return self._finish(entry)
+
+    def ask_batch(self, cands: list[Candidate]) -> list[QuestionLogEntry]:
+        """Ask several questions as one wave (the toolbox's `ask_banks`; the wave costs its slowest answer). Falls back to
+        one after another if the toolbox has no waves. The posterior is updated once, after all the answers are in."""
+        if not hasattr(self.tools, "ask_banks"):
+            return [self.ask(c) for c in cands]
+        results = self.tools.ask_banks([(self.bank, c.program, c.eps) for c in cands])
+        entries, waits = [], [0.0]
+        for c, res in zip(cands, results, strict=True):
+            entry = QuestionLogEntry(step=len(self.log) + len(entries) + 1, bank=str(self.bank), program=c.program, eps=c.eps)
+            self.asked.add((c.program, self.bank))
+            if isinstance(res, GateBlocked):
+                entry.gate_decision = "blocked"
+            elif isinstance(res, BudgetRefused):
+                entry.gate_decision = "over_budget"
+            else:
+                entry.response = res
+            waits.append(self._absorb(c, entry))
+            entries.append(entry)
+        self.sim_days += max(waits)
+        for e in entries:
+            self._finish(e)
+        return entries
+
+    def _absorb(self, c: Candidate, entry: QuestionLogEntry) -> float:
+        """Book one response into the budgets and the evidence; returns the days it took."""
         r = entry.response
         if isinstance(r, Reply):
             if math.isfinite(r.eps_spent):
                 self.eps_left -= r.eps_spent
-            self.sim_days += r.latency_days
             self.families_asked.add(c.family)
             llr = c.log_lr(r.value)
             if llr is not None:
                 self.log_lr_by_family[c.family] = self.log_lr_by_family.get(c.family, 0.0) + llr
-        elif isinstance(r, Timeout):
-            self.sim_days += r.after_days
+            return r.latency_days
+        return r.after_days if isinstance(r, Timeout) else 0.0
+
+    def _finish(self, entry: QuestionLogEntry) -> QuestionLogEntry:
         self.p = posterior(float(self.alert.p0), self.log_lr_by_family, self.fusion)
         entry.posterior_after = self.p
         self.log.append(entry)

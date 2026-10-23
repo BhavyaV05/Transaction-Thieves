@@ -45,3 +45,10 @@ It is gated twice. Every hand-over asks the compliance gate for `request_records
 python scripts/eps_sweep.py --system eig --synthetic 360                       # smoke test, never a result
 python scripts/eps_sweep.py --system eig --data hi_medium --split val --table-noisy <lr_table.jsonl> --table-exact <lr_table_exact.jsonl>
 ```
+
+## Async mode: question waves and the SimPy runner (week 8, E13 / H8)
+
+* **Waves.** `HarnessToolBox.ask_banks(requests)` asks several questions at the same simulated moment. Each goes through the gate and the accountant on its own (a refusal is returned in its slot, not raised, so it does not lose the others); the wave costs its **slowest answer**, not the sum, the rule T3's LLMCompiler port also uses, so E13's two arms are comparable. It is an extension (`BatchToolBox` in `ftm/harness/interface.py`); the frozen v1 `ToolBox` is unchanged.
+* **Batched planners.** `waves=(2, 1)` on any non-LLM planner: two questions asked together, then one more (never two of one family, all fitting the eps left together). `build_planner(..., waves=...)`.
+* **SimPy runner** (`simpy_run.py`): one investigation = one SimPy process on a shared clock; alert i arrives at `i * arrival_gap_days`. Reports each alert's latency, the makespan and the most investigations open at once. Gate and accountant are touched in arrival order, so the per-account cap sees alerts as it would live.
+* **Study** (`async_study.py`): the same planner, pool, budget and validation alerts, sequential vs batched: Brier, questions and eps per alert, simulated days per alert (mean, p95), makespan, investigations in flight. The run summaries now carry `mean_sim_days` and `p95_sim_days`.

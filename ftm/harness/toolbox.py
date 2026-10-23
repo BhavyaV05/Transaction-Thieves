@@ -113,6 +113,7 @@ class HarnessToolBox:
         self._eps_spent = 0.0
         self._elapsed = 0.0
         self._t0: datetime | None = None
+        self.last_elapsed_days = 0.0  # simulated days the last closed session took
 
     # --- sessions ------------------------------------------------------------------------------------------------
     def begin(self, alert: AlertContext, limits: Limits) -> None:
@@ -123,6 +124,7 @@ class HarnessToolBox:
 
     def end(self) -> list[QuestionLogEntry]:
         log = list(self._log)
+        self.last_elapsed_days = self._elapsed
         self._alert = self._limits = self._binding = self._t0 = None
         return log
 
@@ -170,6 +172,31 @@ class HarnessToolBox:
             raise GateBlocked(d.reason)
 
     def ask_bank(self, bank, program: str, eps: float, rule_id: str | None = None) -> BankResponse:
+        response, wait = self._ask_one(bank, program, eps, rule_id, self._elapsed)
+        self._elapsed += wait
+        return response
+
+    def ask_banks(self, requests: list[tuple]) -> list:
+        """A wave: several questions asked at the same simulated moment. Each goes through the gate and the accountant
+        on its own; the wave costs its slowest answer (not the sum), the rule T3's LLMCompiler also uses. Returns one
+        entry per request, in order: the bank's response, or the `GateBlocked` / `BudgetRefused` it ran into (not raised,
+        so one refusal does not lose the others). Not part of the frozen v1 `ToolBox`: an extension (`BatchToolBox`)."""
+        start, results, waits = self._elapsed, [], [0.0]
+        for req in requests:
+            bank, program, eps = req[:3]
+            try:
+                response, wait = self._ask_one(bank, program, eps, req[3] if len(req) > 3 else None, start)
+            except (GateBlocked, BudgetRefused) as exc:
+                results.append(exc)
+                continue
+            results.append(response)
+            waits.append(wait)
+        self._elapsed = start + max(waits)
+        return results
+
+    def _ask_one(self, bank, program: str, eps: float, rule_id: str | None, start: float):
+        """One question asked at simulated time `start` (days since the alert). Returns (response, days to wait);
+        the caller moves the clock."""
         alert, limits = self._need()
         h = self._h
         if h.mode == "native":
@@ -205,17 +232,17 @@ class HarnessToolBox:
             raise SessionError(f"no real-id binding for alert {alert.alert_id}: cannot ask a bank with a ledger")
         if not exact and self._eps_spent + eps > limits.eps_per_alert + TOL:
             refuse("over_budget", "per-alert eps budget of this run is used up", BudgetRefused)
-        if self._elapsed >= limits.max_sim_time_days - TOL:
+        if start >= limits.max_sim_time_days - TOL:
             refuse("over_budget", "simulated time for this alert is used up", BudgetRefused)
         keys = charge_keys(node, self._binding, int(bank)) if self._binding is not None else []
         if not exact and not h.accountant.can_spend(alert.alert_id, int(bank), eps, keys):
             refuse("over_budget", "privacy accountant refused", BudgetRefused)
 
-        as_of = self._t0 + timedelta(days=self._elapsed)
+        as_of = self._t0 + timedelta(days=start)
         binding = self._binding
         response, wait = bank_obj.respond(Question(program, eps, binding), as_of)
-        if self._elapsed + wait > limits.max_sim_time_days + TOL:  # would arrive after the deadline
-            wait = limits.max_sim_time_days - self._elapsed
+        if start + wait > limits.max_sim_time_days + TOL:  # would arrive after the deadline
+            wait = limits.max_sim_time_days - start
             response = Timeout(int(bank), after_days=wait)
         if isinstance(response, Reply) and not exact:
             try:
@@ -223,9 +250,8 @@ class HarnessToolBox:
             except BudgetExceeded as e:  # cannot happen after can_spend; if it does, the answer is withheld
                 refuse("over_budget", str(e), BudgetRefused)
             self._eps_spent += eps
-        self._elapsed += wait
         entry.response = response
-        return response
+        return response, wait
 
 
 def _canon_or_raw(program: str) -> str:
