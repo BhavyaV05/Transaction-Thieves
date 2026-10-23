@@ -25,6 +25,7 @@ from enum import Enum
 
 from ftm.llm.budget import estimate_messages, estimate_tokens
 from ftm.llm.jsonout import JsonOutputError, parse_and_validate
+from ftm.llm.untrusted import wrap_untrusted
 from ftm.planners.llm_dsl import DslAdapter
 
 TYPOLOGIES = ("fan_in", "fan_out", "cycle", "scatter_gather", "gather_scatter", "bipartite", "stack", "random")
@@ -187,7 +188,7 @@ def _answers_text(answers: list[AnswerSoFar]) -> str:
         used = "" if a.used_in_posterior is None else ("" if a.used_in_posterior else " [no back-tested LR: not used]")
         lines.append(f"{a.step}. bank {a.bank}, eps {a.eps:g}: {a.program} -> {val}{used}")
         if a.note:
-            lines.append(f"   <untrusted_note>{a.note[:300]}</untrusted_note>")
+            lines.append(f"   {wrap_untrusted(a.note)}")
     return "\n".join(lines)
 
 
