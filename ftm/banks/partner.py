@@ -98,6 +98,8 @@ def _seed(*parts) -> int:
 
 
 class PartnerBank:
+    needs_binding = True  # answers from a real ledger, so it must know the alert's real node ids
+
     def __init__(self, bank: int, ledger: pl.DataFrame, config: BankConfig | None = None, seed: int = 0,
                  entity_of: dict | None = None, note_fn: NoteFn | None = None):  # fmt: skip
         self.bank = int(bank)

@@ -27,6 +27,17 @@ class AlertBinding:
     currency: str  # receiving currency
     payers: frozenset = frozenset()  # accounts that paid `receiver` in the 72 h up to t0 (home bank view)
     payees: frozenset = frozenset()  # accounts `sender` paid in the 72 h up to t0 (home bank view)
+    sender_bank: int | None = None  # banks of the two parties (who holds the subject of a question)
+    receiver_bank: int | None = None
+
+    @property
+    def partner_bank(self) -> int | None:
+        """The bank on the other side of the alerted transfer, or None if both parties are at the home bank."""
+        if self.sender_bank is None or self.receiver_bank is None:
+            return None
+        if self.sender_bank != self.home_bank:
+            return self.sender_bank
+        return self.receiver_bank if self.receiver_bank != self.home_bank else None
 
     def slot(self, name: str):
         if name not in ("sender", "receiver", "payers", "payees"):
@@ -55,4 +66,6 @@ def bind_alert(alert_id: str, tx: dict, home_bank: int, home_view: pl.DataFrame)
         alert_id=alert_id, home_bank=int(home_bank), t0=t0, sender=int(tx["src_id"]), receiver=int(tx["dst_id"]),
         amount=float(tx["amount_received"]), currency=str(tx["receiving_currency"]),
         payers=frozenset(int(x) for x in payers), payees=frozenset(int(x) for x in payees),
+        sender_bank=int(tx["from_bank"]) if "from_bank" in tx else None,
+        receiver_bank=int(tx["to_bank"]) if "to_bank" in tx else None,
     )  # fmt: skip
