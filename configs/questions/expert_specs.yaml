@@ -18,6 +18,9 @@
 # status:      ok (default) | restricted (registered in the DSL but never askable)
 # expect:      direction we expect for laundering vs clean, which back-testing then confirms or rejects.
 
+# Family ORDER is the expert ranking (strongest expected signal first): the fixed-order planner (C9, T2) asks
+# in this order. Set by T4 on 2026-10-23 from the red-flag sources and the proposal's worked example; pre-registered
+# before G3, never re-ordered after seeing back-test results. Question ids (EQ-...) follow this order.
 families:
   - family: pass_through
     red_flags: [RF-US-03, RF-SG-02, RF-SG-08, RF-SG-09]
@@ -31,6 +34,25 @@ families:
       - {frac: 0.5, window_h: 24}
       - {frac: 0.8, window_h: 72}
       - {frac: 0.5, window_h: 72}
+  - family: payees_hit_home_payers
+    red_flags: [RF-US-14, RF-US-13, RF-US-26]
+    typologies: [cycle, scatter_gather]
+    kind: set_count
+    sensitivity: 1
+    template: "Of the accounts SUBJ paid within {window_h} h after the alert, how many are in ALERT.payers?"
+    expect: "above 0 more often for laundering (the circle closes); the proposal's set-count example"
+    variants:
+      - {window_h: 24}
+      - {window_h: 72}
+  - family: time_to_forward
+    red_flags: [RF-SG-02, RF-US-03]
+    typologies: [stack, fan_in]
+    kind: kary
+    sensitivity: 1
+    template: "How soon after the alert did SUBJ send on at least half of the alerted amount: under 1 h, 1-6 h, 6-24 h, or later/never?"
+    expect: "faster for laundering"
+    variants:
+      - {}
   - family: onward_bank
     red_flags: [RF-US-03, RF-SG-13, RF-US-26]
     typologies: [stack, scatter_gather, gather_scatter]
@@ -41,15 +63,6 @@ families:
     variants:
       - {banks: "up to 4 banks chosen by the planner", window_h: 24}
       - {banks: "up to 4 banks chosen by the planner", window_h: 72}
-  - family: time_to_forward
-    red_flags: [RF-SG-02, RF-US-03]
-    typologies: [stack, fan_in]
-    kind: kary
-    sensitivity: 1
-    template: "How soon after the alert did SUBJ send on at least half of the alerted amount: under 1 h, 1-6 h, 6-24 h, or later/never?"
-    expect: "faster for laundering"
-    variants:
-      - {}
   - family: fan_in_count
     red_flags: [RF-US-03, RF-SG-06, RF-SG-10, RF-SG-11, RF-US-15]
     typologies: [fan_in, gather_scatter]
@@ -60,34 +73,6 @@ families:
     variants:
       - {window_h: 24}
       - {window_h: 72}
-  - family: fan_in_many
-    red_flags: [RF-SG-11, RF-SG-10]
-    typologies: [fan_in]
-    kind: bool
-    sensitivity: 1
-    template: "Did at least {k} distinct accounts pay SUBJ in the {window_h} h before the alert?"
-    expect: "yes more often for laundering"
-    variants:
-      - {k: 5, window_h: 72}
-  - family: fan_out_count
-    red_flags: [RF-US-21, RF-US-18, RF-SG-16]
-    typologies: [fan_out, scatter_gather]
-    kind: count
-    sensitivity: 1
-    template: "How many distinct accounts did SUBJ pay within {window_h} h after the alert?"
-    expect: "higher for laundering"
-    variants:
-      - {window_h: 24}
-      - {window_h: 72}
-  - family: fan_out_many
-    red_flags: [RF-US-21]
-    typologies: [fan_out]
-    kind: bool
-    sensitivity: 1
-    template: "Did SUBJ pay at least {k} distinct accounts within {window_h} h after the alert?"
-    expect: "yes more often for laundering"
-    variants:
-      - {k: 5, window_h: 72}
   - family: gather_across_banks
     red_flags: [RF-SG-13, RF-US-09]
     typologies: [gather_scatter, scatter_gather, fan_in]
@@ -95,76 +80,6 @@ families:
     sensitivity: 1
     template: "From how many distinct banks did SUBJ receive money in the {window_h} h before the alert?"
     expect: "higher for laundering"
-    variants:
-      - {window_h: 24}
-      - {window_h: 72}
-  - family: distinct_banks_out
-    red_flags: [RF-US-22, RF-US-26]
-    typologies: [fan_out, scatter_gather]
-    kind: count
-    sensitivity: 1
-    template: "To how many distinct banks did SUBJ send money within {window_h} h after the alert?"
-    expect: "higher for laundering"
-    variants:
-      - {window_h: 24}
-      - {window_h: 72}
-  - family: small_inflows
-    red_flags: [RF-US-09, RF-SG-06]
-    typologies: [fan_in, scatter_gather]
-    kind: count
-    sensitivity: 1
-    template: "How many payments below {amount} did SUBJ receive in the {window_h} h before the alert?"
-    expect: "higher for laundering"
-    variants:
-      - {amount: 3000, window_h: 72}
-      - {amount: 10000, window_h: 72}
-  - family: just_below_threshold
-    red_flags: [RF-US-16, RF-US-10, RF-US-08]
-    typologies: []
-    kind: count
-    sensitivity: 1
-    template: "How many of SUBJ's transfers in the {window_h} h around the alert were between 9,000 and 9,999 (any currency)?"
-    expect: "higher for laundering (structuring)"
-    variants:
-      - {window_h: 72}
-      - {window_h: 168}
-  - family: round_amounts
-    red_flags: [RF-US-01]
-    typologies: []
-    kind: count
-    sensitivity: 1
-    template: "How many of SUBJ's transfers in the {window_h} h around the alert were whole multiples of {unit}?"
-    expect: "higher for laundering"
-    variants:
-      - {unit: 1000, window_h: 72}
-      - {unit: 100, window_h: 72}
-  - family: cash_format
-    red_flags: [RF-US-08, RF-SG-04, RF-SG-05, RF-SG-16]
-    typologies: [stack]
-    kind: count
-    sensitivity: 1
-    template: "How many of SUBJ's transfers in the {window_h} h around the alert used the Cash payment format?"
-    expect: "higher for laundering"
-    variants:
-      - {window_h: 72}
-      - {window_h: 168}
-  - family: return_to_home_bank
-    red_flags: [RF-US-14, RF-US-13]
-    typologies: [cycle]
-    kind: bool
-    sensitivity: 1
-    template: "Did SUBJ send any money to an account at the home bank within {window_h} h after the alert?"
-    expect: "yes more often for laundering (money coming back)"
-    variants:
-      - {window_h: 24}
-      - {window_h: 72}
-  - family: payees_hit_home_payers
-    red_flags: [RF-US-14, RF-US-13, RF-US-26]
-    typologies: [cycle, scatter_gather]
-    kind: set_count
-    sensitivity: 1
-    template: "Of the accounts SUBJ paid within {window_h} h after the alert, how many are in ALERT.payers?"
-    expect: "above 0 more often for laundering (the circle closes); the proposal's set-count example"
     variants:
       - {window_h: 24}
       - {window_h: 72}
@@ -189,16 +104,6 @@ families:
       - {tol: 0.01}
       - {tol: 0.05}
       - {tol: 0.10}
-  - family: repeated_amounts
-    red_flags: [RF-US-05]
-    typologies: [random, stack]
-    kind: count
-    sensitivity: 2   # adding one transaction can complete a pair, so the count can rise by 2
-    template: "How many of SUBJ's transfers in the {window_h} h around the alert repeat another of its transfers within 1% in amount?"
-    expect: "higher for laundering"
-    variants:
-      - {window_h: 72}
-      - {window_h: 168}
   - family: velocity_balanced
     red_flags: [RF-SG-08, RF-SG-02]
     typologies: [stack, gather_scatter]
@@ -209,6 +114,56 @@ families:
     variants:
       - {window_h: 48}
       - {window_h: 144}
+  - family: small_inflows
+    red_flags: [RF-US-09, RF-SG-06]
+    typologies: [fan_in, scatter_gather]
+    kind: count
+    sensitivity: 1
+    template: "How many payments below {amount} did SUBJ receive in the {window_h} h before the alert?"
+    expect: "higher for laundering"
+    variants:
+      - {amount: 3000, window_h: 72}
+      - {amount: 10000, window_h: 72}
+  - family: return_to_home_bank
+    red_flags: [RF-US-14, RF-US-13]
+    typologies: [cycle]
+    kind: bool
+    sensitivity: 1
+    template: "Did SUBJ send any money to an account at the home bank within {window_h} h after the alert?"
+    expect: "yes more often for laundering (money coming back)"
+    variants:
+      - {window_h: 24}
+      - {window_h: 72}
+  - family: fan_out_count
+    red_flags: [RF-US-21, RF-US-18, RF-SG-16]
+    typologies: [fan_out, scatter_gather]
+    kind: count
+    sensitivity: 1
+    template: "How many distinct accounts did SUBJ pay within {window_h} h after the alert?"
+    expect: "higher for laundering"
+    variants:
+      - {window_h: 24}
+      - {window_h: 72}
+  - family: distinct_banks_out
+    red_flags: [RF-US-22, RF-US-26]
+    typologies: [fan_out, scatter_gather]
+    kind: count
+    sensitivity: 1
+    template: "To how many distinct banks did SUBJ send money within {window_h} h after the alert?"
+    expect: "higher for laundering"
+    variants:
+      - {window_h: 24}
+      - {window_h: 72}
+  - family: internal_chain
+    red_flags: [RF-US-26, RF-US-27]
+    typologies: [stack, bipartite]
+    kind: count
+    sensitivity: 3   # = chain_length's max_hops (one added transfer can join two chains); T2's DSL is authoritative
+    template: "Following the money from SUBJ through accounts at the same partner bank, within {window_h} h after the alert, how many hops long is the longest chain?"
+    expect: "longer for laundering (layering inside one bank)"
+    variants:
+      - {window_h: 24}
+      - {window_h: 72}
   - family: cross_currency_out
     red_flags: [RF-US-04, RF-SG-07, RF-SG-15, RF-US-22]
     typologies: [stack, fan_out]
@@ -219,6 +174,27 @@ families:
     variants:
       - {window_h: 24}
       - {window_h: 72}
+  - family: new_counterparties_out
+    red_flags: [RF-SG-14, RF-US-27]
+    typologies: [fan_out, stack]
+    kind: count
+    sensitivity: 1
+    template: "How many of the accounts SUBJ paid within {window_h} h after the alert had SUBJ never paid before?"
+    expect: "higher for laundering"
+    variants:
+      - {window_h: 24}
+      - {window_h: 72}
+  - family: volume_spike
+    red_flags: [RF-US-11, RF-US-23, RF-SG-14]
+    typologies: [fan_in, stack]
+    kind: bool
+    sensitivity: 1
+    template: "Was SUBJ's total inflow in the 24 h before the alert at least {mult}x its average daily inflow over the 7 days before that?"
+    expect: "yes more often for laundering"
+    variants:
+      - {mult: 3}
+      - {mult: 5}
+      - {mult: 10}
   - family: dormant_then_active
     red_flags: [RF-US-19, RF-SG-03, RF-SG-07, RF-US-11]
     typologies: [stack]
@@ -239,17 +215,24 @@ families:
     variants:
       - {days: 2}
       - {days: 5}
-  - family: volume_spike
-    red_flags: [RF-US-11, RF-US-23, RF-SG-14]
-    typologies: [fan_in, stack]
+  - family: fan_in_many
+    red_flags: [RF-SG-11, RF-SG-10]
+    typologies: [fan_in]
     kind: bool
     sensitivity: 1
-    template: "Was SUBJ's total inflow in the 24 h before the alert at least {mult}x its average daily inflow over the 7 days before that?"
+    template: "Did at least {k} distinct accounts pay SUBJ in the {window_h} h before the alert?"
     expect: "yes more often for laundering"
     variants:
-      - {mult: 3}
-      - {mult: 5}
-      - {mult: 10}
+      - {k: 5, window_h: 72}
+  - family: fan_out_many
+    red_flags: [RF-US-21]
+    typologies: [fan_out]
+    kind: bool
+    sensitivity: 1
+    template: "Did SUBJ pay at least {k} distinct accounts within {window_h} h after the alert?"
+    expect: "yes more often for laundering"
+    variants:
+      - {k: 5, window_h: 72}
   - family: same_entity_transfers
     red_flags: [RF-US-06, RF-US-13, RF-SG-01, RF-US-17]
     typologies: [cycle, stack, bipartite]
@@ -260,36 +243,6 @@ families:
     variants:
       - {window_h: 72}
       - {window_h: 168}
-  - family: entity_accounts
-    red_flags: [RF-US-17, RF-SG-01]
-    typologies: [bipartite, scatter_gather]
-    kind: count
-    sensitivity: 0   # a property of the customer record, not of transactions
-    status: restricted   # decided (T2 + T4, 2026-10-23): not askable. Transaction-level DP does not cover customer records
-    template: "How many accounts does SUBJ's entity hold at the partner bank?"
-    expect: "higher for laundering"
-    variants:
-      - {}
-  - family: internal_chain
-    red_flags: [RF-US-26, RF-US-27]
-    typologies: [stack, bipartite]
-    kind: count
-    sensitivity: 3   # = chain_length's max_hops (one added transfer can join two chains); T2's DSL is authoritative
-    template: "Following the money from SUBJ through accounts at the same partner bank, within {window_h} h after the alert, how many hops long is the longest chain?"
-    expect: "longer for laundering (layering inside one bank)"
-    variants:
-      - {window_h: 24}
-      - {window_h: 72}
-  - family: new_counterparties_out
-    red_flags: [RF-SG-14, RF-US-27]
-    typologies: [fan_out, stack]
-    kind: count
-    sensitivity: 1
-    template: "How many of the accounts SUBJ paid within {window_h} h after the alert had SUBJ never paid before?"
-    expect: "higher for laundering"
-    variants:
-      - {window_h: 24}
-      - {window_h: 72}
   - family: payees_pay_each_other
     red_flags: [RF-US-24]
     typologies: [bipartite, cycle]
@@ -306,5 +259,55 @@ families:
     sensitivity: 1
     template: "In the 72 h before the alert, was SUBJ's total inflow under 1x, 1-3x, 3-10x or over 10x the alerted amount?"
     expect: "higher buckets for laundering"
+    variants:
+      - {}
+  - family: just_below_threshold
+    red_flags: [RF-US-16, RF-US-10, RF-US-08]
+    typologies: []
+    kind: count
+    sensitivity: 1
+    template: "How many of SUBJ's transfers in the {window_h} h around the alert were between 9,000 and 9,999 (any currency)?"
+    expect: "higher for laundering (structuring)"
+    variants:
+      - {window_h: 72}
+      - {window_h: 168}
+  - family: repeated_amounts
+    red_flags: [RF-US-05]
+    typologies: [random, stack]
+    kind: count
+    sensitivity: 2   # adding one transaction can complete a pair, so the count can rise by 2
+    template: "How many of SUBJ's transfers in the {window_h} h around the alert repeat another of its transfers within 1% in amount?"
+    expect: "higher for laundering"
+    variants:
+      - {window_h: 72}
+      - {window_h: 168}
+  - family: round_amounts
+    red_flags: [RF-US-01]
+    typologies: []
+    kind: count
+    sensitivity: 1
+    template: "How many of SUBJ's transfers in the {window_h} h around the alert were whole multiples of {unit}?"
+    expect: "higher for laundering"
+    variants:
+      - {unit: 1000, window_h: 72}
+      - {unit: 100, window_h: 72}
+  - family: cash_format
+    red_flags: [RF-US-08, RF-SG-04, RF-SG-05, RF-SG-16]
+    typologies: [stack]
+    kind: count
+    sensitivity: 1
+    template: "How many of SUBJ's transfers in the {window_h} h around the alert used the Cash payment format?"
+    expect: "higher for laundering"
+    variants:
+      - {window_h: 72}
+      - {window_h: 168}
+  - family: entity_accounts
+    red_flags: [RF-US-17, RF-SG-01]
+    typologies: [bipartite, scatter_gather]
+    kind: count
+    sensitivity: 0   # a property of the customer record, not of transactions
+    status: restricted   # decided (T2 + T4, 2026-10-23): not askable. Transaction-level DP does not cover customer records
+    template: "How many accounts does SUBJ's entity hold at the partner bank?"
+    expect: "higher for laundering"
     variants:
       - {}

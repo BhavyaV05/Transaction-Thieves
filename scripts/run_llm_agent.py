@@ -17,6 +17,7 @@ script refuses to write split=test rows for it (refuse_devtools_test).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import random
@@ -72,8 +73,9 @@ def git_commit() -> str:
         return "unknown"
 
 
-def synthetic_alerts(n: int, seed: int) -> list[tuple[AlertContext, int | None]]:
-    """Toy alerts with aliased-looking summaries; no data needed. Labels are None (no Brier)."""
+def synthetic_alerts(n: int, seed: int, labelled: bool = False) -> list[tuple[AlertContext, int | None]]:
+    """Toy alerts with aliased-looking summaries; no data needed. Labels are None (no Brier) unless `labelled`
+    (random labels, so the E18 driver can be smoke-tested end to end; never a result)."""
     rng = random.Random(seed)
     out = []
     for i in range(n):
@@ -85,7 +87,7 @@ def synthetic_alerts(n: int, seed: int) -> list[tuple[AlertContext, int | None]]
         summary = {"sender": "A0000002", "receiver": "A0000001", "amount": 9500.0, "currency": "US Dollar",
                    "format": "Wire", "time": "2022-09-05 12:00", "evidence": rows, "partner_banks": [220, 1588, 3402]}  # fmt: skip
         out.append((AlertContext(f"S{i:06d}", "70", "2022-09-05T12:00:00", "val", round(rng.uniform(0.05, 0.6), 3),
-                                 summary), None))  # fmt: skip
+                                 summary), int(rng.random() < 0.3) if labelled else None))  # fmt: skip
     return out
 
 
@@ -167,24 +169,36 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--replay", type=Path, default=None, help="replay a cassette (implies --llm mock, strict)")
     ap.add_argument("--toolbox", choices=["dev", "harness"], default="dev")
     ap.add_argument("--thinking", action="store_true", help="Qwen3 thinking mode (off by default, see docs/t3_week0.md)")
+    ap.add_argument("--reasoning-effort", default=None, help="gpt-oss: low | medium | high (sent instead of enable_thinking)")
+    ap.add_argument("--max-output-tokens", type=int, default=None,
+                    help="per-step output budget (E18 thinking arm: 1024, counted in tokens_out and latency)")
+    ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens, help="Limits.max_tokens, the prompt cap")
+    ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
+    ap.add_argument("--endpoint", default=None, help="OpenAI-compatible base URL (default: FTM_LLM_ENDPOINT)")
+    ap.add_argument("--model", default=None, help="served model name (default: FTM_LLM_MODEL, else the server's first)")
+    ap.add_argument("--serving-stack", default=None, help="vllm | llama.cpp, recorded in summary.json (plan.md 6.11)")
+    ap.add_argument("--candidate", default=None, help="E18 candidate name, recorded in summary.json")
+    ap.add_argument("--synthetic-labels", action="store_true", help="random labels on synthetic alerts (driver smoke tests)")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
     ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "runs")
+    ap.add_argument("--run-id", default=None, help="default: timestamp + random suffix")
+    ap.add_argument("--run-dir", type=Path, default=None, help="write here instead of <out>/<run_id> (E18: outputs/e18/<stage>/<candidate>)")
     a = ap.parse_args(argv)
 
     if (a.alerts == "val") != (a.val_part is not None):
         ap.error("--val-part is required with --alerts val (and only then): the val parts must not be mixed")
     refuse_devtools_test("devtools" if a.toolbox == "dev" else "harness", a.alerts)  # before any file or data is touched
-    run_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
-    out = a.out / run_id
+    run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+    out = a.run_dir or a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
-    extra = {"chat_template_kwargs": {"enable_thinking": a.thinking}}
+    extra = {"reasoning_effort": a.reasoning_effort} if a.reasoning_effort else {"chat_template_kwargs": {"enable_thinking": a.thinking}}
     if a.replay:
         llm = MockLLM(cassette=a.replay, strict=True)
     elif a.llm == "endpoint":
-        llm = HttpChatClient.from_env()
+        llm = HttpChatClient.from_env(endpoint=a.endpoint, model=a.model)
     else:
         llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.split("_")[0], dev_responder))
     model = getattr(llm, "model", "mock")
@@ -194,12 +208,13 @@ def main(argv: list[str] | None = None) -> int:
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
     if a.system == "planner":
         system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra,
-                            use_library=a.library is not None, keep_prompts=a.keep_prompts)
+                            use_library=a.library is not None, keep_prompts=a.keep_prompts,
+                            max_output_tokens=a.max_output_tokens)
         system_name = system.system_name
     else:
         system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra)
         system_name = a.system
-    alerts = synthetic_alerts(a.n, a.seed) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part)
+    alerts = synthetic_alerts(a.n, a.seed, a.synthetic_labels) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part)
     tools = make_toolbox(a.toolbox, a.seed)
     library_hash = None
     if a.library is not None:
@@ -207,11 +222,11 @@ def main(argv: list[str] | None = None) -> int:
         if not library.frozen:
             raise SystemExit(f"{a.library} is not frozen; freeze it before using it in a run (plan.md 6.13)")
         library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
-    limits = Limits()
+    limits = Limits(max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": "devtools" if a.toolbox == "dev" else "harness", "seed": a.seed}  # fmt: skip
 
-    rows, sq, n_scored, seconds, trials = [], 0.0, 0, [], {}
+    rows, sq, n_scored, seconds, trials, per_alert = [], 0.0, 0, [], {}, []
     with (out / "alerts.jsonl").open("w", encoding="utf-8") as f:  # server side, no labels (for build_library.py)
         for ctx, _ in alerts:
             shape = dict(ctx.summary.get("shape") or {})
@@ -219,9 +234,15 @@ def main(argv: list[str] | None = None) -> int:
                                 "receiver": shape.pop("receiver", ctx.summary.get("receiver")), "shape": shape}) + "\n")
     with (out / "traces.jsonl").open("w", encoding="utf-8") as traces:
         for ctx, label in alerts:
+            before = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
             t0 = time.perf_counter()
             v = system.investigate(ctx, tools, limits)
             seconds.append(time.perf_counter() - t0)
+            after = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
+            per_alert.append({"alert_id": ctx.alert_id, "label": label, "p0": ctx.p0, "probability": v.probability,
+                              "seconds": seconds[-1], "gpu_seconds": v.gpu_seconds, "llm_calls": v.llm_calls,
+                              "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
+                              **{k: after[k] - before[k] for k in after}})  # fmt: skip
             refuse_devtools_test(base["variant"], ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id}, label)
             if v.trials is not None:
@@ -230,9 +251,14 @@ def main(argv: list[str] | None = None) -> int:
             if label is not None:
                 p = ctx.p0 if v.probability is None else v.probability
                 sq, n_scored = sq + (p - label) ** 2, n_scored + 1
+    (out / "per_alert.jsonl").write_text("".join(json.dumps(r) + "\n" for r in per_alert))  # E18 reads this
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
+               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking,
+               "reasoning_effort": a.reasoning_effort, "max_output_tokens": a.max_output_tokens,
+               "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
+               "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
                "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n, "library_hash": library_hash,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
