@@ -35,7 +35,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 
 ## Week 6
 - [x] DP-FedAvg training (client-level and edge-level curves, HI-Small)
-- [x] FraudGT (secondary): reproduction only, see ftm/baselines/README.md
+- [x] FraudGT (secondary): partial reproduction on our val days (3 h, 111 of 500 epochs, val F1 0.648; full run is a 5070 Ti job), see ftm/baselines/README.md
 
 ## Week 7
 - [ ] AML-specific federated method (secondary)
