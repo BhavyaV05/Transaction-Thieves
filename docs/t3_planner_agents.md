@@ -99,8 +99,8 @@ python scripts/run_llm_agent.py --system planner --llm endpoint --record outputs
 python scripts/run_llm_agent.py --system planner --replay outputs/cassettes/p20.jsonl ...
 
 # G2 (planner, 20 val alerts) and G3 (ReAct, 50 val alerts), once the blockers below are cleared
-python scripts/run_llm_agent.py --system planner --alerts val --data hi_small --n 20 --llm endpoint --toolbox harness --machine t3-5070ti
-python scripts/run_llm_agent.py --system react   --alerts val --data hi_small --n 50 --llm endpoint --toolbox harness --machine t3-5070ti
+python scripts/run_llm_agent.py --system planner --alerts val --val-part eval --data hi_small --n 20 --llm endpoint --toolbox harness --machine t3-5070ti
+python scripts/run_llm_agent.py --system react   --alerts val --val-part eval --data hi_small --n 50 --llm endpoint --toolbox harness --machine t3-5070ti
 ```
 
 Real-alert runs build the evidence with `ftm.retrieval.views.top_k_by_amount_view` and the summary with `alert_summary`. The partner banks are the 30 view banks minus the home bank. Outputs go to `outputs/runs/<run_id>/`:

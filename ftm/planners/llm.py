@@ -37,7 +37,7 @@ from ftm.planners.llm_prompt import (
     parse_action,
     planner_schema,
 )
-from ftm.types import AlertContext, Limits, Verdict
+from ftm.types import AlertContext, Limits, Reply, Verdict
 
 EvidenceFn = Callable[[AlertContext, ToolBox], str]
 RULES_QUERY = "sharing information with another financial institution about suspected money laundering"
@@ -208,6 +208,8 @@ class LLMPlanner:
             failures, feedback = 0, None
             rec.update(canonical=check.canonical, bank=action.bank, eps=action.eps, outcome=outcome(entry),
                        posterior_after=entry.posterior_after)  # fmt: skip
+            if isinstance(entry.response, Reply):  # the answer, so distillation can re-fuse with the real fusion model
+                rec.update(answer_value=entry.response.value, answer_kind=entry.response.kind)
             if action.action == "compose" and self.batch_writer is not None and entry.gate_decision == "allowed":
                 self.batch_writer.add(canonical=check.canonical, kind=check.kind, family=check.family, eps=action.eps,
                                       bank=action.bank, alert_id=alert.alert_id, split=alert.split, step=step,

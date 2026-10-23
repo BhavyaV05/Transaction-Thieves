@@ -8,15 +8,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ftm.fastmodel.calibration import ece, fit_temperature, softmax_t
+from ftm.fastmodel.calibration import fit_temperature, softmax_t, top_label_ece
 from ftm.fastmodel.cascade import ConformalCascade, ConformalSet, evaluate
 from ftm.fastmodel.decisions import DECISIONS, DecisionExample, messages, to_sft_example
 from ftm.fastmodel.model import JsonDecisionModel, LogprobFastModel, label_logps
+from ftm.fusion.fuse import Fusion
 from ftm.harness.interface import ScriptedToolBox
 from ftm.llm.client import ChatResponse
+from ftm.llm.fusion_adapter import FusedLR
+from ftm.llm.investigation import LREntry, LRTable, NaiveLRFusion
 from ftm.llm.mock import MockLLM
 from ftm.planners.llm import LLMPlanner
-from ftm.planners.llm_distill import distill_examples
+from ftm.planners.llm_distill import Teacher, distill_examples
 from ftm.types import AlertContext, Limits, Reply
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,32 +27,64 @@ Q = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
 
 
 # -- distillation -------------------------------------------------------------------------------------------
-def trace_rec(step, action="compose", before=0.2, after=0.5, outcome="reply", canonical=Q, eps=0.5, error=None):
+def trace_rec(step, action="compose", answer=True, outcome="reply", canonical=Q, eps=0.5, error=None):
     text = json.dumps({"action": action, "program": canonical if action == "compose" else None})
     r = {"step": step, "messages": [{"role": "user", "content": f"s{step}"}], "text": text, "action": action,
-         "posterior_before": before, "posterior_after": after if action != "stop" else None, "outcome": outcome,
-         "canonical": canonical, "eps": eps}  # fmt: skip
+         "outcome": outcome, "canonical": canonical, "eps": eps, "bank": 220, "answer_value": answer,
+         "answer_kind": "bool"}  # fmt: skip
     if error:
         r["error"] = error
     return r
 
 
+TEACHER = Teacher("qwen3-27b", "a" * 40)
+TABLE = LRTable([LREntry(Q, 0.5, True, {"true": 4.0, "false": 0.25}, family="f")])
+
+
 def test_distill_keeps_accepted_questions_that_move_toward_label():
+    # p0 = 0.2; "true" has LR 4 (posterior 0.5), "false" has LR 0.25
     traces = [
-        {"alert_id": "T1", "trace": [trace_rec(1), trace_rec(2, before=0.5, after=0.3), trace_rec(3, "stop")]},
-        {"alert_id": "T2", "trace": [trace_rec(1, before=0.5, after=0.2), trace_rec(2, "stop")]},  # label 0: kept
-        {"alert_id": "T3", "trace": [trace_rec(1, canonical="fan_in(x)"), trace_rec(2, "stop")]},  # rejected q
-        {"alert_id": "V1", "trace": [trace_rec(1)]},  # val: not in splits
+        {"alert_id": "T1", "p0": 0.2, "trace": [trace_rec(1), trace_rec(2, answer=False), trace_rec(3, "stop")]},
+        {"alert_id": "T2", "p0": 0.2, "trace": [trace_rec(1, answer=False), trace_rec(2, "stop")]},  # label 0: kept
+        {"alert_id": "T3", "p0": 0.2, "trace": [trace_rec(1, canonical="fan_in(x)"), trace_rec(2, "stop")]},  # rejected q
+        {"alert_id": "V1", "p0": 0.2, "trace": [trace_rec(1)]},  # val: not in splits
     ]
     alerts = {"T1": {"split": "train", "label": 1}, "T2": {"split": "train", "label": 0},
               "T3": {"split": "train", "label": 1}, "V1": {"split": "val", "label": 1}}  # fmt: skip
-    ex, counts = distill_examples(traces, alerts, accepted=lambda c, e: c == Q)
+    fusion = FusedLR(Fusion("naive"), TABLE)
+    kw = {"fusion": fusion, "teacher": TEACHER}
+    ex, counts = distill_examples(traces, alerts, accepted=lambda c, e: c == Q, **kw)
     kept = [(e["alert_id"], e["step"]) for e in ex]
     assert kept == [("T1", 1), ("T1", 3), ("T2", 1), ("T2", 2)]  # T1 step 2 moved away; T3 has no kept question
     assert ex[0]["messages"][-1] == {"role": "assistant", "content": json.dumps(json.loads(traces[0]["trace"][0]["text"]), separators=(",", ":"))}
     assert counts["kept_questions"] == 2 and counts["kept_stops"] == 2
+    assert all(e["teacher"] == {"model": "qwen3-27b", "revision": "a" * 40} for e in ex) and counts["teacher"] == ex[0]["teacher"]
     with pytest.raises(ValueError):
-        distill_examples(traces, alerts, accepted=lambda c, e: True, splits=("train", "test"))
+        distill_examples(traces, alerts, accepted=lambda c, e: True, splits=("train", "test"), **kw)
+
+
+def test_distill_posteriors_follow_the_given_fusion_not_the_trace():
+    # the same answer moves the posterior toward label 1 under naive fusion, away from it under a flipped fitted one
+    traces = [{"alert_id": "T1", "p0": 0.2, "trace": [trace_rec(1)]}]
+    alerts = {"T1": {"split": "train", "label": 1}}
+    kw = {"accepted": lambda c, e: True, "teacher": TEACHER}
+    flipped = FusedLR(Fusion("shared", ["f"], a=1.0, w=np.array([-1.0]), c=0.0, fitted=True), TABLE)
+    assert len(distill_examples(traces, alerts, fusion=FusedLR(Fusion("naive"), TABLE), **kw)[0]) == 1
+    assert distill_examples(traces, alerts, fusion=flipped, **kw)[0] == []
+
+
+def test_distill_refuses_missing_acceptance_placeholder_fusion_and_old_traces():
+    traces = [{"alert_id": "T1", "p0": 0.2, "trace": [trace_rec(1)]}]
+    alerts = {"T1": {"split": "train", "label": 1}}
+    good = FusedLR(Fusion("naive"), TABLE)
+    with pytest.raises(ValueError, match="realistic"):
+        distill_examples(traces, alerts, fusion=good, teacher=TEACHER)
+    with pytest.raises(ValueError, match="placeholder"):
+        distill_examples(traces, alerts, lambda c, e: True, fusion=NaiveLRFusion(TABLE), teacher=TEACHER)
+    with pytest.raises(ValueError, match="no p0"):
+        distill_examples([{"alert_id": "T1", "trace": traces[0]["trace"]}], alerts, lambda c, e: True, fusion=good, teacher=TEACHER)
+    with pytest.raises(ValueError):
+        Teacher("m", "")
 
 
 def test_planner_keep_prompts_records_what_distillation_needs():
@@ -59,7 +94,8 @@ def test_planner_keep_prompts_records_what_distillation_needs():
     alert = AlertContext("T1", "70", "2022-09-05T12:00:00", "train", 0.2, {"partner_banks": [220], "evidence": "e"})
     p.investigate(alert, ScriptedToolBox([Reply("220", "bool", True, 0.5, 0.2)]), Limits(eps_per_alert=0.5))
     rec = p.last_trace[0]
-    assert {"messages", "text", "posterior_before", "posterior_after", "canonical", "eps", "outcome"} <= set(rec)
+    assert {"messages", "text", "posterior_before", "posterior_after", "canonical", "eps", "outcome", "answer_value", "bank"} <= set(rec)
+    assert rec["answer_value"] == Reply("220", "bool", True, 0.5, 0.2).value
 
 
 # -- SFT script -----------------------------------------------------------------------------------------------
@@ -136,7 +172,7 @@ def test_temperature_scaling_recovers_overconfidence():
     over = true_logits * t_true  # model is overconfident by a factor t_true
     t = fit_temperature(over, y)
     assert t == pytest.approx(t_true, rel=0.15)
-    assert ece(softmax_t(over, t), y) < ece(softmax_t(over, 1.0), y)
+    assert top_label_ece(softmax_t(over, t), y) < top_label_ece(softmax_t(over, 1.0), y)
 
 
 # -- cascade --------------------------------------------------------------------------------------------------
