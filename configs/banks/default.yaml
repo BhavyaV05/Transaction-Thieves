@@ -3,5 +3,9 @@ latency_days:
   typical_max: 1.0      # usually under 1 day
   tail_max: 4.0         # sometimes up to 4 days
 timeout_days: 5.0
-p_decline: 0.05         # placeholder; T2 sets the real value
+p_decline: 0.05         # share of questions a bank declines (a 314(b) request is voluntary)
+p_timeout: 0.02         # share that never get a reply: Timeout after timeout_days
+p_tail: 0.15            # share of replies slower than typical_max (up to tail_max)
+min_latency_days: 0.02
+p_note: 0.3             # share of replies that carry a note (neutral text unless T4's injection set swaps it)
 notes_enabled: true     # optional untrusted text note on replies (injection target)
