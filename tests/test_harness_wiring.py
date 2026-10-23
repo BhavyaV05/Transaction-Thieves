@@ -32,7 +32,7 @@ def _table_dir(tmp_path, rows, mode="realistic", entries=True):
     (d / "report.json").write_text(json.dumps({"namespace": "abc123"}))
     if entries:
         for i, r in enumerate(rows):
-            (d / f"{i:02d}.json").write_text(json.dumps({**r, "mode": mode, "eligible": True, "e_value": 1.0}))
+            (d / f"{i:020x}.json").write_text(json.dumps({**r, "mode": mode, "eligible": True, "e_value": 1.0}))
     return d
 
 

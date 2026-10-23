@@ -376,6 +376,10 @@ def main(argv: list[str] | None = None) -> int:
         "alerts_with_eps_spent": sum(1 for r in per_alert if r["eps_spent"]),
         "sim_days_mean": (sum(r["sim_days"] for r in per_alert) / len(per_alert)) if per_alert and per_alert[0]["sim_days"] is not None else None,
     }  # fmt: skip
+    if session is not None:
+        from ftm.harness.interface import HARNESS_VERSION
+
+        summary["harness_version"] = HARNESS_VERSION
     summary["fusion"] = type(fusion).__name__
     summary["backtest"] = bt.summary() if bt else None
     if only_ids is not None:

@@ -58,8 +58,8 @@ def _read_rows(path: Path) -> list[dict]:
 def _cache_mode(d: Path) -> str | None:
     modes = set()
     for p in d.glob("*.json"):
-        if p.name == "report.json":
-            continue
+        if len(p.stem) != 20 or any(c not in "0123456789abcdef" for c in p.stem):
+            continue  # entries are <20 hex digits>.json (T2); report.json and the like are not entries
         m = json.loads(p.read_text(encoding="utf-8")).get("mode")
         if m is not None:
             modes.add(m)
