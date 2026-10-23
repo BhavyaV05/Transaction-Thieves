@@ -1,0 +1,67 @@
+diff --git a/fraudGT/sampler/custom_sampler.py b/fraudGT/sampler/custom_sampler.py
+index f354736..3232da1 100644
+--- a/fraudGT/sampler/custom_sampler.py
++++ b/fraudGT/sampler/custom_sampler.py
+@@ -69,7 +69,7 @@ class AddEgoIdsForNeighbor(BaseTransform):
+     def __init__(self):
+         pass
+ 
+-    def __call__(self, data: Union[Data, HeteroData]):
++    def forward(self, data: Union[Data, HeteroData]):
+         x = data.x if not isinstance(data, HeteroData) else data['node'].x
+         device = x.device
+         ids = torch.zeros((x.shape[0], 1), device=device)
+@@ -772,7 +772,7 @@ class AddEgoIdsForLinkNeighbor(BaseTransform):
+     def __init__(self):
+         pass
+ 
+-    def __call__(self, data: Union[Data, HeteroData]):
++    def forward(self, data: Union[Data, HeteroData]):
+         x = data.x if not isinstance(data, HeteroData) else data['node'].x
+         device = x.device
+         ids = torch.zeros((x.shape[0], 1), device=device)
+@@ -792,6 +792,11 @@ class AddEgoIdsForLinkNeighbor(BaseTransform):
+ @register_sampler('link_neighbor')
+ def get_LinkNeighborLoader(dataset, batch_size, shuffle=True, split='train'):
+     task = cfg.dataset.task_entity
++    # T1 patch: FraudGT's own test days (9-18) are our locked test split. Unless T1_EVAL_TEST=1, the 'test' loader reads the
++    # val split instead, so every 'test_*' number in the logs is a VAL number and no test edge is ever scored.
++    import os as _os
++    if split == 'test' and _os.environ.get('T1_EVAL_TEST') != '1':
++        split = 'val'
+     data = dataset[split]
+     mask = data[task].split_mask
+     edge_label_index = data[task].edge_index[:, mask]
+diff --git a/fraudGT/train/custom_train.py b/fraudGT/train/custom_train.py
+index a151f9c..3c0c3b9 100644
+--- a/fraudGT/train/custom_train.py
++++ b/fraudGT/train/custom_train.py
+@@ -185,6 +185,9 @@ def train_epoch(cur_epoch, logger, loader, model, optimizer, scheduler, batch_ac
+ 
+ @torch.no_grad()
+ def eval_epoch(logger, loader, model, split='val'):
++    import os as _os
++    if split == 'test' and _os.environ.get('T1_EVAL_TEST') != '1':
++        split = 'val'  # T1 patch: the 'test' loader reads val data (see custom_sampler.py), so index it with the val indices
+     model.eval()
+     pbar = tqdm(total=len(loader), disable=not cfg.val.tqdm)
+     iterator = iter(loader)
+@@ -297,6 +300,18 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
+                 and is_ckpt_epoch(cur_epoch):
+             save_ckpt(model, optimizer, scheduler, cur_epoch)
+ 
++        # T1 patch: wall-clock budget (T1_BUDGET_S) and a per-epoch metrics line (T1_METRICS)
++        import json as _json, os as _os
++        _t0 = globals().setdefault('_T1_T0', time.time())
++        if is_eval_epoch(cur_epoch, start_epoch):
++            with open(_os.environ.get('T1_METRICS', 'metrics.jsonl'), 'a') as _fh:
++                _fh.write(_json.dumps({'epoch': cur_epoch, 'elapsed_s': time.time() - _t0,
++                                       'val': {k: float(v) for k, v in perf[1][-1].items() if isinstance(v, (int, float))},
++                                       'test': {k: float(v) for k, v in perf[2][-1].items() if isinstance(v, (int, float))}}) + '\n')
++        if time.time() - _t0 > float(_os.environ.get('T1_BUDGET_S', '1e18')) and is_eval_epoch(cur_epoch, start_epoch):
++            logging.info('T1 time budget reached, stopping')
++            break
++
+         if cfg.wandb.use:
+             run.log(flatten_dict(perf), step=cur_epoch)
+ 
