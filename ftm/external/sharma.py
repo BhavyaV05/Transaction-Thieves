@@ -39,7 +39,7 @@ from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, NaiveLRFusion, describe
 from ftm.llm.jsonout import JsonOutputError, parse_and_validate
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.planners.llm_prompt import EPS_LEVELS, eps_levels
 from ftm.types import AlertContext, Limits, Verdict
 
@@ -196,7 +196,7 @@ class Sharma:
         self.llm, self.mode, self.variant = llm, mode, variant
         self.memory = memory or CaseMemory()
         self.verdict_map = verdict_map or VerdictMap()
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.temperature, self.seed, self.max_tokens, self.extra = temperature, seed, max_tokens_per_step, extra  # official temp 0.1
         self.last_trace: list[dict] = []
@@ -299,7 +299,7 @@ def dev_responder(messages: list[dict], kw: dict) -> str:
             eps_s = schema["properties"]["eps"]
             if "anyOf" in bank_s and "anyOf" in eps_s:
                 out.update(bank=bank_s["anyOf"][0]["enum"][0], eps=eps_s["anyOf"][0]["enum"][0],
-                           question="passthrough(ALERT.receiver, min_frac=0.8, within_h=24)")  # fmt: skip
+                           question="passed_on(ALERT.receiver, window=after(24), min_frac=0.8)")  # fmt: skip
             else:
                 out["tool"] = "get_similar_past_cases"
     else:
