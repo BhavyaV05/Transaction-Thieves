@@ -58,6 +58,7 @@ def test_shared_types_are_frozen():
                                                           "posterior_after"]  # fmt: skip
     assert [f[0] for f in fields(T.Verdict)] == ["alert_id", "probability", "questions_log", "tokens_in", "tokens_out",
                                                  "llm_calls", "gpu_seconds", "trials"]  # fmt: skip
+    # `trials` (Reflexion trials per alert, default None) was added by T3 after the freeze: additive and optional, accepted by T2
     assert T.Verdict("a", None).trials is None  # added after v1 as an optional field (Reflexion trials)
     assert T.AnswerKind.__args__ == ("bool", "count", "kary", "set_count")
     assert T.Reply.__dataclass_params__.frozen and T.Limits.__dataclass_params__.frozen
