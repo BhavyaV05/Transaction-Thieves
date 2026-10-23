@@ -51,7 +51,8 @@ class RunResult:
 
 def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Limits, base: dict,
                split: str = "val") -> RunResult:  # fmt: skip
-    """Investigate every alert in a fresh harness session and score the verdicts against the labels."""
+    """Investigate every alert in a fresh harness session and score the verdicts against the labels. The run-log rows
+    are v1: p0, eps spent, simulated days and the stop reason on the verdict row; family, kind and log LR per answer."""
     tools = harness.toolbox()
     system = tools.wrap(planner)
     rows, verdicts, p0s, ps, ys, secs, sims = [], [], [], [], [], [], []
@@ -61,7 +62,10 @@ def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Lim
         v = system.investigate(ctx, tools, limits)
         secs.append(time.perf_counter() - t)
         sims.append(tools.last_elapsed_days)
-        rows += verdict_rows(v, {**base, "split": split, "alert_id": a.alert_id}, int(a.label))
+        facts = {"eps_spent": tools.eps_spent, "sim_days": tools.last_elapsed_days,
+                 "stop_reason": getattr(planner, "last_stop_reason", None)}  # fmt: skip
+        rows += verdict_rows(v, {**base, "split": split, "alert_id": a.alert_id}, int(a.label), ctx=ctx,
+                             pool=getattr(planner, "pool", None), facts=facts)  # fmt: skip
         verdicts.append(v)
         p0s.append(a.p0)
         ps.append(a.p0 if v.probability is None else v.probability)

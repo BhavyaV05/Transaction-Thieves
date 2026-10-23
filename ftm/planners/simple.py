@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ftm.fusion.fuse import Fusion, logit, sigmoid
 from ftm.harness.interface import ToolBox
@@ -62,6 +62,7 @@ class _Base:
     max_weight: float = 1.0
     waves: tuple[int, ...] | None = None  # batched mode (E13): wave sizes, e.g. (2, 1); None = one question at a time
     name: str = "planner"
+    last_stop_reason: str | None = field(default=None, init=False, repr=False)  # of the last alert, for the run log
 
     def choose(self, s: PlanSession, options: list[Candidate]) -> Candidate | None:
         raise NotImplementedError
@@ -79,6 +80,7 @@ class _Base:
             if pick is None:
                 break
             s.ask(pick)
+        self.last_stop_reason = s.stop_reason()
         return s.verdict()
 
 
@@ -105,6 +107,7 @@ class _Base:
             if not picks:
                 break
             s.ask_batch(picks)
+        self.last_stop_reason = s.stop_reason()
         return s.verdict()
 
 
