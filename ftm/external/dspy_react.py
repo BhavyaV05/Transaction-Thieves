@@ -23,7 +23,7 @@ from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import Fusion, Investigation, NaiveLRFusion
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.types import AlertContext, Limits, Verdict
 
 from .text_agent import ToolCall, ToolExecutor, case_text, tools_doc
@@ -87,7 +87,7 @@ class DspyReact:
     def __init__(self, llm: ChatClient, *, program=None, program_path: str | None = None, dsl: DslAdapter | None = None,
                  fusion: Fusion | None = None, max_iters: int | None = None, seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm, self.extra, self.seed = llm, extra, seed
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.max_iters = max_iters
         self.program = program
@@ -150,7 +150,7 @@ def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, a
     if any(e["alert"].split == "test" for e in examples):
         raise ValueError("DSPy tuning uses validation alerts only (tuning parity, plan.md 7.2)")
     registry = {e["alert"].alert_id: (e["alert"], e["tools"]) for e in examples}
-    dsl = ProvisionalDsl()
+    dsl = V0Dsl()
     trainset = [dspy.Example(case=case_text(e["alert"], str(e["alert"].summary.get("evidence", ""))),
                              tools_help=tools_doc(dsl, list(e["alert"].summary.get("partner_banks", [])), limits.eps_per_alert),
                              alert_id=e["alert"].alert_id, label=e["label"]).with_inputs("case", "tools_help", "alert_id")

@@ -37,7 +37,7 @@ def test_native_loop_uses_tools_then_verdict():
 
 
 def test_native_mode_has_no_ask_bank():
-    llm = MockLLM(script=[step("ask_bank", bank=1588, eps=1.0, question="passthrough(ALERT.receiver, min_frac=0.8, within_h=24)")])
+    llm = MockLLM(script=[step("ask_bank", bank=1588, eps=1.0, question="passed_on(ALERT.receiver, window=after(24), min_frac=0.8)")])
     v = sh.Sharma(llm).investigate(_alert(), ScriptedToolBox(), Limits(max_llm_calls=1))
     assert v.probability is None and v.questions_log == []  # schema refuses the tool; no verdict
 
@@ -57,7 +57,7 @@ def test_iterations_capped_by_shared_call_limit():
 
 
 def test_ported_mode_asks_banks_through_investigation():
-    q = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
+    q = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
     llm = MockLLM(script=[step("get_shap_explanation"), step("ask_bank", bank=1588, eps=1.0, question=q),
                           step("ask_bank", bank=1588, eps=1.0, question=q),  # duplicate: refused, no bank call
                           step("submit_verdict", verdict="not_fraud", rationale="bank 1588 says no pass-through")])  # fmt: skip
@@ -89,7 +89,7 @@ def test_verdict_map_fit_and_case_memory():
 
 
 def test_runs_on_dev_toolbox_end_to_end():
-    q = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
+    q = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
     llm = MockLLM(script=[step("ask_bank", bank=70, eps=0.5, question=q), step("get_similar_past_cases"),
                           step("submit_verdict", verdict="escalate", rationale="mixed")])  # fmt: skip
     v = sh.Sharma(llm, mode="ported").investigate(_alert(), DevRandomToolBox(seed=1), Limits())

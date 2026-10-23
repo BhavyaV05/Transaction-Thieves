@@ -20,7 +20,7 @@ from ftm.planners.llm_distill import distill_examples
 from ftm.types import AlertContext, Limits, Reply
 
 ROOT = Path(__file__).resolve().parents[1]
-Q = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
+Q = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
 
 
 # -- distillation -------------------------------------------------------------------------------------------

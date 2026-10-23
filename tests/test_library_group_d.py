@@ -17,8 +17,8 @@ from ftm.planners.llm import LLMPlanner
 from ftm.types import AlertContext, Limits, Reply
 
 T0 = datetime(2022, 9, 5, 12)
-Q_PASS = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
-Q_FAN = "fan_in(ALERT.receiver, min_senders=5, window_h=48)"
+Q_PASS = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
+Q_FAN = "at_least(n_counterparties(ALERT.receiver, dir=in, window=before(48)), k=5)"
 
 
 def rows(n_payers=5, hours=30):
@@ -51,11 +51,12 @@ def records(shape, question, gain_mean, n, accepted=True, split="train", seed=0,
 def test_build_successes_failures_and_min_support():
     sh = shape_from_rows(rows(), "R", T0, typology="fan_in")
     recs = (records(sh, Q_PASS, 0.02, 30) + records(sh, Q_FAN, -0.02, 30, seed=1)
-            + records(sh, "n_tx(ALERT.sender, direction=in, min_amount=1000, window_h=72)", 0.05, 30, accepted=False, seed=2)
-            + records(sh, "fan_out(ALERT.sender, min_receivers=5, window_h=48)", 0.5, 5, seed=3))  # fmt: skip
+            + records(sh, "n_tx(ALERT.sender, dir=in, window=before(72), min_amount=1000)", 0.05, 30, accepted=False, seed=2)
+            + records(sh, "at_least(n_counterparties(ALERT.sender, dir=out, window=before(48)), k=5)", 0.5, 5, seed=3))  # fmt: skip
     lib = build_library(recs, n_min=20)
     kinds = {s.question.split("(")[0]: s.kind for s in lib.strategies}
-    assert kinds == {"passthrough": "success", "fan_in": "failure", "n_tx": "failure"}  # fan_out: 5 alerts < n_min
+    # Q_FAN and the out-direction at_least question share the "at_least" prefix; the latter has 5 alerts < n_min
+    assert kinds == {"passed_on": "success", "at_least": "failure", "n_tx": "failure"}
     assert all("A0" not in s.text and "R" not in s.text.split("`")[0][:3] for s in lib.strategies)
     hits = lib.search(sh, k=3)
     assert hits[0].kind == "success" and hits[0].question == Q_PASS
@@ -133,7 +134,7 @@ def test_reflexion_retries_with_memory_and_shared_budget():
     assert v.probability == 0.7 and len(v.questions_log) == 2 and v.llm_calls == 7
     trial2 = llm.requests[4]["messages"][1]["content"]
     assert "Reflections from your earlier attempts" in trial2 and "payer counts" in trial2
-    assert "Answers already obtained" in trial2 and "passthrough" in trial2
+    assert "Answers already obtained" in trial2 and "passed_on" in trial2
 
 
 def test_reflexion_stops_when_confident_or_out_of_calls():
