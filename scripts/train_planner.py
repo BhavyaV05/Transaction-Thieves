@@ -4,7 +4,7 @@ Owner: T3 (Akshat).  Spec: tracks.md 5.4 (steps 1-4) and 5.6; plan.md 6.11 and 6
 
     # 1. distil teacher traces (run_llm_agent.py --keep-prompts on TRAIN alerts) into SFT examples
     python scripts/train_planner.py distill --runs outputs/runs/<teacher1> ... --data hi_small \
-        --backtest outputs/backtest/lr_table.jsonl --backtest-mode realistic --fusion-params outputs/fusion/val_fit.json \
+        --backtest data/backtest/hi_medium/<namespace> --fusion-params outputs/fusion/val_fit.json \
         --teacher-model <served model name> --teacher-revision <40-char hash> --out outputs/sft/planner_train.jsonl
     # 2. check config + data without a GPU, then train one seed (block GPU_CALENDAR.md first)
     python scripts/train_planner.py train --config configs/llm/sft_planner.yaml --dataset outputs/sft/planner_train.jsonl --dry-run
@@ -99,43 +99,34 @@ def train(cfg: dict, rows: list[dict], seed: int) -> Path:  # pragma: no cover -
     return out
 
 
-class TableAcceptance:
-    """RealisticAcceptance over a back-test table. Pending: T2's own adapter (PR #24) will replace this; until then the
-    caller states the mode the table was made in and anything but realistic is refused."""
-
-    def __init__(self, table, mode: str):
-        if mode != "realistic":
-            raise SystemExit(f"distillation needs a realistic-mode back-test table, not {mode!r} (exact mode ignores the noise)")
-        self.table = table
-
-    def __call__(self, canonical: str, eps: float) -> bool:
-        entry = self.table.get(canonical, eps)
-        return entry is not None and entry.accepted
-
-
 def cmd_distill(a) -> int:
     import polars as pl
 
+    from ftm.llm.backtest_table import TableAcceptance, load_backtest
     from ftm.llm.fusion_adapter import FusedLR
-    from ftm.llm.investigation import LRTable
     from ftm.planners.llm_distill import Teacher, distill_examples
 
     labels = {}
     for split in a.splits:
         df = pl.read_parquet(ROOT / "data" / "alerts" / a.data / f"{split}.parquet", columns=["alert_id", "label", "split"])  # time-guard: not transactions
         labels.update({r["alert_id"]: r for r in df.to_dicts()})
-    table = LRTable.from_rows(json.loads(x) for x in a.backtest.read_text(encoding="utf-8").splitlines() if x.strip())
+    try:  # the mode is read from T2's cache entries beside the table; --backtest-mode is only a cross-check
+        bt = load_backtest(a.backtest, mode=a.backtest_mode, require="realistic")
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    table = bt.table
     traces = [json.loads(x) for run in a.runs for x in (run / "traces.jsonl").read_text(encoding="utf-8").splitlines()]
 
     runs_model = {json.loads((run / "summary.json").read_text(encoding="utf-8")).get("model") for run in a.runs}
     if runs_model != {a.teacher_model}:
         raise SystemExit(f"runs were made with {sorted(map(str, runs_model))}, not --teacher-model {a.teacher_model!r}")
     fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), table)  # fitted on val (T4)
-    examples, counts = distill_examples(traces, labels, TableAcceptance(table, a.backtest_mode), fusion=fusion,
+    examples, counts = distill_examples(traces, labels, TableAcceptance(bt), fusion=fusion,
                                         teacher=Teacher(a.teacher_model, a.teacher_revision), splits=tuple(a.splits))  # fmt: skip
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text("".join(json.dumps(e) + "\n" for e in examples), encoding="utf-8")
-    summary = {"out": str(a.out), "runs": [str(r) for r in a.runs], "backtest": str(a.backtest), "backtest_mode": a.backtest_mode,
+    summary = {"out": str(a.out), "runs": [str(r) for r in a.runs], "backtest": str(a.backtest), "backtest_mode": bt.mode,
+               "backtest_namespace": bt.namespace, "backtest_accepted_by_eps": bt.summary()["accepted_by_eps"],
                "fusion_params": str(a.fusion_params), **counts}  # fmt: skip
     (a.out.parent / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
@@ -184,8 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--runs", type=Path, nargs="+", required=True)
     d.add_argument("--data", default="hi_small")
     d.add_argument("--splits", nargs="+", default=["train"])
-    d.add_argument("--backtest", type=Path, required=True)
-    d.add_argument("--backtest-mode", required=True, help="mode the table was made in; only 'realistic' is accepted")
+    d.add_argument("--backtest", type=Path, required=True, help="assembled back-test dir (or its lr_table.jsonl)")
+    d.add_argument("--backtest-mode", default=None,
+                   help="cross-check, or the stated mode of a table copied away from its cache; read from the cache otherwise")
     d.add_argument("--fusion-params", type=Path, required=True, help="Fusion.params() JSON of the model fitted on val")
     d.add_argument("--teacher-model", required=True)
     d.add_argument("--teacher-revision", required=True, help="weights revision (commit hash) of the served teacher")

@@ -80,8 +80,8 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
         if home not in home_views:
             home_views[home] = view(home).select("timestamp", "src_id", "dst_id")
         b = bind_alert(row["alert_id"], row, home, home_views[home])
-        if b.partner_bank is None:
-            skipped += 1
+        if b.partner_bank is None or not (views / f"bank={b.partner_bank}.parquet").exists():
+            skipped += 1  # no partner, or one outside the modelled banks (no view, so no ledger to ask)
             continue
         out.append(BtAlert(row["alert_id"], bool(row["label"]), b, float(row["p0"]), row["typology"], split))
     partners = {a.binding.partner_bank for a in out}

@@ -19,12 +19,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import platform
 import random
 import subprocess
 import sys
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,8 +35,13 @@ sys.path.insert(0, str(ROOT))
 import polars as pl  # noqa: E402
 
 from ftm import guards  # noqa: E402
-from ftm.eval.runlog import RUN_LOG_COLUMNS  # noqa: E402
+from ftm.dsl.parser import family, parse  # noqa: E402
+from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
+from ftm.external.co_investigator import CoInvestigator  # noqa: E402
+from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
 from ftm.external.dspy_react import DspyReact  # noqa: E402
+from ftm.external.finfre_rag import ExemplarPool, FinfreRag  # noqa: E402
+from ftm.external.finfre_rag import dev_responder as finfre_dev_responder  # noqa: E402
 from ftm.external.lats import Lats  # noqa: E402
 from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.react import React  # noqa: E402
@@ -46,8 +53,11 @@ from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
 from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
+from ftm.llm.backtest_table import BacktestTableError, load_backtest  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
+from ftm.llm.fusion_adapter import FusedLR  # noqa: E402
+from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM, RecordingClient  # noqa: E402
 from ftm.planners.llm import LLMPlanner  # noqa: E402
 from ftm.planners.llm_batches import QuestionBatchWriter  # noqa: E402
@@ -60,8 +70,14 @@ GROUP_C = {  # T4 ports (Group C, native and ported modes)
     "sharma_ported": lambda llm, **kw: Sharma(llm, mode="ported", **kw),
     "torres_native": lambda llm, **kw: Torres(llm, mode="native", **kw),
     "torres_ported": lambda llm, **kw: Torres(llm, mode="ported", **kw),
+    # T2 ports (Group C secondary). FinFRE-RAG retrieves labelled TRAIN exemplars: main() passes `pool`
+    "co_investigator_native": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="native", **kw),
+    "co_investigator_ported": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="ported", **kw),
+    "finfre_rag_native": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="native", **kw),
+    "finfre_rag_ported": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="ported", **kw),
 }
-DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder}
+DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
+                  "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
            "dspy_react": DspyReact}
 
@@ -91,7 +107,8 @@ def synthetic_alerts(n: int, seed: int, labelled: bool = False) -> list[tuple[Al
     return out
 
 
-def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None) -> list[tuple[AlertContext, int | None]]:
+def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
+                only_ids: set[str] | None = None) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
     Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`."""
     from ftm.data import alias, io
@@ -104,6 +121,8 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
     if split == "val":
         alerts = alerts.filter(pl.col("val_part") == val_part)
+    if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
+        alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
     order = list(range(alerts.height))
     random.Random(seed).shuffle(order)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
@@ -124,33 +143,103 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     return out
 
 
-def make_toolbox(kind: str, seed: int):
+def exemplar_pool(a) -> ExemplarPool:
+    """FinFRE-RAG's labelled pool: TRAIN alerts only (the pool refuses anything else). Synthetic runs get toy ones."""
+    if a.alerts == "synthetic":
+        toy = synthetic_alerts(max(a.pool_n, 40), a.seed + 1, labelled=True)
+        return ExemplarPool.from_alerts([replace(c, split="train") for c, _ in toy], [y for _, y in toy], seed=a.seed)
+    train = data_alerts(a.data, "train", a.pool_n, a.seed + 1, a.k)
+    return ExemplarPool.from_alerts([c for c, _ in train], [y for _, y in train], seed=a.seed)
+
+
+def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic"):
+    """dev: random answers, no gate (variant devtools). harness: T2's toolbox, gate + accountant + clock in front of
+    every bank. Real alerts (train/val) get the real partner banks (mode "world"); synthetic alerts have no ledger,
+    so they get the harness's mock banks (variant harness_mock). Returns (toolbox, variant)."""
     if kind == "dev":
-        return DevRandomToolBox(seed=seed)
+        return DevRandomToolBox(seed=seed), "devtools"
+    from ftm.harness import make_toolbox as harness_toolbox  # T2, harness v0
+
+    if split in ("train", "val"):
+        return harness_toolbox(seed=seed, mode="world", data=data, split=split), "harness"
+    if split == "synthetic":
+        return harness_toolbox(seed=seed, mode="mock"), "harness_mock"
+    raise SystemExit(f"--toolbox harness has no world for --alerts {split}")
+
+
+def askable_ids(tools) -> set[str]:
+    """Alert ids that have a real-id binding in the harness world, i.e. a partner bank with a ledger. The others (most
+    alerts: their partner is outside the modelled banks, or both parties are at the home bank) cannot be asked.
+    Reads the harness's private binding map; T2 to add a public accessor."""
+    return set(tools._h.bindings)  # noqa: SLF001
+
+
+def finish_session(v: Verdict, log: list, tools) -> Verdict:
+    """The harness's own log replaces the system's (it cannot misreport what it asked); posterior_after, which only the
+    system knows, is carried over by matching (bank, program, eps) in order."""
+    mine = list(v.questions_log)
+    for e in log:
+        for i, m in enumerate(mine):
+            if (m.bank, m.program, m.eps) == (e.bank, e.program, e.eps):
+                e.posterior_after = m.posterior_after
+                del mine[i]
+                break
+    return replace(v, questions_log=log)
+
+
+def investigate_one(system, ctx: AlertContext, tools, session, limits: Limits) -> tuple[Verdict, dict]:
+    """One alert. `session` is the HarnessToolBox (begin/end around the alert) or None (dev toolbox). `tools` is what the
+    system sees: the session itself, or the library wrapper around it. Returns (verdict, session facts)."""
+    if session is None:
+        v = system.investigate(ctx, tools, limits)
+        spent = sum(e.response.eps_spent for e in v.questions_log if isinstance(e.response, Reply))
+        return v, {"eps_spent": spent, "sim_days": None, "system_only_refusals": 0}
+    session.begin(ctx, limits)
     try:
-        from ftm.harness import make_toolbox as harness_toolbox  # T2, harness v0 (week 3)
-    except ImportError as e:
-        raise SystemExit("harness v0 is not in this checkout yet (T2, week 3); use --toolbox dev for a smoke run") from e
-    return harness_toolbox(seed=seed)
+        v = system.investigate(ctx, tools, limits)
+    finally:
+        log = session.end()
+    own = len(v.questions_log)
+    v = finish_session(v, log, session)
+    return v, {"eps_spent": session.eps_spent, "sim_days": session.elapsed_days,
+               "system_only_refusals": max(own - len(log), 0)}  # asks the system refused itself (eps left), never sent
 
 
 def refuse_devtools_test(variant: str, split: str) -> None:
     """Random-answer devtools runs must never reach a results table, least of all with test-split rows."""
-    if variant == "devtools" and split == "test":
-        raise SystemExit("refusing to write split=test rows for variant=devtools (--toolbox dev is never a result)")
+    if variant in ("devtools", "harness_mock") and split == "test":
+        raise SystemExit(f"refusing to write split=test rows for variant={variant} (random answers are never a result)")
 
 
-def verdict_rows(v: Verdict, base: dict, label: int | None) -> list[dict]:
+def _family_of(program: str) -> str | None:
+    try:
+        return family(parse(program))
+    except Exception:  # noqa: BLE001 - a refused or malformed program has no family
+        return None
+
+
+def verdict_rows(v: Verdict, base: dict, label: int | None, *, ctx: AlertContext | None = None, fusion=None,
+                 facts: dict | None = None, val_part: str | None = None) -> list[dict]:
+    """Run-log v1 rows (ftm.eval.runlog): one per question asked, then the verdict. `fusion` supplies `log_lr` (only an
+    answer with an accepted back-test LR has one); `facts` the toolbox's eps spent and simulated days."""
     rows = []
     for e in v.questions_log:
         r = e.response
         kind = None if r is None else "reply" if isinstance(r, Reply) else type(r).__name__.lower()
+        lr = fusion._lr(e) if fusion is not None else None  # noqa: SLF001 - same selection as the posterior
         rows.append({**base, "event": "step", "step": e.step, "bank": e.bank, "program_canonical": e.program,
                      "eps": e.eps, "gate": e.gate_decision, "response_kind": kind,
                      "answer_value": json.dumps(r.value) if isinstance(r, Reply) else None,
-                     "latency_days": getattr(r, "latency_days", None), "posterior": e.posterior_after})  # fmt: skip
+                     "latency_days": getattr(r, "latency_days", None), "posterior": e.posterior_after,
+                     "family": _family_of(e.program), "kind": r.kind if isinstance(r, Reply) else None,
+                     "log_lr": math.log(lr) if lr else None,
+                     "note_present": int(r.note is not None) if isinstance(r, Reply) else None})  # fmt: skip
+    facts = facts or {}
     rows.append({**base, "event": "verdict", "probability": v.probability, "label": label, "tokens_in": v.tokens_in,
-                 "tokens_out": v.tokens_out, "llm_calls": v.llm_calls, "gpu_seconds": v.gpu_seconds})  # fmt: skip
+                 "tokens_out": v.tokens_out, "llm_calls": v.llm_calls, "gpu_seconds": v.gpu_seconds,
+                 "home_bank": ctx.home_bank if ctx else None, "val_part": val_part, "p0": ctx.p0 if ctx else None,
+                 "eps_spent": facts.get("eps_spent"), "sim_days": facts.get("sim_days"),
+                 "trials": v.trials if v.trials is not None else 1})  # fmt: skip
     return rows
 
 
@@ -163,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
+    ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
     ap.add_argument("--record", type=Path, default=None, help="record LLM calls to this cassette")
@@ -179,6 +269,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--serving-stack", default=None, help="vllm | llama.cpp, recorded in summary.json (plan.md 6.11)")
     ap.add_argument("--candidate", default=None, help="E18 candidate name, recorded in summary.json")
     ap.add_argument("--synthetic-labels", action="store_true", help="random labels on synthetic alerts (driver smoke tests)")
+    ap.add_argument("--backtest", type=Path, default=None,
+                    help="assembled back-test dir (scripts/backtest.py --assemble) or its lr_table.jsonl: LRs for fusion; "
+                         "realistic mode only (read from the cache entries beside it)")
+    ap.add_argument("--backtest-mode", default=None, help="cross-check of the table's mode (read from its cache otherwise)")
+    ap.add_argument("--fusion-params", type=Path, default=None,
+                    help="Fusion.params() JSON fitted on val (T4): FusedLR over the table; default is the naive summed fusion")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--seed", type=int, default=0)
@@ -195,27 +291,52 @@ def main(argv: list[str] | None = None) -> int:
     out = a.run_dir or a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
     extra = {"reasoning_effort": a.reasoning_effort} if a.reasoning_effort else {"chat_template_kwargs": {"enable_thinking": a.thinking}}
+    bt = None
+    if a.backtest is not None:
+        try:
+            bt = load_backtest(a.backtest, mode=a.backtest_mode, require="realistic")
+        except BacktestTableError as e:
+            raise SystemExit(str(e)) from e
+        if bt.missing_eps():
+            print(f"WARNING: no back-test rows at eps {bt.missing_eps()}: questions at those levels are never accepted",
+                  file=sys.stderr)
+    if a.fusion_params is not None and bt is None:
+        ap.error("--fusion-params needs --backtest (the fitted model reads the table's LRs and families)")
+    if a.fusion_params is not None:
+        fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), bt.table)
+    else:
+        fusion = NaiveLRFusion(bt.table if bt else None)
     if a.replay:
         llm = MockLLM(cassette=a.replay, strict=True)
     elif a.llm == "endpoint":
         llm = HttpChatClient.from_env(endpoint=a.endpoint, model=a.model)
     else:
-        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.split("_")[0], dev_responder))
+        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.rsplit("_", 1)[0], dev_responder))
     model = getattr(llm, "model", "mock")
     if a.record:
         llm = RecordingClient(llm, a.record)
 
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
     if a.system == "planner":
-        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra,
+        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra, fusion=fusion,
                             use_library=a.library is not None, keep_prompts=a.keep_prompts,
                             max_output_tokens=a.max_output_tokens)
         system_name = system.system_name
     else:
-        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra)
+        pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
+        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
+                                                  **({"pool": pool} if a.system in GROUP_C else {}))
         system_name = a.system
-    alerts = synthetic_alerts(a.n, a.seed, a.synthetic_labels) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part)
-    tools = make_toolbox(a.toolbox, a.seed)
+    tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts)
+    refuse_devtools_test(variant, a.alerts)
+    session = tools if a.toolbox == "harness" else None  # begin/end around each alert
+    only_ids = askable_ids(tools) if variant == "harness" else None
+    if a.alerts == "synthetic":
+        alerts = synthetic_alerts(a.n, a.seed, a.synthetic_labels)
+        if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
+            alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
+    else:
+        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids)
     library_hash = None
     if a.library is not None:
         library = StrategyLibrary.load(a.library)
@@ -224,9 +345,10 @@ def main(argv: list[str] | None = None) -> int:
         library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
     limits = Limits(max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
-            "variant": "devtools" if a.toolbox == "dev" else "harness", "seed": a.seed}  # fmt: skip
+            "variant": variant, "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
+            "thinking": int(a.thinking), "mode": "native" if a.system.endswith("_native") else "ported"}  # fmt: skip
 
-    rows, sq, n_scored, seconds, trials, per_alert = [], 0.0, 0, [], {}, []
+    rows, sq, n_scored, seconds, trials, per_alert, refusals = [], 0.0, 0, [], {}, [], 0
     with (out / "alerts.jsonl").open("w", encoding="utf-8") as f:  # server side, no labels (for build_library.py)
         for ctx, _ in alerts:
             shape = dict(ctx.summary.get("shape") or {})
@@ -236,15 +358,18 @@ def main(argv: list[str] | None = None) -> int:
         for ctx, label in alerts:
             before = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
             t0 = time.perf_counter()
-            v = system.investigate(ctx, tools, limits)
+            v, facts = investigate_one(system, ctx, tools, session, limits)
+            refusals += facts["system_only_refusals"]
             seconds.append(time.perf_counter() - t0)
             after = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
             per_alert.append({"alert_id": ctx.alert_id, "label": label, "p0": ctx.p0, "probability": v.probability,
                               "seconds": seconds[-1], "gpu_seconds": v.gpu_seconds, "llm_calls": v.llm_calls,
                               "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
+                              "eps_spent": facts["eps_spent"], "sim_days": facts["sim_days"],
                               **{k: after[k] - before[k] for k in after}})  # fmt: skip
             refuse_devtools_test(base["variant"], ctx.split)
-            rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id}, label)
+            rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id},
+                                 None if ctx.split == "test" else label, ctx=ctx, fusion=fusion, facts=facts, val_part=a.val_part)
             if v.trials is not None:
                 trials[ctx.alert_id] = v.trials
             traces.write(json.dumps({"alert_id": ctx.alert_id, "p0": ctx.p0, "trials": v.trials, "trace": system.last_trace}, default=str) + "\n")
@@ -262,7 +387,26 @@ def main(argv: list[str] | None = None) -> int:
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
                "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n, "library_hash": library_hash,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
-    if trials:  # Reflexion; the shared run-log columns are T4's, so this stays out of runlog.parquet
+    steps = df.filter(pl.col("event") == "step")
+    summary["questions"] = {  # what the toolbox did with the asks (engineering counts; a mock-LLM run is not a result)
+        "asked": steps.height,
+        "gate": {k: int(n) for k, n in steps["gate"].value_counts().iter_rows()} if steps.height else {},
+        "responses": {str(k): int(n) for k, n in steps["response_kind"].value_counts().iter_rows()} if steps.height else {},
+        "used_by_fusion": int(steps["log_lr"].is_not_null().sum()) if steps.height else 0,
+        "system_only_refusals": refusals,
+        "eps_spent_total": float(sum(r["eps_spent"] or 0.0 for r in per_alert)),
+        "alerts_with_eps_spent": sum(1 for r in per_alert if r["eps_spent"]),
+        "sim_days_mean": (sum(r["sim_days"] for r in per_alert) / len(per_alert)) if per_alert and per_alert[0]["sim_days"] is not None else None,
+    }  # fmt: skip
+    if session is not None:
+        from ftm.harness.interface import HARNESS_VERSION
+
+        summary["harness_version"] = HARNESS_VERSION
+    summary["fusion"] = type(fusion).__name__
+    summary["backtest"] = bt.summary() if bt else None
+    if only_ids is not None:
+        summary["askable_alerts_in_world"] = len(only_ids)
+    if trials:  # Reflexion: also the run-log v1 `trials` column (verdict rows); the per-alert map stays here for the traces
         summary["trials_per_alert"] = trials
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()
