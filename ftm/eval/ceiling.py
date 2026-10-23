@@ -95,7 +95,7 @@ def backtest_check(entries: Iterable[dict], z_crit: float = Z_CRIT) -> dict:
             judged += 1
             lr, z = _cell_excess(c1, n_l, c0, n_c, log_c)
             if z > z_crit:
-                violations.append({"canonical": e.get("canonical"), "eps": e["eps"], "cell": cell,
+                violations.append({"canonical": e.get("canonical") or e.get("program_canonical"), "eps": e["eps"], "cell": cell,
                                    "log_lr_unclipped": lr, "log_ceiling": log_c, "z_excess": z})  # fmt: skip
     return {"cells_judged": judged, "entries_skipped": skipped, "violations": violations, "ok": not violations}
 
