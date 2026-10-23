@@ -78,10 +78,10 @@ from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
 GROUP_C = {  # T4 ports (Group C, native and ported modes)
-    "sharma_native": lambda llm, **kw: Sharma(llm, mode="native", **kw),
-    "sharma_ported": lambda llm, **kw: Sharma(llm, mode="ported", **kw),
-    "torres_native": lambda llm, **kw: Torres(llm, mode="native", **kw),
-    "torres_ported": lambda llm, **kw: Torres(llm, mode="ported", **kw),
+    "sharma_native": lambda llm, pool=None, **kw: Sharma(llm, mode="native", **kw),  # T4 ports take no question pool
+    "sharma_ported": lambda llm, pool=None, **kw: Sharma(llm, mode="ported", **kw),  # T4 ports take no question pool
+    "torres_native": lambda llm, pool=None, **kw: Torres(llm, mode="native", **kw),  # T4 ports take no question pool
+    "torres_ported": lambda llm, pool=None, **kw: Torres(llm, mode="ported", **kw),  # T4 ports take no question pool
     # T2 ports (Group C secondary). FinFRE-RAG retrieves labelled TRAIN exemplars: main() passes `pool`
     "co_investigator_native": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="native", **kw),
     "co_investigator_ported": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="ported", **kw),
