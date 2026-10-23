@@ -34,6 +34,16 @@ class Candidate:
     p_cell: dict | None  # cell -> (P(cell | clean), P(cell | launder)); None if the table has none
     sensitivity: int
 
+    @property
+    def cost(self) -> float:
+        """Budget cost: eps, and nothing for the no-noise arm (eps = inf)."""
+        return self.eps if math.isfinite(self.eps) else 0.0
+
+    @property
+    def rank_cost(self) -> float:
+        """What EIG divides by: eps, or one unit per question for the no-noise arm."""
+        return self.eps if math.isfinite(self.eps) else 1.0
+
     def cell(self, value) -> str:
         return answer_key(value, self.bins or None)
 

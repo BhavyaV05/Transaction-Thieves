@@ -40,8 +40,11 @@ Keyed by `(namespace, canonical form, eps)`; the namespace hashes the alert set,
 
 `world.py` loads the real thing (T1's alert sets and bank views, only through `ftm.data.io`, train or val only; the ledger of a partner is its view of that split, so an answer never sees a later split). `synth.py` builds a small world where laundering alerts behave differently at the partner bank (`signal` scales it, 0 gives all-null questions); it is for tests and smoke runs and never a result. `tests/test_backtest_world.py` runs the whole path, shards and `--assemble` included, on a fabricated dataset in the real file layout.
 
+## Exact mode and the realistic-vs-exact comparison (week 6, G2)
+
+`scripts/backtest.py --exact-labels` is exact mode proper: a label-stratified sample of cross-bank transactions from every bank's view (`--n-pos` laundering ones, `--neg-ratio` clean per laundering one), each treated as an alert at one of its two banks, answered with **no noise**. Because the sample is stratified by label the LRs do not depend on the sampling rates. `--exact` alone is the no-noise run on the same alerts. `--compare REALISTIC_DIR EXACT_DIR` prints, over the questions eligible in both: how many are accepted in each, the agreement, the rank correlation of their strength (max |log LR|), and the median ratio of realistic to exact strength, i.e. what the noise and the harder alert set cost (`ftm/backtest/exact.py::compare_modes`). Entry files are keyed by 20 hex digits, so the report and the LR table written next to them are never read as entries (a bug the comparison found).
+
 ## Not done
 
 * **G2 on real data** (realistic vs exact LRs for the expert list; at least 20 expert questions accepted at G3): needs T1's `data/` and the alert sets on this machine.
-* **Exact mode proper** (week 6): `--exact` here is the no-noise run on the same alerts; the exact-label ablation uses every bank's labels.
 * `n_same_entity` needs `accounts.parquet` (loaded when present).

@@ -79,12 +79,13 @@ def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Lim
     return RunResult(rows, summary, verdicts)
 
 
-def make_harness(world_banks, bindings, accountant: PrivacyAccountant | None = None, eps_levels=None) -> Harness:
+def make_harness(world_banks, bindings, accountant: PrivacyAccountant | None = None, eps_levels=None,
+                 allow_exact: bool = False) -> Harness:  # fmt: skip
     acc = accountant or PrivacyAccountant()
     gate = Gate.from_config(validator=gate_validator, accountant=acc)
     if eps_levels:
         gate.eps_levels = tuple(eps_levels)
-    return Harness(world_banks, gate, acc, bindings)
+    return Harness(world_banks, gate, acc, bindings, allow_exact=allow_exact)
 
 
 def pool_from_backtest(banks, train: Sequence[BtAlert], programs: Sequence[str], eps_levels: Sequence[float],

@@ -258,6 +258,15 @@ def test_shards_write_one_cache_and_assemble_matches_an_unsharded_run(world, tmp
     assert sorted(merged, key=key) == sorted(whole, key=key)
 
 
+def test_assembling_twice_ignores_the_report_written_next_to_the_cache(world, tmp_path):
+    cache = BacktestCache(tmp_path, CFG.namespace("synth-320", 11))
+    Backtester(world.banks, world.alerts, CFG, cache=cache).run_batch([INFORMATIVE], [2.0])
+    first = assemble(cache, 0.1)
+    (cache.dir / "report.json").write_text("{}")
+    (cache.dir / "lr_table.jsonl").write_text("")
+    assert assemble(cache, 0.1) == first and len(cache.entries()) == 1
+
+
 def test_too_little_data_is_never_accepted(world):
     bt = Backtester(world.banks, world.alerts[:40], CFG)
     e = bt.run_question(INFORMATIVE, 2.0)
