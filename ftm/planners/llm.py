@@ -26,7 +26,7 @@ from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, NaiveLRFusion, outcome
 from ftm.planners.llm_batches import QuestionBatchWriter
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.planners.llm_prompt import (
     EPS_LEVELS,
     Mode,
@@ -106,7 +106,7 @@ class LLMPlanner:
     ):
         self.llm = llm
         self.mode = Mode(mode)
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.questions = {q["id"]: q for q in (questions or [])}
         if self.mode is Mode.FIXED_LIST and not self.questions:
