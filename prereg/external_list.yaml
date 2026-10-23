@@ -34,4 +34,4 @@ systems:
 # Settings to fix before the first run of each reimplementation (not tuned after seeing results):
 fixed_choices:
   sharma: {max_iterations: 8, temperature: 0.1, tool_calls: "schema-constrained JSON (no vLLM tool parser)", verdict_to_probability: "per-class launder rate on val fit part (defaults fraud 0.9 / not_fraud 0.1 / escalate p0)", variants: [agent, governed], governed_thresholds: [0.35, 0.65], case_memory: "train alerts, p0 + shape buckets, 2 nearest per class"}
-  torres: {evidence_k: fix_on_val, quotas: fix_on_val, disposition_to_probability: "P(escalate) + 0.5 * P(monitor)", repair_budget: 1, counterfactual_edit_budget: 2}
+  torres: {quotas: {policy: 3, context: 1, transaction: 20, similar_case: 4}, quotas_status: "default; may be set on val before G3", disposition_to_probability: "confidence to the chosen disposition, rest split equally; P(escalate) + 0.5 * P(monitor)", repair_budget: 1, counterfactual_edit_budget: 2, counterfactuals: "measured and logged, do not change the decision", ported: "one question round, up to 3 questions, answers become evidence items", temperature: 0.0}
