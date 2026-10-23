@@ -96,6 +96,8 @@ python scripts/serve_llm.py --gen-key && set -a && source .env && set +a
 python scripts/serve_llm.py --model qwen3-8b --backend native
 ```
 
+**llama.cpp (GGUF models, E18 candidates).** GGUF models run on `llama-server` (built in `~/llama.cpp`; override with `FTM_LLAMA_SERVER`), the rest on vLLM. `python scripts/serve_llm.py --model qwen3.8-27b-q3 [--dry-run]` selects it from the profile's `stack: llama.cpp` (profiles are in the E18 sweep config). The GGUF must already be in `FTM_HF_HOME` (the script prints the `hf download ... --include <file>` command if not). Same bind rule and key rule as vLLM, with the key in `LLAMA_API_KEY`. Parity: seed, context length (`--ctx-size`), served name, loopback bind. No equivalent: `--gpu-memory-utilization`, `--generation-config`. The chat template is applied with `--jinja`, thinking is off by default via `--chat-template-kwargs`, and per-request `chat_template_kwargs`, `response_format` json_schema, `seed` and `logprobs` are accepted by the OpenAI endpoint.
+
 **Sharing over the tailnet.** The server binds to 127.0.0.1. Expose it to tailnet members only with `tailscale serve --bg --tcp 8000 tcp://127.0.0.1:8000` (never `tailscale funnel`, which is public). Clients set:
 
 ```

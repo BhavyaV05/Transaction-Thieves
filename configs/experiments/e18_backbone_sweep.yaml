@@ -48,8 +48,9 @@ budget:                       # plan.md section 12 (17-31 GPU-h): only used by -
 # One server at a time on the 16 GB GPU: serve a candidate, then `run_e18.py stage1 --only <name>`. The driver skips
 # a candidate whose endpoint does not list `served_model`. size_gb: null = estimated from params x bits per weight.
 # endpoint: null = FTM_LLM_ENDPOINT. revision: null = to pin from the model card before serving (docs/t3_week0.md).
-# llama.cpp candidates need a backend in scripts/serve_llm.py (vLLM-only today); until then serve them with
-# `llama-server -m <gguf> -c 8192 --alias <served_model>` by hand and keep the flags in the run log notes.
+# llama.cpp candidates (stack: llama.cpp) are served by `scripts/serve_llm.py --model <name>` (backend llamacpp): gguf_repo +
+# gguf_file are resolved in the HF cache (FTM_HF_HOME), never downloaded; max_model_len -> --ctx-size. gguf_file names
+# are the repo's usual naming and must be checked against the repo listing when the revision is pinned.
 serving:
   qwen3-8b:        {served_model: qwen3-8b,        revision: null, max_model_len: 8192, size_gb: 6.0,  endpoint: null}
   gemma4-12b:      {served_model: gemma4-12b,      revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-12B-it}
@@ -57,5 +58,7 @@ serving:
   phi4-reasoning:  {served_model: phi4-reasoning,  revision: null, max_model_len: 8192, size_gb: null, endpoint: null}
   gpt-oss-20b:     {served_model: gpt-oss-20b,     revision: null, max_model_len: 8192, size_gb: 13.0, endpoint: null}
   gemma4-26b-a4b:  {served_model: gemma4-26b-a4b,  revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-26B-A4B-it}
-  qwen3.8-27b-q3:  {served_model: qwen3.8-27b-q3,  revision: null, max_model_len: 8192, size_gb: 13.1, endpoint: null, hf_id: unsloth/Qwen3.8-27B-GGUF}
-  gemma4-31b-q3:   {served_model: gemma4-31b-q3,   revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-31B-it}
+  qwen3.8-27b-q3:  {served_model: qwen3.8-27b-q3,  revision: null, max_model_len: 8192, size_gb: 13.1, endpoint: null, hf_id: unsloth/Qwen3.8-27B-GGUF,
+                   gguf_repo: unsloth/Qwen3.8-27B-GGUF, gguf_file: Qwen3.8-27B-UD-Q3_K_XL.gguf}
+  gemma4-31b-q3:   {served_model: gemma4-31b-q3,   revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-31B-it,
+                   gguf_repo: unsloth/gemma-4-31B-it-GGUF, gguf_file: gemma-4-31B-it-Q3_K_M.gguf}

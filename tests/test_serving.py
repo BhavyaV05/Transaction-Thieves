@@ -126,3 +126,63 @@ def test_client_body_has_schema_and_extra():
                         extra={"ignore_eos": True})  # fmt: skip
     assert body["response_format"]["json_schema"]["name"] == "step"
     assert body["chat_template_kwargs"] == {"enable_thinking": False} and body["ignore_eos"] is True
+
+
+# --- llama.cpp backend (GGUF candidates of the E18 sweep) ---
+
+LLAMA = {"served_model": "g", "max_model_len": 8192, "gguf_repo": "o/r-GGUF", "gguf_file": "m-Q3.gguf", "stack": "llama.cpp"}
+
+
+def test_llamacpp_command_construction():
+    cmd = serve.llamacpp_command(LLAMA, "g", "/hf/m-Q3.gguf", "127.0.0.1", 8000, seed=0)
+    assert cmd[1:3] == ["-m", "/hf/m-Q3.gguf"]
+    for flag, val in [("--alias", "g"), ("--ctx-size", "8192"), ("--n-gpu-layers", "all"), ("--parallel", "1"),
+                      ("--seed", "0"), ("--host", "127.0.0.1"), ("--port", "8000")]:  # fmt: skip
+        assert cmd[cmd.index(flag) + 1] == val
+    assert "--jinja" in cmd
+    assert cmd[cmd.index("--chat-template-kwargs") + 1] == '{"enable_thinking":false}'
+    two = serve.llamacpp_command({**LLAMA, "parallel": 2}, "g", "/x", "127.0.0.1", 8000)
+    assert two[two.index("--ctx-size") + 1] == "16384"  # ctx is shared across slots
+
+
+def test_llamacpp_key_never_in_argv():
+    cmd = serve.llamacpp_command(LLAMA, "g", "/x", "127.0.0.1", 8000)
+    assert not any("api-key" in c.lower() for c in cmd)
+
+
+def test_e18_gguf_profiles_select_llamacpp_and_stack_recorded():
+    from ftm.planners import e18  # run_e18 records cand.stack as the serving stack
+
+    cands = {c.name: c for c in e18.candidates(e18.load_config(serve.SWEEP_CONFIG), ("core", "if_time"))}
+    for name in ("qwen3.8-27b-q3", "gemma4-31b-q3"):
+        p = serve.llama_profile(serve.SWEEP_CONFIG, name)
+        assert p["stack"] == "llama.cpp" and p["gguf_repo"] and p["gguf_file"] and p["max_model_len"] == 8192
+        assert cands[name].stack == "llama.cpp"
+    assert serve.llama_profile(serve.SWEEP_CONFIG, "nope") is None
+
+
+def test_find_gguf_missing_gives_download_command(tmp_path):
+    with pytest.raises(SystemExit) as e:
+        serve.find_gguf(str(tmp_path), "o/r-GGUF", "m-Q3.gguf", "abc")
+    assert "hf download o/r-GGUF --include m-Q3.gguf --revision abc" in str(e.value)
+
+
+def test_find_gguf_resolves_cache(tmp_path):
+    f = tmp_path / "hub" / "models--o--r-GGUF" / "snapshots" / "abc" / "m-Q3.gguf"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"")
+    assert serve.find_gguf(str(tmp_path), "o/r-GGUF", "m-Q3.gguf", "abc") == f.resolve()
+    assert serve.find_gguf(str(tmp_path), "o/r-GGUF", "m-Q3.gguf") == f.resolve()  # unpinned revision
+
+
+def test_llamacpp_dry_run_hides_key_and_checks_host(tmp_path, monkeypatch, capsys):
+    f = tmp_path / "hub" / "models--unsloth--Qwen3.8-27B-GGUF" / "snapshots" / "r1" / "Qwen3.8-27B-UD-Q3_K_XL.gguf"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"")
+    monkeypatch.setenv("FTM_HF_HOME", str(tmp_path))
+    monkeypatch.setenv("FTM_LLM_API_KEY", "sekret-key")
+    assert serve.main(["--model", "qwen3.8-27b-q3", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "llama-server" in out and "--jinja" in out and "sekret-key" not in out and "--api-key" not in out
+    with pytest.raises(SystemExit):
+        serve.main(["--model", "qwen3.8-27b-q3", "--host", "0.0.0.0", "--dry-run"])
