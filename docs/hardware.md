@@ -15,20 +15,20 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 
 | | T1 Abhishek | T2 Bhavya | T3 Akshat | T4 Shreyas |
 |---|---|---|---|---|
-| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) | RTX 3050 Laptop / 4 GB (4,096 MiB, driver 581.83) | RTX 5070 Ti / 16 GB (16,303 MiB, driver 610.88) | none |
+| GPU / VRAM (check `nvidia-smi`) | RTX 3070 Ti Laptop / 8 GB (driver 580.159.03) | RTX 3050 Laptop / 4 GB (4,096 MiB, driver 581.83) | RTX 5070 Ti / 16 GB (16,303 MiB; driver 580.178.04 on Linux, 610.88 on Windows) | none |
 | RAM | 15 GiB (about 9.5 GiB available) | 15.7 GiB (about 5.4 GiB free at the time of the report) | 31.1 GiB usable (32 GB) | 14 GiB (about 5 GiB available) |
 | CPU model / cores | i7-12650H, 10 cores / 16 threads | i7-12650H, 10 cores / 16 threads | Ryzen 9 7900X, 12 cores / 24 threads | i7-12650H, 10 cores / 16 threads |
-| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup | C: 12.4 GB free (keep off it); D: 220 GB free (use this) | E: 406 GB (use this); C: 38 GB (keep off it) | 19 GB |
-| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | Windows 11 Pro (build 26200) | Windows 11 Pro (build 26200) | Ubuntu 26.04.1 LTS (Linux 7.0.0) |
-| WSL2 works? | n/a (native Linux) | WSL2 installed (Ubuntu 26.04 and Ubuntu, both stopped); not tested with a GPU workload | Yes (Docker Desktop 29.6.2, WSL2 backend; no Ubuntu distro) | n/a (native Linux) |
-| Python version | 3.12.13 (system, user site; no venv) | 3.12.10 (system, no venv) | 3.12.10 (`.venv`, uv) | 3.12 venv via uv (system Python is 3.14) |
-| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) | pending: needs T3's vLLM reference run and a small model on this machine | (reference) pending the vLLM smoke test | n/a |
+| Free disk | 6.0 GB at start (149 GB disk, 96% used); 16 GB after cleanup | C: 12.4 GB free (keep off it); D: 220 GB free (use this) | Linux `/` (btrfs): 126 GB free after the three profiles (22 GB in `~/hf_cache`) | 19 GB |
+| OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | Windows 11 Pro (build 26200) | Fedora Linux 43 (kernel 7.2.10); dual boot on the same PC as the Windows 11 reference install, so timings are the same | Ubuntu 26.04.1 LTS (Linux 7.0.0) |
+| WSL2 works? | n/a (native Linux) | WSL2 installed (Ubuntu 26.04 and Ubuntu, both stopped); not tested with a GPU workload | Not used: vLLM runs natively on Linux (Windows side has Docker Desktop 29.6.2 / WSL2) | n/a (native Linux) |
+| Python version | 3.12.13 (system, user site; no venv) | 3.12.10 (system, no venv) | 3.12.12 (`.venv`, uv); vLLM in a separate uv venv | 3.12 venv via uv (system Python is 3.14) |
+| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) | pending: needs T3's vLLM reference run and a small model on this machine | (reference) qwen3-8b, vLLM 0.31.0: prefill 5,138, decode 117.4, batch 112.6 tok/s | n/a |
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 
 ## 3. Week-0 smoke tests (tick when done; details in `tasks/`)
 
-- [ ] **T3:** vLLM + Qwen3-8B (4-bit), Qwen3-4B, gpt-oss-20b run on the 5070 Ti. Blackwell needs a CUDA 12.8+ build of PyTorch/vLLM; on Windows use WSL2 or Docker. Write the recipe below. Recipe and scripts are written (section 5); **the GPU run is pending** (steps and the results table: `docs/t3_week0.md` section 4).
+- [ ] **T3:** vLLM + Qwen3-8B (4-bit), Qwen3-4B, gpt-oss-20b run on the 5070 Ti. Ran 2026-10-23 on native Linux: **Qwen3-8B-AWQ and Qwen3-4B-AWQ pass on sm_120; gpt-oss-20b runs out of memory next to the desktop (not ticked until it loads or the fallback is agreed).** Recipe below; results and errors: `docs/t3_week0.md` section 4.
 - [x] **T1 (proxy only):** Qwen3-8B Q4_K_M via **ollama/GGUF, not vLLM**, loads 100% on the 3070 Ti (6.4 GB of 8.2 GB VRAM peak) and answers a ~5,900-token prompt in ~3.3 s (about 2,100 prompt tok/s, 62 generation tok/s). The vLLM 4-bit check on the same checkpoint is still open, so the second-server decision is not final. Details: `docs/t1_week0.md` section 6.
 - [ ] **T2:** Qwen3-1.7B / 4B-4bit run on the 3050 Ti (for harness smoke tests).
 - [ ] **T4:** the mock LLM / record-replay mode works (no GPU needed); a request to the shared endpoint succeeds.
@@ -48,7 +48,7 @@ It writes `outputs/bench/<machine>_<model>.json` and prints one row for the tabl
 
 | machine | model | server | prompt tok | prefill tok/s | decode tok/s | batch tok/s | factor |
 |---|---|---|---|---|---|---|---|
-| t3-5070ti | qwen3-8b | vLLM 0.31.0 | pending | | | | 1.000 (reference) |
+| t3-5070ti | qwen3-8b | vLLM 0.31.0 | 7498 | 5138 | 117.4 | 112.6 | 1.000 (reference) |
 
 ## 5. Shared LLM server (T3 writes this in week 0-2)
 
@@ -58,9 +58,22 @@ It writes `outputs/bench/<machine>_<model>.json` and prints one row for the tabl
 - `Limits.max_tokens` (in `ftm/types.py`) is set so a prompt fits the smallest serving machine.
 - A mock server for offline development lives in `ftm/agent/` (T2/T3).
 
-Recipe (T3; versions and revisions are pinned in `configs/llm/serving.yaml`; details and fallbacks in `docs/t3_week0.md`):
+Recipe (T3; versions and revisions are pinned in `configs/llm/serving.yaml`; details and fallbacks in `docs/t3_week0.md`). The reference machine (Akshat's PC) runs **Linux**; the Windows recipe is the alternative on the same hardware.
 
-**Windows (Akshat's PC, Docker Desktop)**
+**Linux, native vLLM (Akshat's PC, what the reference numbers used)**
+
+```bash
+# one-time, set up before the smoke test: a uv venv ~/projects/vllm-venv (Python 3.12.12) with vllm==0.31.0 (torch 2.13.0+cu130)
+export PATH=$HOME/projects/vllm-venv/bin:$PATH FTM_HF_HOME=$HOME/hf_cache
+.venv/bin/python scripts/serve_llm.py --gen-key && set -a && source .env && set +a
+HF_HOME=$FTM_HF_HOME hf download Qwen/Qwen3-8B-AWQ --revision 4da05a8edb55c6046cce958586c33b61da07bb79   # pre-download so load time excludes it
+.venv/bin/python scripts/serve_llm.py --model qwen3-8b --dry-run && .venv/bin/python scripts/serve_llm.py --model qwen3-8b   # binds 127.0.0.1
+FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1 .venv/bin/python scripts/bench_llm.py --machine t3-5070ti   # second shell
+```
+
+With a desktop session on the GPU (about 1.6 GB), `gpu_memory_utilization` 0.90 fails vLLM's free-memory check; `serving.yaml` uses 0.85 for qwen3-8b. gpt-oss-20b does not fit alongside the desktop (`docs/t3_week0.md` section 4). For gpt-oss, download with `--exclude "original/*" --exclude "metal/*"`.
+
+**Windows (Docker Desktop, alternative)**
 
 ```powershell
 # once: move Docker's data and the HF cache off C:
@@ -74,7 +87,7 @@ Get-Content .env | ForEach-Object { $k, $v = $_ -split '=', 2; Set-Item "env:$k"
 python scripts/serve_llm.py --model qwen3-8b              # or qwen3-4b / gpt-oss-20b; --dry-run prints the command
 ```
 
-**Linux or WSL2 (e.g. Abhishek's laptop as the second server)**
+**Linux or WSL2 with pip (e.g. Abhishek's laptop as the second server)**
 
 ```bash
 python -m venv ~/vllm && source ~/vllm/bin/activate && pip install vllm==0.31.0

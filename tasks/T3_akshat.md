@@ -4,9 +4,10 @@ Checklist generated from tracks.md section 5.8. Read the whole track section fir
 Tick items off in your PRs and post one line per week in STATUS.md. Weeks count from TA approval (G0).
 
 ## Week 0
-- [ ] Serving smoke test (8B, 4B, gpt-oss-20b): scripts and pinned profiles ready (`scripts/serve_llm.py`, `configs/llm/serving.yaml`); **GPU run pending** (move Docker's disk to E: first; steps in `docs/t3_week0.md` §4)
-- [ ] recipe: written (`docs/hardware.md` §5); tick after the smoke test confirms it
-- [ ] conversion benchmark: script published (`scripts/bench_llm.py`, `docs/hardware.md` §4); reference run pending the smoke test
+- [ ] Serving smoke test (8B, 4B, gpt-oss-20b): ran 2026-10-23 on native Linux. **Qwen3-8B-AWQ and Qwen3-4B-AWQ pass on sm_120** (decode 117.4 / 172.1 tok/s). **gpt-oss-20b fails**: weight-allocation OOM with the desktop using ~1.6 GB of the 15.47 GiB; three attempts (`docs/t3_week0.md` §4). Open: try the GPU headless, else Qwen3-14B as teacher
+- [x] recipe: native Linux recipe ran for the two Qwen profiles (`docs/hardware.md` §5); gpt-oss-20b needs the headless fallback noted there
+- [x] conversion benchmark: script published (`scripts/bench_llm.py`); reference run done, `outputs/bench/t3-5070ti_qwen3-8b.json` (not committed), row in `docs/hardware.md` §4
+- [ ] check each E18 candidate loads at the context cap: **moved to the E18 sweep** (not week 0). Per candidate: download once, load at `max_model_len` 8192 and record load time and peak VRAM, run its stage-1 alerts, delete the weights before the next (`docs/t3_e18.md`, per-candidate procedure)
 - [x] report specs (`docs/hardware.md` §2, `docs/t3_week0.md` §1) and model-card check (`docs/t3_week0.md` §2)
 
 ## Week 1
