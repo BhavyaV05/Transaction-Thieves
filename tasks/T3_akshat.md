@@ -32,9 +32,9 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] small-decision dataset arrives
 
 ## Week 7
-- [ ] QLoRA planner SFT
-- [ ] Qwen3-4B fast-model fine-tune
-- [ ] planner-view decision with Abhishek
+- [ ] QLoRA planner SFT: distillation filter, `train_planner.py` (distill / train, dry-run) and `configs/llm/sft_planner.yaml` done; training needs teacher runs, the back-test table and a GPU window (`docs/t3_finetune_fastmodel.md`)
+- [ ] Qwen3-4B fast-model fine-tune: decisions, single-token SFT format, `LogprobFastModel`, JSON baseline, temperature scaling and `configs/llm/sft_fast.yaml` done; needs the small-decision dataset (T2) and a GPU window
+- [ ] planner-view decision with Abhishek (default: train on top-40, the current stub)
 
 ## Week 8
 - [ ] LATS, LLMCompiler (secondary)
@@ -44,7 +44,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] fine-tuned models ready. **G4**
 
 ## Week 10
-- [ ] Conformal cascade
+- [x] Conformal cascade (`ftm/fastmodel/cascade.py`: Mondrian split conformal, two tiers, safe defaults, marginal 2α check; tested on synthetic data, real evaluation needs the fast model)
 - [ ] SemIf / Laya (stretch)
 
 ## Week 11
