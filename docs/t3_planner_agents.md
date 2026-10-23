@@ -14,7 +14,7 @@ scripts/run_llm_agent.py           alerts -> system.investigate(alert, tools, li
         ├── ftm/llm/investigation.py    Investigation: per-alert eps / sim-time / questions log / posterior (SAME for all)
         │                               Fusion protocol + NaiveLRFusion + LRTable (placeholders for T4 / T2)
         ├── ftm/llm/budget.py           BudgetedClient: max_llm_calls, prompt cap, cost fields (SAME for all)
-        ├── ftm/planners/llm_prompt.py  prompt + per-state JSON schema;   llm_dsl.py: DslAdapter (+ provisional DSL)
+        ├── ftm/planners/llm_prompt.py  prompt + per-state JSON schema;   llm_dsl.py: DslAdapter + V0Dsl (over ftm/dsl)
         └── ftm/llm/client.py / mock.py endpoint client; mock with script / record-replay / HTTP
 ```
 
@@ -99,8 +99,8 @@ python scripts/run_llm_agent.py --system planner --llm endpoint --record outputs
 python scripts/run_llm_agent.py --system planner --replay outputs/cassettes/p20.jsonl ...
 
 # G2 (planner, 20 val alerts) and G3 (ReAct, 50 val alerts), once the blockers below are cleared
-python scripts/run_llm_agent.py --system planner --alerts val --data hi_small --n 20 --llm endpoint --toolbox harness --machine t3-5070ti
-python scripts/run_llm_agent.py --system react   --alerts val --data hi_small --n 50 --llm endpoint --toolbox harness --machine t3-5070ti
+python scripts/run_llm_agent.py --system planner --alerts val --val-part eval --data hi_small --n 20 --llm endpoint --toolbox harness --machine t3-5070ti
+python scripts/run_llm_agent.py --system react   --alerts val --val-part eval --data hi_small --n 50 --llm endpoint --toolbox harness --machine t3-5070ti
 ```
 
 Real-alert runs build the evidence with `ftm.retrieval.views.top_k_by_amount_view` and the summary with `alert_summary`. The partner banks are the 30 view banks minus the home bank. Outputs go to `outputs/runs/<run_id>/`:
@@ -113,7 +113,6 @@ Real-alert runs build the evidence with `ftm.retrieval.views.top_k_by_amount_vie
 
 | Needed for | What | From | Workaround now |
 |---|---|---|---|
-| Real DSL validation in the planner | Grammar v0 + parser/type checker (hand-off #3) | T2 | `ProvisionalDsl` behind `DslAdapter`; swap in one place |
 | G2 / G3 runs | Harness v0 with `ftm.harness.make_toolbox(seed=...)`, partner banks, gate, accountant (hand-offs #4, #7) | T2, T4 | `DevRandomToolBox` (random answers, `--toolbox dev`) |
 | Posterior in compose / fixed_list / act_only | Back-test table (hand-off #9) and fusion v0 (#18) | T2, T4 | `NaiveLRFusion` over an `LRTable` (posterior = p0 until LRs exist) |
 | How gate and accountant refusals arrive | Exception types from harness v0 | T2, T4 | Classified by class name (`Investigation` docstring); unknown errors propagate |

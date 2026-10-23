@@ -1,7 +1,7 @@
 """System 2 planner prompt and per-step JSON schema (C10, week 1 deliverable).
 
-Owner: T3 (Akshat).  Spec: tracks.md 5.4, plan.md 6.11.  Written against the PROVISIONAL DSL in llm_dsl.py
-until grammar v0 (hand-off #3) arrives; only `DslAdapter.reference_text()` and `.validate()` touch the DSL.
+Owner: T3 (Akshat).  Spec: tracks.md 5.4, plan.md 6.11.  Written against T2's DSL v0 (ftm/dsl) through the
+`DslAdapter` in llm_dsl.py; only `DslAdapter.reference_text()` and `.validate()` touch the DSL.
 
 One LLM call = one planner step. The model returns ONE JSON object:
     hypothesis  {typology, rationale}          (all modes except act_only)

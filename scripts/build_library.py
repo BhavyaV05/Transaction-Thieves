@@ -3,7 +3,7 @@
 Owner: T3 (Akshat).  Spec: plan.md 6.13, tracks.md 5.5.
 
     python scripts/build_library.py --runs outputs/runs/<id1> outputs/runs/<id2> --data hi_small \
-        --backtest outputs/backtest/lr_table.jsonl --out outputs/library/shape_v1.json --freeze
+        --backtest outputs/backtest/lr_table.jsonl --out outputs/library/shape_v2.json --freeze
 
 Inputs: each run dir's runlog.parquet and alerts.jsonl (written by run_llm_agent.py), the alert labels from
 data/alerts/<ds>/{train,val}.parquet (server side), and the back-test table as JSONL rows of LRTable.from_rows

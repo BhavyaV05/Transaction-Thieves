@@ -5,12 +5,13 @@ Owner: T3 (Akshat).  Spec: tracks.md 5.8 weeks 3-4 (planner on 20 val alerts for
     # offline, no GPU, no data (CI-style smoke run)
     python scripts/run_llm_agent.py --system planner --mode compose --alerts synthetic --n 5 --llm mock --toolbox dev
     # G2 / G3 once harness v0 exists (T2) and the endpoint is up
-    python scripts/run_llm_agent.py --system planner --alerts val --data hi_small --n 20 --llm endpoint --toolbox harness
-    python scripts/run_llm_agent.py --system react   --alerts val --data hi_small --n 50 --llm endpoint --toolbox harness
+    python scripts/run_llm_agent.py --system planner --alerts val --val-part eval --data hi_small --n 20 --llm endpoint --toolbox harness
+    python scripts/run_llm_agent.py --system react   --alerts val --val-part eval --data hi_small --n 50 --llm endpoint --toolbox harness
 
 Writes outputs/runs/<run_id>/: runlog.parquet (ftm.eval.runlog schema), traces.jsonl (per-step LLM text, for case
 studies and distillation; aliased only), alerts.jsonl (p0 + shape, for build_library.py), questions.jsonl (composed questions, hand-off #8), summary.json.
-`--toolbox dev` answers randomly (ftm/llm/devtools.py) and is labelled variant=devtools: never a result.
+`--toolbox dev` answers randomly (ftm/llm/devtools.py) and is labelled variant=devtools: never a result, so the
+script refuses to write split=test rows for it (refuse_devtools_test).
 """
 
 from __future__ import annotations
@@ -38,7 +39,11 @@ from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
-from ftm.library.shape import shape_from_rows  # noqa: E402
+from ftm.external.sharma import Sharma  # noqa: E402
+from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
+from ftm.external.torres import Torres  # noqa: E402
+from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
+from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
@@ -49,6 +54,13 @@ from ftm.planners.llm_prompt import Mode  # noqa: E402
 from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
+GROUP_C = {  # T4 ports (Group C, native and ported modes)
+    "sharma_native": lambda llm, **kw: Sharma(llm, mode="native", **kw),
+    "sharma_ported": lambda llm, **kw: Sharma(llm, mode="ported", **kw),
+    "torres_native": lambda llm, **kw: Torres(llm, mode="native", **kw),
+    "torres_ported": lambda llm, **kw: Torres(llm, mode="ported", **kw),
+}
+DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
            "dspy_react": DspyReact}
 
@@ -77,8 +89,9 @@ def synthetic_alerts(n: int, seed: int) -> list[tuple[AlertContext, int | None]]
     return out
 
 
-def data_alerts(data: str, split: str, n: int, seed: int, k: int) -> list[tuple[AlertContext, int | None]]:
-    """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring."""
+def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None) -> list[tuple[AlertContext, int | None]]:
+    """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
+    Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`."""
     from ftm.data import alias, io
     from ftm.retrieval import views
 
@@ -87,6 +100,8 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int) -> list[tuple[
     cfg = io.load_config(data)
     alerts_path = ROOT / "data" / "alerts" / data / f"{split}.parquet"
     alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
+    if split == "val":
+        alerts = alerts.filter(pl.col("val_part") == val_part)
     order = list(range(alerts.height))
     random.Random(seed).shuffle(order)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
@@ -96,10 +111,11 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int) -> list[tuple[
         a = alerts.row(i, named=True)
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
-        ev_rows, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)
+        _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
-        summary["shape"] = {**shape_from_rows(ev_rows.to_dicts(), summary["receiver"], row["timestamp"]).as_dict(),
+        edges = receiver_edges(cfg["views_dir"], a["bank"], row["dst_id"], row["timestamp"])  # not the evidence view
+        summary["shape"] = {**shape_from_edges(edges, row["dst_id"], row["timestamp"]).as_dict(),
                             "receiver": summary["receiver"]}  # receiver: only the E11 account-keyed ablation reads it
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
         out.append((ctx, int(a["label"])))
@@ -114,6 +130,12 @@ def make_toolbox(kind: str, seed: int):
     except ImportError as e:
         raise SystemExit("harness v0 is not in this checkout yet (T2, week 3); use --toolbox dev for a smoke run") from e
     return harness_toolbox(seed=seed)
+
+
+def refuse_devtools_test(variant: str, split: str) -> None:
+    """Random-answer devtools runs must never reach a results table, least of all with test-split rows."""
+    if variant == "devtools" and split == "test":
+        raise SystemExit("refusing to write split=test rows for variant=devtools (--toolbox dev is never a result)")
 
 
 def verdict_rows(v: Verdict, base: dict, label: int | None) -> list[dict]:
@@ -132,9 +154,11 @@ def verdict_rows(v: Verdict, base: dict, label: int | None) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--system", choices=["planner", *GROUP_D], default="planner")
+    ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
+    ap.add_argument("--val-part", choices=["fit", "cal", "eval"], default=None,
+                    help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
@@ -150,6 +174,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "runs")
     a = ap.parse_args(argv)
 
+    if (a.alerts == "val") != (a.val_part is not None):
+        ap.error("--val-part is required with --alerts val (and only then): the val parts must not be mixed")
+    refuse_devtools_test("devtools" if a.toolbox == "dev" else "harness", a.alerts)  # before any file or data is touched
     run_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -159,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.llm == "endpoint":
         llm = HttpChatClient.from_env()
     else:
-        llm = MockLLM(responder=dev_responder)
+        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.split("_")[0], dev_responder))
     model = getattr(llm, "model", "mock")
     if a.record:
         llm = RecordingClient(llm, a.record)
@@ -170,9 +197,9 @@ def main(argv: list[str] | None = None) -> int:
                             use_library=a.library is not None, keep_prompts=a.keep_prompts)
         system_name = system.system_name
     else:
-        system = GROUP_D[a.system](llm, seed=a.seed, extra=extra)
+        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra)
         system_name = a.system
-    alerts = synthetic_alerts(a.n, a.seed) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k)
+    alerts = synthetic_alerts(a.n, a.seed) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part)
     tools = make_toolbox(a.toolbox, a.seed)
     library_hash = None
     if a.library is not None:
@@ -184,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": "devtools" if a.toolbox == "dev" else "harness", "seed": a.seed}  # fmt: skip
 
-    rows, sq, n_scored, seconds = [], 0.0, 0, []
+    rows, sq, n_scored, seconds, trials = [], 0.0, 0, [], {}
     with (out / "alerts.jsonl").open("w", encoding="utf-8") as f:  # server side, no labels (for build_library.py)
         for ctx, _ in alerts:
             shape = dict(ctx.summary.get("shape") or {})
@@ -195,17 +222,22 @@ def main(argv: list[str] | None = None) -> int:
             t0 = time.perf_counter()
             v = system.investigate(ctx, tools, limits)
             seconds.append(time.perf_counter() - t0)
+            refuse_devtools_test(base["variant"], ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id}, label)
-            traces.write(json.dumps({"alert_id": ctx.alert_id, "trace": system.last_trace}, default=str) + "\n")
+            if v.trials is not None:
+                trials[ctx.alert_id] = v.trials
+            traces.write(json.dumps({"alert_id": ctx.alert_id, "p0": ctx.p0, "trials": v.trials, "trace": system.last_trace}, default=str) + "\n")
             if label is not None:
                 p = ctx.p0 if v.probability is None else v.probability
                 sq, n_scored = sq + (p - label) ** 2, n_scored + 1
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
-    summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "data": a.data, "model": model,
+    summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
                "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n, "library_hash": library_hash,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
+    if trials:  # Reflexion; the shared run-log columns are T4's, so this stays out of runlog.parquet
+        summary["trials_per_alert"] = trials
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))

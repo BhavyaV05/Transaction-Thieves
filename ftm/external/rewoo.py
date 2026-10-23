@@ -20,7 +20,7 @@ from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import Fusion, Investigation, NaiveLRFusion
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.types import AlertContext, Limits, Verdict
 
 from .text_agent import ToolCall, ToolExecutor, case_text, parse_probability, tools_doc
@@ -74,7 +74,7 @@ class Rewoo:
                  plan_tokens: int = 512, solve_tokens: int = 32, max_steps: int = 8, temperature: float = 0.0,
                  seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm = llm
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.plan_tokens, self.solve_tokens, self.max_steps = plan_tokens, solve_tokens, max_steps
         self.temperature, self.seed, self.extra = temperature, seed, extra

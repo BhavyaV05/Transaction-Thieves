@@ -2,14 +2,16 @@
 
 Owner: T3 (Akshat).  Spec: plan.md 6.13, tracks.md 5.5.  SCHEMA AND KEYING FROZEN AT G3 (change = all four owners).
 
-The key is a small set of buckets computed from the aliased evidence rows around the alert, plus the planner's
-typology guess:
+The key is a small set of buckets computed from ALL 1-hop edges of the alert's receiver in the 72 h window up to the
+alert time (shape_from_edges), plus the planner's typology guess. It does not read the evidence rows the prompt shows
+(top-40 by amount, scorer or PCST views), so it is the same under every view of the same alert (schema v2; v1 was
+computed from the evidence rows and is refused on load):
     typology       planner hypothesis (or "any" before the first step)
-    in_deg         distinct accounts paying the alert's receiver in the evidence       buckets 0 | 1 | 2-3 | 4-7 | 8+
-    out_deg        distinct accounts the receiver pays in the evidence                  same buckets
-    n_banks        distinct banks in the evidence                                       1 | 2 | 3-4 | 5+
+    in_deg         distinct accounts paying the alert's receiver in the 1-hop edges      buckets 0 | 1 | 2-3 | 4-7 | 8+
+    out_deg        distinct accounts the receiver pays in the 1-hop edges                  same buckets
+    n_banks        distinct banks in the 1-hop edges                                    1 | 2 | 3-4 | 5+
     amount         median amount (log10 bucket) + "flat" if the coefficient of variation < 0.5, else "varied"
-    span           time from the first evidence edge to the alert                       <6h | 6-24h | 1-3d | >3d
+    span           time from the first 1-hop edge to the alert                          <6h | 6-24h | 1-3d | >3d
 Buckets are coarse on purpose: a strategy should apply to many alerts, and the key must not single out an account.
 """
 
@@ -17,9 +19,16 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 
-SHAPE_SCHEMA_VERSION = 1
+import polars as pl
+
+from ftm import guards
+
+SHAPE_SCHEMA_VERSION = 2
+WINDOW_HOURS = 72
+EDGE_COLS = ["tx_id", "timestamp", "src_id", "dst_id", "from_bank", "to_bank", "amount_paid"]
 ANY = "any"
 _DEG = ((0, "0"), (1, "1"), (3, "2-3"), (7, "4-7"))
 _BANKS = ((1, "1"), (2, "2"), (4, "3-4"))
@@ -73,7 +82,8 @@ class SituationShape:
 
 
 def shape_from_rows(rows: list[dict], receiver: str, alert_time, typology: str | None = None) -> SituationShape:
-    """`rows`: aliased evidence edges (src_alias, dst_alias, from_bank, to_bank, amount_paid, timestamp)."""
+    """`rows`: edges around `receiver` (src_alias, dst_alias, from_bank, to_bank, amount_paid, timestamp). Production
+    callers go through shape_from_edges, which picks the rows independently of any evidence view."""
     payers = {r["src_alias"] for r in rows if r["dst_alias"] == receiver}
     payees = {r["dst_alias"] for r in rows if r["src_alias"] == receiver}
     banks = {r["from_bank"] for r in rows} | {r["to_bank"] for r in rows}
@@ -92,3 +102,27 @@ def shape_from_rows(rows: list[dict], receiver: str, alert_time, typology: str |
         amount=f"{_bucket(med, _AMT, '100k+', inclusive=False)} {'flat' if cv < 0.5 else 'varied'}",
         span=_bucket(span_h, _SPAN, ">3d", inclusive=False),
     )
+
+
+def shape_from_edges(edges: pl.DataFrame, receiver_id, alert_time, *, window_hours: float = WINDOW_HOURS,
+                     typology: str | None = None) -> SituationShape:  # fmt: skip
+    """The library key from node-id edges (tx_id, timestamp, src_id, dst_id, from_bank, to_bank, amount_paid): the
+    1-hop edges of `receiver_id` in [alert_time - window_hours, alert_time]. Pure: no files. Edges after the alert
+    are dropped (and a frame whose kept rows are still in the future is refused), so the key has no look-ahead."""
+    t_alert = datetime.fromisoformat(alert_time) if isinstance(alert_time, str) else alert_time
+    kept = edges.filter(((pl.col("src_id") == receiver_id) | (pl.col("dst_id") == receiver_id))
+                        & (pl.col("timestamp") >= t_alert - timedelta(hours=window_hours))
+                        & (pl.col("timestamp") <= t_alert))  # fmt: skip
+    guards.assert_not_future(kept["timestamp"].max() if kept.height else None, t_alert)
+    rows = [{"src_alias": r["src_id"], "dst_alias": r["dst_id"], "from_bank": r["from_bank"], "to_bank": r["to_bank"],
+             "amount_paid": r["amount_paid"], "timestamp": r["timestamp"]} for r in kept.iter_rows(named=True)]  # fmt: skip
+    return shape_from_rows(rows, receiver_id, t_alert, typology)
+
+
+def receiver_edges(views_dir: str | Path, bank: int, receiver_id, as_of) -> pl.DataFrame:
+    """The alert bank's view up to `as_of`, read through ftm.data.io (time guard, test lock), narrowed to edges that
+    touch the receiver. Feed to shape_from_edges."""
+    from ftm.data import io
+
+    lf = io.scan_view(views_dir, bank, as_of=as_of, columns=EDGE_COLS)
+    return lf.filter((pl.col("src_id") == receiver_id) | (pl.col("dst_id") == receiver_id)).collect()

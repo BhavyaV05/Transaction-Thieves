@@ -3,7 +3,7 @@
 # exists, and checks the sensitivity. Used by the simple planners (C9), the fixed-list ablation and the strategy
 # library. Every family cites the red flags it comes from (configs/compliance/red_flags.yaml).
 #
-# Conventions (match the stand-in DSL in ftm/planners/llm_dsl.py, PR #6, until grammar v0 replaces it):
+# Conventions (expressed in DSL v0, ftm/dsl/expert.py):
 #   SUBJ            the alerted transaction's party that the ASKED partner bank holds: ALERT.receiver for an
 #                   outgoing alert, ALERT.sender for an incoming one. A partner only answers about its own accounts.
 #   ALERT.payers    accounts that paid ALERT.receiver in the 72 h before the alert (home bank's view, a set)
