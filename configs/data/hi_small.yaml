@@ -12,5 +12,7 @@ split_days:             # 1-indexed, inclusive
   train: [1, 6]
   val: [7, 8]
   test: [9, 18]         # locked until G5, see ftm/guards.py
+test_bulk_days: [9, 10]   # headline test; same rule as HI-Medium (decision 4, docs/t4_decisions_week2.md)
+test_tail_days: [11, 18]  # sparse tail (1,108 rows): reported separately, never pooled. Use ftm.data.splits.test_part
 heldout_cycles: false   # E12: drop cycle attempts from train (ftm.data.io.scan_*(heldout_cycles=...))
 evidence_window_hours: 72

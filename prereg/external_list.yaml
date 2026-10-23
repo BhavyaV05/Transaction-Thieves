@@ -1,0 +1,36 @@
+# External systems for Table 5a / E5 (plan.md 7.1). DRAFT v0 (T4). Locked at G3; after that, adding or dropping a
+# system needs the TA. Code and licence status: docs/external_code_check.md (C/D), docs/t1_week0.md (A/B).
+
+status: draft
+backbone: e18                       # every LLM system uses the planner backbone chosen by E18 (configs/llm/default.yaml)
+thinking: off                       # unless E18's thinking arm is adopted for every system
+caps: configs/llm/default.yaml#limits   # same max_llm_calls, max_tokens (prompt), max_sim_time_days, eps per alert
+gate_and_accountant: same as ours   # every ask_bank goes through the compliance gate and the privacy accountant
+scores: [end_to_end, questions_only]
+eval_set: {all: frozen_1000_subset, top_2_3_chosen_at_g4_on_val: full_test}
+
+systems:
+  # group, name, modes, tier, owner, implementation
+  - {group: A, name: multi_gnn,        modes: [one_bank, see_everything], tier: core,      owner: T1, impl: "official (Apache-2.0)"}
+  - {group: A, name: fraudgt,          modes: [one_bank, see_everything], tier: secondary, owner: T1, impl: "official, separate checkout (no licence)"}
+  - {group: A, name: mega_gnn,         modes: [one_bank, see_everything], tier: secondary, owner: T1, impl: "official (Apache-2.0)"}
+  - {group: A, name: exstraqt,         modes: [see_everything],           tier: stretch,   owner: T1, impl: "official if authors allow (no licence); reference for the ~80 F1"}
+  - {group: B, name: dp_fedavg_gnn,    modes: [30_clients],               tier: core,      owner: T1, impl: "Flower + Opacus"}
+  - {group: B, name: tian_2025,        modes: [as_published],             tier: secondary, owner: T1, impl: "official if authors allow (no licence), else reimplementation"}
+  - {group: C, name: torres,           modes: [native, ported],           tier: core,      owner: T4, impl: "reimplementation (no code)"}
+  - {group: C, name: sharma,           modes: [native, ported],           tier: core,      owner: T4, impl: "official port (MIT)"}
+  - {group: C, name: co_investigator,  modes: [native, ported],           tier: secondary, owner: T2, impl: "reimplementation (no code)"}
+  - {group: C, name: finfre_rag,       modes: [native, ported],           tier: secondary, owner: T2, impl: "reimplementation (no code yet)"}
+  - {group: D, name: react,            modes: [ported],                   tier: core,      owner: T3, impl: "reimplementation (official MIT, nothing copied)"}
+  - {group: D, name: reflexion,        modes: [ported],                   tier: core,      owner: T3, impl: "reimplementation (shared eps and call budget across trials)"}
+  - {group: D, name: rewoo,            modes: [ported],                   tier: core,      owner: T3, impl: "reimplementation (2 LLM calls per alert)"}
+  - {group: D, name: lats,             modes: [ported],                   tier: secondary, owner: T3, impl: "official adapted (MIT)"}
+  - {group: D, name: llmcompiler,      modes: [ported],                   tier: secondary, owner: T3, impl: "official adapted (MIT)"}
+  - {group: D, name: dspy_react,       modes: [ported],                   tier: secondary, owner: T3, impl: "DSPy MIPROv2, objective Brier, same val data as our fine-tuning"}
+  - {group: D, name: debate_autogen,   modes: [ported],                   tier: secondary, owner: T4, impl: "reimplementation (debate: no licence) on AG2"}
+  - {group: D, name: uot,              modes: [ported],                   tier: secondary, owner: T4, impl: "reimplementation (no licence)"}
+  - {group: D, name: bed_llm,          modes: [ported],                   tier: secondary, owner: T4, impl: "reimplementation (no code)"}
+
+# Settings to fix before the first run of each reimplementation (not tuned after seeing results):
+fixed_choices:
+  torres: {evidence_k: fix_on_val, quotas: fix_on_val, disposition_to_probability: "P(escalate) + 0.5 * P(monitor)", repair_budget: 1, counterfactual_edit_budget: 2}

@@ -1,0 +1,11 @@
+# Frozen 1,000-alert external-comparison subset (plan.md 7.2). DRAFT (T4).
+#
+# Proposal (docs/t4_decisions_week2.md item 1; needs team agreement): freeze the RULE at G3, build the IDs at G5.
+#   rule:   stratified by home bank x p0 decile (both known at alert time, no labels), proportional allocation,
+#           ftm.intake.alerts.stratified_subset, n=1000, seed=0 (it used to stratify by label x typology x bank;
+#           T1 added the label-free option: strata="bank_p0_decile" is the default; tests/test_intake.py)
+#   when:   first step of scripts/run_final.py at G5, before any system runs on test
+#   record: the sha256 of the sorted alert_id list is written below and to the G5 run log
+#
+# rule_commit: (filled at G3)
+# subset_sha256: (filled at G5)
