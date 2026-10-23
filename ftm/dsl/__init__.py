@@ -1,4 +1,5 @@
-"""Question language (C4). Owner: T2. Week 0: grammar sketch only; parser, type checker and executor follow in week 1."""
+"""Question language (C4). Owner: T2. Grammar: grammar.lark; types: spec.py; parser/checker: parser.py;
+exact execution: executor.py; the expert list: expert.py. Docs: README.md."""
 
 from pathlib import Path
 
