@@ -193,3 +193,13 @@ def test_t2_group_c_ports_run_through_harness(tmp_path, system):
     assert v.height == 2 and (v["mode"] == ("native" if system.endswith("native") else "ported")).all()
     if system.endswith("native"):
         assert log.filter(pl.col("event") == "step").height == 0  # no ask_bank in native mode
+
+
+def test_chunks_of_the_seeded_order_do_not_overlap():
+    mod = _script()
+    whole = mod.sample_order(50, seed=3, n=50)
+    assert sorted(whole) == list(range(50))
+    chunks = [mod.sample_order(50, 3, 20, off) for off in (0, 20, 40)]
+    assert [len(c) for c in chunks] == [20, 20, 10]
+    assert sum(chunks, []) == whole
+    assert mod.sample_order(50, 3, 20) == whole[:20]  # offset 0 is the old behaviour
