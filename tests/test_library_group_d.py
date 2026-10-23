@@ -11,7 +11,12 @@ from ftm.external.reflexion import Reflexion
 from ftm.external.rewoo import Rewoo, parse_plan, solver_probability
 from ftm.harness.interface import Investigator, ScriptedToolBox
 from ftm.library.build import build_library
-from ftm.library.shape import SHAPE_SCHEMA_VERSION, SituationShape, shape_from_edges, shape_from_rows
+from ftm.library.shape import (
+    SHAPE_SCHEMA_VERSION,
+    SituationShape,
+    shape_from_edges,
+    shape_from_rows,
+)
 from ftm.library.store import FrozenLibraryError, LibraryToolBox, StrategyLibrary
 from ftm.llm.mock import MockLLM
 from ftm.planners.llm import LLMPlanner
@@ -176,7 +181,7 @@ def test_reflexion_retries_with_memory_and_shared_budget():
     assert isinstance(r, Investigator)
     v = r.investigate(ALERT, ScriptedToolBox([Reply("220", "bool", True, 0.5, 0.2), Reply("1588", "bool", True, 0.5, 0.2)]),
                       Limits())  # fmt: skip
-    assert v.probability == 0.7 and len(v.questions_log) == 2 and v.llm_calls == 7
+    assert v.probability == 0.7 and len(v.questions_log) == 2 and v.llm_calls == 7 and v.trials == 2
     trial2 = llm.requests[4]["messages"][1]["content"]
     assert "Reflections from your earlier attempts" in trial2 and "payer counts" in trial2
     assert "Answers already obtained" in trial2 and "passed_on" in trial2
@@ -187,7 +192,7 @@ def test_reflexion_stops_when_confident_or_out_of_calls():
     assert Reflexion(llm).investigate(ALERT, ScriptedToolBox(), Limits()).llm_calls == 2
     v = Reflexion(MockLLM(script=["Thought: a\nAction: finish[0.2]"] * 5), min_calls_for_retry=4).investigate(
         ALERT, ScriptedToolBox(), Limits(max_llm_calls=3))
-    assert v.llm_calls == 1 and v.probability == 0.2  # 2 calls left < 4: no retry
+    assert v.llm_calls == 1 and v.probability == 0.2 and v.trials == 1  # 2 calls left < 4: no retry
 
 
 # -- ReWOO --------------------------------------------------------------------------------------------------
