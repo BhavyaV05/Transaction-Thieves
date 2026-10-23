@@ -10,7 +10,7 @@ import inspect
 
 from ftm import types as T
 from ftm.compliance.gate import BudgetRefused, GateBlocked
-from ftm.eval.runlog import EVENTS, RUN_LOG_COLUMNS
+from ftm.eval.runlog import EVENTS, RUN_LOG_COLUMNS, RUN_LOG_VERSION, V0_COLUMNS
 from ftm.harness import interface as I
 from ftm.harness.toolbox import HarnessToolBox, ToolUnavailable
 
@@ -57,17 +57,24 @@ def test_shared_types_are_frozen():
     assert [f[0] for f in fields(T.QuestionLogEntry)] == ["step", "bank", "program", "eps", "response", "gate_decision",
                                                           "posterior_after"]  # fmt: skip
     assert [f[0] for f in fields(T.Verdict)] == ["alert_id", "probability", "questions_log", "tokens_in", "tokens_out",
-                                                 "llm_calls", "gpu_seconds"]  # fmt: skip
+                                                 "llm_calls", "gpu_seconds", "trials"]  # fmt: skip
+    assert T.Verdict("a", None).trials is None  # added after v1 as an optional field (Reflexion trials)
     assert T.AnswerKind.__args__ == ("bool", "count", "kary", "set_count")
     assert T.Reply.__dataclass_params__.frozen and T.Limits.__dataclass_params__.frozen
 
 
 def test_run_log_schema_is_frozen():
     assert EVENTS == ("step", "verdict")
-    assert list(RUN_LOG_COLUMNS) == [
+    assert RUN_LOG_VERSION == 1
+    # v0 columns stay first and unchanged; run-log v1 (T4) only appends
+    assert list(V0_COLUMNS) == [
         "run_id", "commit", "machine", "system", "variant", "seed", "split", "alert_id", "event", "step", "bank",
         "program_canonical", "eps", "gate", "response_kind", "answer_value", "latency_days", "posterior", "probability",
         "label", "tokens_in", "tokens_out", "llm_calls", "gpu_seconds",
+    ]  # fmt: skip
+    assert list(RUN_LOG_COLUMNS)[len(V0_COLUMNS):] == [
+        "log_version", "model", "thinking", "mode", "home_bank", "val_part", "p0", "stop_reason", "eps_spent",
+        "sim_days", "trials", "family", "kind", "rule_id", "gate_reason", "log_lr", "note_present", "injection_id",
     ]  # fmt: skip
 
 

@@ -7,12 +7,12 @@ from ftm.external.llmcompiler import LlmCompiler, parse_tasks, waves
 from ftm.harness.interface import Investigator, ScriptedToolBox
 from ftm.llm.investigation import Investigation
 from ftm.llm.mock import MockLLM
-from ftm.planners.llm_dsl import ProvisionalDsl
+from ftm.planners.llm_dsl import V0Dsl
 from ftm.types import AlertContext, Decline, Limits, Reply
 
-DSL = ProvisionalDsl()
-Q1 = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
-Q2 = "fan_in(ALERT.receiver, min_senders=5, window_h=48)"
+DSL = V0Dsl()
+Q1 = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
+Q2 = "at_least(n_counterparties(ALERT.receiver, dir=in, window=before(48)), k=5)"
 ALERT = AlertContext("V9", "70", "2022-09-05T12:00:00", "val", 0.2,
                      {"receiver": "R", "evidence": "rows", "partner_banks": [220, 1588]})  # fmt: skip
 
@@ -55,6 +55,28 @@ def test_lats_executes_best_child_and_backtracks_on_failure():
     assert [e.bank for e in v.questions_log] == ["220", "1588"]  # 220 declined -> backtracked to child 3
     assert v.probability == 0.6 and v.llm_calls == 8
     assert llm.requests[0]["temperature"] == 0.7 and llm.requests[0]["seed"] != llm.requests[1]["seed"]
+
+
+def test_lats_stale_sibling_is_dropped_after_a_successful_step():
+    stale = "Thought: old\nAction: finish[0.99]"
+    llm = MockLLM(script=[
+        f"Thought: a\nAction: ask_bank[220 | 0.5 | {Q1}]", stale,      # step 1 children
+        "Candidate 1: 9\nCandidate 2: 8",                              # the sibling outscores the later children
+        "Thought: c\nAction: finish[0.3]", "Thought: d\nAction: finish[0.2]",  # step 2 children
+        "Candidate 1: 1\nCandidate 2: 1",
+    ])  # fmt: skip
+    v = Lats(llm, n_children=2).investigate(ALERT, ScriptedToolBox([reply(220, 0.4)]), Limits())
+    assert v.probability == 0.3 and v.llm_calls == 6  # the old sibling (0.99) never ran
+
+
+def test_lats_reexpands_when_all_siblings_fail():
+    llm = MockLLM(script=[
+        f"Thought: a\nAction: ask_bank[220 | 0.5 | {Q1}]", f"Thought: b\nAction: ask_bank[220 | 0.5 | {Q2}]",
+        "Candidate 1: 9\nCandidate 2: 8",
+        "Thought: c\nAction: finish[0.4]", "Thought: d\nAction: finish[0.5]", "Candidate 1: 9\nCandidate 2: 1",
+    ])  # fmt: skip
+    v = Lats(llm, n_children=2).investigate(ALERT, ScriptedToolBox([Decline("220"), Decline("220")]), Limits())
+    assert v.probability == 0.4 and v.llm_calls == 6
 
 
 def test_lats_respects_call_cap():

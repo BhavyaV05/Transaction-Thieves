@@ -24,12 +24,12 @@ from ftm.llm.investigation import (
 from ftm.llm.mock import MockLLM
 from ftm.planners.llm import LLMPlanner
 from ftm.planners.llm_batches import QuestionBatchWriter, read_batch, unique_questions
-from ftm.planners.llm_dsl import ProvisionalDsl
+from ftm.planners.llm_dsl import V0Dsl
 from ftm.types import AlertContext, Decline, Limits, Reply
 
-DSL = ProvisionalDsl()
-Q_PASS = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
-Q_FAN = "fan_in(ALERT.receiver, min_senders=5, window_h=48)"
+DSL = V0Dsl()
+Q_PASS = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
+Q_FAN = "at_least(n_counterparties(ALERT.receiver, dir=in, window=before(48)), k=5)"
 SUMMARY = {"sender": "A0000002", "receiver": "A0000001", "amount": 9500.0, "evidence": "row1\nrow2",
            "partner_banks": [220, 1588]}  # fmt: skip
 
@@ -52,8 +52,8 @@ def step(action="compose", program=Q_PASS, bank=220, eps=0.5, qid=None, belief=N
 
 
 STOP = step("stop")
-TABLE = LRTable([LREntry(DSL.validate(Q_PASS).canonical, 0.5, True, {"true": 4.0, "false": 0.5}, "passthrough"),
-                 LREntry(DSL.validate(Q_FAN).canonical, 0.5, False, {"true": 9.0, "false": 0.1}, "fan_in")])  # fmt: skip
+TABLE = LRTable([LREntry(DSL.validate(Q_PASS).canonical, 0.5, True, {"true": 4.0, "false": 0.5}, "passed_on"),
+                 LREntry(DSL.validate(Q_FAN).canonical, 0.5, False, {"true": 9.0, "false": 0.1}, "at_least:n_counterparties:in")])  # fmt: skip
 
 
 # -- fusion placeholder + Investigation ---------------------------------------------------------------------
@@ -111,7 +111,7 @@ def test_planner_satisfies_protocol_and_formula_decides():
 
 
 def test_planner_retries_bad_json_bad_dsl_and_duplicates_with_feedback():
-    llm = MockLLM(script=["not json", step(program="passthrough(ALERT.receiver)"), step(), step(), STOP])
+    llm = MockLLM(script=["not json", step(program="passed_on(ALERT.receiver)"), step(), step(), STOP])
     p = LLMPlanner(llm)
     v = p.investigate(alert(), ScriptedToolBox([reply(False)]), Limits())
     assert len(v.questions_log) == 1 and v.llm_calls == 5
@@ -125,7 +125,7 @@ def test_planner_retries_bad_json_bad_dsl_and_duplicates_with_feedback():
 def test_planner_stops_on_failures_calls_and_eps():
     p = LLMPlanner(MockLLM(script=["x"] * 10))
     assert p.investigate(alert(), ScriptedToolBox(), Limits()).llm_calls == 3  # 3 failures in a row
-    llm = MockLLM(script=[step(program=Q_PASS), step(program=Q_FAN), step(program="n_tx(ALERT.sender, direction=in, window_h=72, min_amount=1000)")])
+    llm = MockLLM(script=[step(program=Q_PASS), step(program=Q_FAN), step(program="n_tx(ALERT.sender, dir=in, window=before(72), min_amount=1000)")])
     v = LLMPlanner(llm).investigate(alert(), ScriptedToolBox([reply(True), reply(True), reply(1, kind="count")]),
                                     Limits(eps_per_alert=1.0))  # fmt: skip
     assert len(v.questions_log) == 2 and v.llm_calls == 2  # eps 1.0 = two 0.5 questions, then loop ends
@@ -146,7 +146,7 @@ def test_belief_modes_use_llm_belief_others_ignore_it():
 
 
 def test_fixed_list_select_and_declines():
-    qs = [{"id": "Q01", "program": Q_PASS, "family": "passthrough"}]
+    qs = [{"id": "Q01", "program": Q_PASS, "family": "passed_on"}]
     llm = MockLLM(script=[step("select", qid="Q01"), STOP])
     v = LLMPlanner(llm, mode="fixed_list", questions=qs).investigate(alert(), ScriptedToolBox([Decline("220")]), Limits())
     assert v.questions_log[0].response == Decline("220") and v.probability == pytest.approx(0.2)
@@ -159,7 +159,7 @@ def test_composed_questions_are_exported_but_not_from_test(tmp_path):
     LLMPlanner(MockLLM(script=[step(), step(program=Q_FAN), STOP]), batch_writer=w).investigate(
         alert(), ScriptedToolBox([reply(True), reply(False)]), Limits())
     rows = read_batch(tmp_path / "q.jsonl")
-    assert [r["family"] for r in rows] == ["passthrough", "fan_in"] and rows[0]["typology_guess"] == "fan_in"
+    assert [r["family"] for r in rows] == ["passed_on", "at_least:n_counterparties:in"] and rows[0]["typology_guess"] == "fan_in"
     assert all("rationale" not in r for r in rows)
     assert len(unique_questions(rows + rows)) == 2 and unique_questions(rows + rows)[0]["n_alerts"] == 2
     with pytest.raises(TestSplitLocked):
@@ -169,15 +169,15 @@ def test_composed_questions_are_exported_but_not_from_test(tmp_path):
 
 # -- ReAct ------------------------------------------------------------------------------------------------
 def test_parse_tool_call_and_probability():
-    c = parse_tool_call("Thought: hmm\nAction 2: ask_bank[220 | 0.5 | top_outflow_bank(ALERT.receiver, banks=[70, 220], window_h=4)]")
-    assert c.tool == "ask_bank" and c.arg.endswith("window_h=4)")
+    c = parse_tool_call("Thought: hmm\nAction 2: ask_bank[220 | 0.5 | top_outflow_bank(ALERT.receiver, banks=[70, 220], window=after(4))]")
+    assert c.tool == "ask_bank" and c.arg.endswith("window=after(4))")
     assert parse_tool_call("Thought only") is None
     assert parse_probability("0.35") == 0.35 and parse_probability("80%") == 0.8 and parse_probability("7") is None
 
 
 def test_react_loop_end_to_end():
     llm = MockLLM(script=[
-        "Thought 1: check passthrough\nAction 1: ask_bank[220 | 0.5 | " + Q_PASS + "]",
+        "Thought 1: check pass-through\nAction 1: ask_bank[220 | 0.5 | " + Q_PASS + "]",
         "Thought 2: oops\nAction 2: ask_bank[999 | 0.5 | " + Q_FAN + "]",
         "Thought 3: no action here",
         "Thought 4: done\nAction 4: finish[0.65]",
@@ -210,6 +210,35 @@ def test_run_script_smoke(tmp_path):
     log = pl.read_parquet(runs[0] / "runlog.parquet")
     assert set(log["event"]) == {"step", "verdict"} and (log["variant"] == "devtools").all()
     assert json.loads((runs[0] / "summary.json").read_text())["n_alerts"] == 2
+
+
+def _run_script_module():
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location("run_llm_agent", root / "scripts" / "run_llm_agent.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_run_script_refuses_devtools_test_rows(tmp_path):
+    mod = _run_script_module()
+    with pytest.raises(SystemExit, match="devtools"):
+        mod.main(["--alerts", "test", "--toolbox", "dev", "--out", str(tmp_path)])
+    assert not list(tmp_path.iterdir())  # nothing written
+    with pytest.raises(SystemExit, match="devtools"):  # the row-level guard, in case split is set another way
+        mod.refuse_devtools_test("devtools", "test")
+    mod.refuse_devtools_test("devtools", "val")
+    mod.refuse_devtools_test("harness", "test")
+
+
+def test_run_script_records_reflexion_trials(tmp_path):
+    mod = _run_script_module()
+    assert mod.main(["--system", "reflexion", "--n", "2", "--out", str(tmp_path)]) == 0
+    run = next(tmp_path.iterdir())
+    trials = json.loads((run / "summary.json").read_text())["trials_per_alert"]
+    traces = [json.loads(line) for line in (run / "traces.jsonl").read_text().splitlines()]
+    assert len(trials) == 2 and all(t >= 1 for t in trials.values())
+    assert {t["alert_id"]: t["trials"] for t in traces} == trials
 
 
 def test_react_observation_note_cannot_break_out_of_wrapper():

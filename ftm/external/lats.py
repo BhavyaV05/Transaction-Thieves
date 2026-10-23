@@ -9,9 +9,12 @@ Kept from the paper:
   - expansion: sample `n_children` Thought/Action continuations of the current trajectory (one call each,
     temperature > 0, different seeds);
   - LM value function: one call scores every child 1-10 given the trajectory so far;
-  - selection: execute the best child; keep the others on a frontier;
-  - backtracking: if the executed action fails (invalid, blocked, declined, timed out, repeated), continue from the
-    best unexecuted child on the frontier instead.
+  - selection: execute the best child; keep its siblings on a frontier;
+  - backtracking: if the executed action fails (invalid, blocked, declined, timed out, repeated), try the next best
+    SIBLING instead. The frontier lives for one expansion only: after a successful step it is discarded, because a
+    sibling of an earlier step carries an old message context while the Investigation (asked questions, eps spent)
+    has moved on, so running it would re-ask or spend eps on stale reasoning. If every sibling fails, the next round
+    re-expands from the current trajectory (the last failed step and its observation), bounded by the call caps.
 Dropped: simulated rollouts and value back-propagation (they need resets), reflection on failed terminals.
 Labelled "LATS (adapted: no rollouts)" in Table 5a. Calls per step = n_children + 1, so the shared call cap binds
 quickly ("cap tokens strictly", tracks.md 5.7).
@@ -64,8 +67,7 @@ class Lats(React):
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         session, budget, ex = self.start(alert, tools, limits, self.name)
         messages = self.first_messages(alert, ex)
-        frontier: list[tuple[float, int, list[dict], str]] = []  # (-score, tiebreak, trajectory, child text)
-        tick, step = 0, 0
+        step = 0
         try:
             while ex.finished is None and not session.out_of_time and budget.calls_left > self.n_children:
                 children = []
@@ -79,11 +81,12 @@ class Lats(React):
                 v = budget.chat([{"role": "system", "content": VALUE},
                                  {"role": "user", "content": "\n".join(m["content"] for m in messages[1:]) + "\n\n" + listing}],
                                 max_tokens=16 * len(children), temperature=0.0, seed=self.seed, extra=self.extra)  # fmt: skip
-                for c, s in zip(children, parse_scores(v.text, len(children)), strict=True):
-                    tick += 1
-                    heapq.heappush(frontier, (-s, tick, list(messages), c))
-                while frontier and ex.finished is None:  # selection, with backtracking on failure
-                    _, _, traj, child = heapq.heappop(frontier)
+                frontier: list[tuple[float, int, str]] = []  # this expansion's siblings: (-score, tiebreak, child text)
+                for tick, (c, s) in enumerate(zip(children, parse_scores(v.text, len(children)), strict=True)):
+                    heapq.heappush(frontier, (-s, tick, c))
+                traj = messages
+                while frontier and ex.finished is None:  # selection, backtracking among siblings
+                    _, _, child = heapq.heappop(frontier)
                     step += 1
                     call: ToolCall | None = parse_tool_call(child)
                     obs = ex.run(call, step)
