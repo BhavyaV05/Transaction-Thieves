@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from omegaconf import OmegaConf
 
 from ftm.llm.client import ChatResponse, HttpChatClient, LLMError, parse_completion
 
@@ -176,7 +177,8 @@ def test_find_gguf_resolves_cache(tmp_path):
 
 
 def test_llamacpp_dry_run_hides_key_and_checks_host(tmp_path, monkeypatch, capsys):
-    f = tmp_path / "hub" / "models--unsloth--Qwen3.8-27B-GGUF" / "snapshots" / "r1" / "Qwen3.8-27B-UD-Q3_K_XL.gguf"
+    rev = OmegaConf.load(ROOT / "configs" / "experiments" / "e18_backbone_sweep.yaml").serving["qwen3.8-27b-q3"].revision
+    f = tmp_path / "hub" / "models--unsloth--Qwen3.8-27B-GGUF" / "snapshots" / str(rev) / "Qwen3.8-27B-UD-Q3_K_XL.gguf"
     f.parent.mkdir(parents=True)
     f.write_bytes(b"")
     monkeypatch.setenv("FTM_HF_HOME", str(tmp_path))
