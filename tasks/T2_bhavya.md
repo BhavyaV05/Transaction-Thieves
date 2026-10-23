@@ -26,8 +26,9 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] **G2**: needs the real-data back-test of the expert list (T1's data and alert sets) and the Brier-gain check with T4's fusion
 
 ## Week 4
-- [ ] Simple planners + enumerator
-- [ ] **harness v1 frozen**. **G3**
+- [x] Simple planners (random, fixed, EIG) + enumerator (`ftm/planners/NONLLM.md`); learned policy is week 9
+- [x] **harness v1 frozen** (`tests/test_harness_contract.py`)
+- [ ] **G3**: needs real-data back-testing (>= 20 expert questions accepted) and ReAct on 50 val alerts through the harness (Akshat)
 
 ## Week 5
 - [ ] Small-decision dataset v1

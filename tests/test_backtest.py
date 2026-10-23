@@ -269,9 +269,11 @@ def test_too_little_data_is_never_accepted(world):
 def test_lr_table_rows_have_the_format_t3s_lrtable_reads(world):
     bt = Backtester(world.banks, world.alerts, CFG)
     rows = lr_table_rows(accept(bt.run_batch([INFORMATIVE], [2.0]), 0.1))
-    assert set(rows[0]) == {"program_canonical", "eps", "accepted", "lr", "family", "bins"}
+    assert set(rows[0]) == {"program_canonical", "eps", "accepted", "lr", "family", "bins", "kind", "p_cell"}
     assert rows[0]["accepted"] is True and rows[0]["bins"] and all(isinstance(v, float) for v in rows[0]["lr"].values())
     assert set(rows[0]["lr"]) == {f"b{i}" for i in range(len(rows[0]["bins"]) + 1)}
+    pc = rows[0]["p_cell"]  # P(cell | clean), P(cell | launder): each class sums to 1
+    assert set(pc) == set(rows[0]["lr"]) and all(abs(sum(v[i] for v in pc.values()) - 1) < 1e-9 for i in (0, 1))
 
 
 def test_online_acceptor_decides_each_new_question_once(world):

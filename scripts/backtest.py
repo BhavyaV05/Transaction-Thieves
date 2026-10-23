@@ -8,7 +8,8 @@ Owner: T2 (Bhavya).  Spec: plan.md 6.8, tracks.md 4.6.  Run from the repo root.
     # after all shards: e-BH over everything in the cache, write the LR table and a report
     python scripts/backtest.py --data hi_small --eps 0.5 1 2 --assemble
 
-Questions: the expert list (`--questions expert`, both subject slots) and/or a JSONL file of DSL programs
+Questions: the expert list (`--questions expert`, both subject slots), every DSL program up to a size (`--questions
+enumerate --max-size 4`, the Enumerator planner's search space) and/or a JSONL file of DSL programs
 (`--questions-file`, T3's hand-off #8: one {"program": "..."} or plain program per line). `--exact` runs the no-noise
 variant (eps = inf) on the same alerts. Realistic mode is the default and the one the main results use.
 The test split is never read.
@@ -32,6 +33,10 @@ from ftm.privacy.accountant import PrivacyAccountant  # noqa: E402
 
 def read_programs(args) -> list[str]:
     progs: list[str] = []
+    if "enumerate" in args.questions:
+        from ftm.dsl.enumerate import enumerate_programs
+
+        progs += [canonical(n) for n in enumerate_programs(args.max_size, ("receiver", "sender"))]
     if "expert" in args.questions:
         for slot in ("receiver", "sender"):
             progs += [p["program"] for p in expert_programs(slot)]
@@ -57,7 +62,8 @@ def main(argv=None) -> None:
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--split", default="train", choices=["train", "val"])
     ap.add_argument("--eps", type=float, nargs="+", default=[0.5, 1.0, 2.0])
-    ap.add_argument("--questions", nargs="+", default=["expert"], choices=["expert", "none"])
+    ap.add_argument("--questions", nargs="+", default=["expert"], choices=["expert", "enumerate", "none"])
+    ap.add_argument("--max-size", type=int, default=4, help="program size bound for --questions enumerate")
     ap.add_argument("--questions-file", default=None)
     ap.add_argument("--shard", default="0/1", help="i/n")
     ap.add_argument("--exact", action="store_true", help="no-noise variant (eps = inf)")

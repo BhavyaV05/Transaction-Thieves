@@ -49,7 +49,7 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
     if max_alerts:
         alerts = alerts.head(max_alerts)
     tx = io.scan_transactions(pq, split=split, columns=ALERT_TX_COLUMNS).collect()
-    joined = alerts.select("alert_id", "tx_id", "bank", "label").join(tx, on="tx_id", how="left")
+    joined = alerts.select("alert_id", "tx_id", "bank", "label", "p0").join(tx, on="tx_id", how="left")
     if joined["timestamp"].null_count():
         raise ValueError("some alerts point at transactions outside the requested split")
     entity_of = _entities(pq)
@@ -70,7 +70,7 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
         if b.partner_bank is None:
             skipped += 1
             continue
-        out.append(BtAlert(row["alert_id"], bool(row["label"]), b))
+        out.append(BtAlert(row["alert_id"], bool(row["label"]), b, float(row["p0"])))
     partners = {a.binding.partner_bank for a in out}
     banks = {p: PartnerBank(p, view(p), bank_config or BankConfig.load(), seed, entity_of) for p in sorted(partners)}
     return RealWorld(banks, out, f"{data}-{split}-{len(out)}-{_digest(out)}", skipped)
