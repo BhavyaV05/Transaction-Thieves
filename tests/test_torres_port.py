@@ -87,7 +87,7 @@ def test_failed_repair_keeps_output_and_logs_problems():
 
 
 def test_ported_question_round_adds_partner_evidence():
-    q = {"questions": [{"bank": 1588, "eps": 1.0, "question": "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"},
+    q = {"questions": [{"bank": 1588, "eps": 1.0, "question": "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"},
                        {"bank": 1588, "eps": 1.0, "question": "not a question"}]}  # fmt: skip
     llm = MockLLM(script=[json.dumps(q), out(rationale="bank 1588 says it passed on [E9]", support=("E9",))])
     tools = RuleTools([Reply("1588", "bool", True, 1.0, 0.3)])

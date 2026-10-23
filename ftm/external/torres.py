@@ -37,7 +37,7 @@ from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, NaiveLRFusion, describe
 from ftm.llm.jsonout import JsonOutputError, parse_and_validate
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.planners.llm_prompt import EPS_LEVELS, eps_levels
 from ftm.types import AlertContext, Limits, Verdict
 
@@ -131,7 +131,7 @@ class Torres:
     mode: str = "native"
     memory: CaseMemory = field(default_factory=CaseMemory)
     quotas: dict = field(default_factory=lambda: dict(QUOTAS))
-    dsl: DslAdapter = field(default_factory=ProvisionalDsl)
+    dsl: DslAdapter = field(default_factory=V0Dsl)
     fusion: Fusion = field(default_factory=NaiveLRFusion)
     temperature: float = 0.0
     seed: int = 0
