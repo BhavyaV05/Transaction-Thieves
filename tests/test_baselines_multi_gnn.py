@@ -6,9 +6,9 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import pytest
+from test_baselines_gfp import _frame
 
 from ftm.baselines import multi_gnn
-from tests.test_baselines_gfp import _frame
 
 
 def test_edge_arrays_refuse_test_rows_and_keep_int64_ids():
