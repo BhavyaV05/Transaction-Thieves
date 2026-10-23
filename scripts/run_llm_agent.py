@@ -10,7 +10,8 @@ Owner: T3 (Akshat).  Spec: tracks.md 5.8 weeks 3-4 (planner on 20 val alerts for
 
 Writes outputs/runs/<run_id>/: runlog.parquet (ftm.eval.runlog schema), traces.jsonl (per-step LLM text, for case
 studies and distillation; aliased only), alerts.jsonl (p0 + shape, for build_library.py), questions.jsonl (composed questions, hand-off #8), summary.json.
-`--toolbox dev` answers randomly (ftm/llm/devtools.py) and is labelled variant=devtools: never a result.
+`--toolbox dev` answers randomly (ftm/llm/devtools.py) and is labelled variant=devtools: never a result, so the
+script refuses to write split=test rows for it (refuse_devtools_test).
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from ftm.external.sharma import Sharma  # noqa: E402
 from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
 from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
-from ftm.library.shape import shape_from_rows  # noqa: E402
+from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
@@ -107,10 +108,11 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int) -> list[tuple[
         a = alerts.row(i, named=True)
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
-        ev_rows, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)
+        _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
-        summary["shape"] = {**shape_from_rows(ev_rows.to_dicts(), summary["receiver"], row["timestamp"]).as_dict(),
+        edges = receiver_edges(cfg["views_dir"], a["bank"], row["dst_id"], row["timestamp"])  # not the evidence view
+        summary["shape"] = {**shape_from_edges(edges, row["dst_id"], row["timestamp"]).as_dict(),
                             "receiver": summary["receiver"]}  # receiver: only the E11 account-keyed ablation reads it
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
         out.append((ctx, int(a["label"])))
@@ -125,6 +127,12 @@ def make_toolbox(kind: str, seed: int):
     except ImportError as e:
         raise SystemExit("harness v0 is not in this checkout yet (T2, week 3); use --toolbox dev for a smoke run") from e
     return harness_toolbox(seed=seed)
+
+
+def refuse_devtools_test(variant: str, split: str) -> None:
+    """Random-answer devtools runs must never reach a results table, least of all with test-split rows."""
+    if variant == "devtools" and split == "test":
+        raise SystemExit("refusing to write split=test rows for variant=devtools (--toolbox dev is never a result)")
 
 
 def verdict_rows(v: Verdict, base: dict, label: int | None) -> list[dict]:
@@ -161,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "runs")
     a = ap.parse_args(argv)
 
+    refuse_devtools_test("devtools" if a.toolbox == "dev" else "harness", a.alerts)  # before any file or data is touched
     run_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -195,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": "devtools" if a.toolbox == "dev" else "harness", "seed": a.seed}  # fmt: skip
 
-    rows, sq, n_scored, seconds = [], 0.0, 0, []
+    rows, sq, n_scored, seconds, trials = [], 0.0, 0, [], {}
     with (out / "alerts.jsonl").open("w", encoding="utf-8") as f:  # server side, no labels (for build_library.py)
         for ctx, _ in alerts:
             shape = dict(ctx.summary.get("shape") or {})
@@ -206,8 +215,11 @@ def main(argv: list[str] | None = None) -> int:
             t0 = time.perf_counter()
             v = system.investigate(ctx, tools, limits)
             seconds.append(time.perf_counter() - t0)
+            refuse_devtools_test(base["variant"], ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id}, label)
-            traces.write(json.dumps({"alert_id": ctx.alert_id, "trace": system.last_trace}, default=str) + "\n")
+            if v.trials is not None:
+                trials[ctx.alert_id] = v.trials
+            traces.write(json.dumps({"alert_id": ctx.alert_id, "trials": v.trials, "trace": system.last_trace}, default=str) + "\n")
             if label is not None:
                 p = ctx.p0 if v.probability is None else v.probability
                 sq, n_scored = sq + (p - label) ** 2, n_scored + 1
@@ -217,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
                "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n, "library_hash": library_hash,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
+    if trials:  # Reflexion; the shared run-log columns are T4's, so this stays out of runlog.parquet
+        summary["trials_per_alert"] = trials
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
