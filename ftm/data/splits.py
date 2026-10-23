@@ -24,6 +24,21 @@ def validate_split_days(split_days: dict | None) -> dict:
     return split_days
 
 
+def test_part(cfg: dict, day: str = "day") -> pl.Expr:
+    """Expression: "bulk" / "tail" for test days, null for train and val days. Pure function of `day`.
+
+    Uses `test_bulk_days` and `test_tail_days` of the data config (decision 4: the headline test is the
+    bulk, the sparse tail is reported separately). It adds no column to the Parquet and changes neither
+    `split` nor `tx_id`: `df.with_columns(test_part(cfg).alias("test_part"))`, then `.filter(is_tail)`.
+    """
+    sd = validate_split_days(cfg["split_days"])
+    (b0, b1), (t0, t1) = cfg["test_bulk_days"], cfg["test_tail_days"]
+    if (b0, t1) != tuple(sd["test"]) or t0 != b1 + 1 or b1 < b0:
+        raise ValueError(f"test_bulk_days {[b0, b1]} + test_tail_days {[t0, t1]} must tile split_days.test {sd['test']}")
+    d = pl.col(day)
+    return pl.when(d.is_between(b0, b1)).then(pl.lit("bulk")).when(d.is_between(t0, t1)).then(pl.lit("tail")).otherwise(None)
+
+
 def drop_cycle_attempts(frame, patterns: pl.LazyFrame | pl.DataFrame):
     """Remove transactions of cycle attempts from the *train* rows (held-out-cycles variant, E12).
 

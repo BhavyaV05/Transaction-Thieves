@@ -9,6 +9,8 @@ Team **Cache me if you can** (LMA Group Project 2026). Banks see only their own 
 | [`tasks/`](tasks/) | One checklist per track, generated from `tracks.md` |
 | [`STATUS.md`](STATUS.md) | One line per track per week |
 | [`docs/hardware.md`](docs/hardware.md) | Machine setup, week-0 smoke tests, shared LLM server, GPU rules |
+| [`docs/ta_addendum.md`](docs/ta_addendum.md) | Draft addendum to the TA: what changed since the proposal (G0) |
+| [`docs/external_code_check.md`](docs/external_code_check.md) | Code and licence status of every Group C/D external system |
 | [`GPU_CALENDAR.md`](GPU_CALENDAR.md) | Who has which GPU when (QLoRA and teacher runs take a machine offline) |
 
 ## Who owns what

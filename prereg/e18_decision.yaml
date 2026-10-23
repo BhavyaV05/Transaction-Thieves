@@ -1,0 +1,28 @@
+# E18 backbone-size decision rule. Pre-registered BEFORE stage 1 runs (plan.md 6.11, section 8).
+# T4 owns the rule, T3 runs the sweep. The run config is configs/experiments/e18_backbone_sweep.yaml; if the two
+# disagree, this file wins. Validation only: no test alert is touched.
+
+status: draft            # becomes "committed" in the commit made before stage 1; that hash goes in the E18 run log
+data: HI-Medium validation alerts (docs/t4_decisions_week2.md item 9), fixed seed 0
+statistic: Brier of the planner (compose mode) on the same alerts for every model, paired cluster bootstrap
+clusters: attempt+accounts
+bootstrap: {resamples: 10000, level: 0.95, seed: 0}
+
+stage1:
+  alerts: 200
+  drop_if:
+    - "valid-DSL output rate < 0.95"
+    - "95% CI of Brier(model) - Brier(best model) lies entirely above 0"
+stage2:
+  models: top 3 by stage-1 Brier among the survivors
+  alerts: 500            # stage-1 alerts included
+pick:
+  rule: "smallest model (active parameters) whose 95% CI upper bound of Brier(model) - Brier(best) is below the equivalence margin"
+  margin: "plan.md 9.3: 0.5 * |Brier(random) - Brier(best simple planner)| on the same 500 alerts"
+  tie_break: [lower median seconds per alert on the reference machine, fewer total parameters]
+  latency: "must meet 8-20 s per alert (median, reference machine); if none qualifies, take the best that meets it"
+thinking:
+  default: off           # every system; gpt-oss at reasoning_effort low
+  arm: "the stage-2 winner, thinking on, 1,024 output tokens per step, same 500 alerts"
+  adopt_if: "Brier(on) - Brier(off) CI upper bound < -margin AND latency target still met; then on for every system"
+report: [brier_per_model_with_ci, valid_dsl_rate, median_s_per_alert, gpu_s_per_alert, tokens_per_alert, brier_vs_active_params_per_family]

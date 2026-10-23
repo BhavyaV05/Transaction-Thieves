@@ -11,13 +11,13 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 
 ## Week 1
 - [ ] Repo skeleton, CI, test-split guard
-- [ ] rules corpus collection
+- [x] rules corpus collection
 - [ ] expert questions with Bhavya
 - [ ] run-log schema
 
 ## Week 2
 - [ ] Fusion v0
-- [ ] metrics + bootstrap code. **G1**
+- [x] metrics + bootstrap code. **G1**
 
 ## Week 3
 - [ ] Ceiling checks with Bhavya. **G2**
@@ -31,7 +31,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] **Torres port**
 
 ## Week 6
-- [ ] Injection set generation
+- [x] Injection set generation
 - [ ] **Sharma port**
 
 ## Week 7

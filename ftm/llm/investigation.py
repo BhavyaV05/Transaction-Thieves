@@ -29,6 +29,7 @@ from typing import Protocol
 
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import Usage
+from ftm.llm.untrusted import wrap_untrusted
 from ftm.planners.llm_dsl import DslCheck
 from ftm.planners.llm_prompt import AnswerSoFar
 from ftm.types import AlertContext, Decline, Limits, QuestionLogEntry, Reply, Timeout, Verdict
@@ -146,7 +147,7 @@ def describe(entry: QuestionLogEntry) -> str:
         r = entry.response
         text = f"bank {entry.bank} answered {r.value!r} ({r.kind}, noisy; eps {r.eps_spent:g} spent, {r.latency_days:.1f} days)"
         if r.note:
-            text += f"\n<untrusted_note>{r.note[:300]}</untrusted_note>"
+            text += f"\n{wrap_untrusted(r.note)}"
         return text
     if o == "decline":
         return f"bank {entry.bank} declined to answer"

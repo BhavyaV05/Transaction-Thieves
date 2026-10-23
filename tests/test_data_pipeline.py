@@ -142,6 +142,28 @@ def test_split_assignment(built):
         splits.validate_split_days(None)
 
 
+def test_test_part_marks_bulk_and_tail():
+    cfg = {"split_days": {"train": [1, 3], "val": [4, 4], "test": [5, 9]}, "test_bulk_days": [5, 6], "test_tail_days": [7, 9]}
+    df = pl.DataFrame({"day": list(range(1, 10)), "tx_id": list(range(9))})
+    out = df.with_columns(splits.test_part(cfg).alias("p"))
+    assert out["p"].to_list() == [None] * 4 + ["bulk"] * 2 + ["tail"] * 3
+    assert out["tx_id"].to_list() == df["tx_id"].to_list() and df.columns == ["day", "tx_id"]  # a pure expression: no schema change
+    with pytest.raises(ValueError):
+        splits.test_part({**cfg, "test_tail_days": [8, 9]})  # gap between bulk and tail
+    with pytest.raises(ValueError):
+        splits.test_part({**cfg, "test_bulk_days": [5, 6], "test_tail_days": [7, 8]})  # does not reach the end of test
+
+
+@pytest.mark.parametrize("name,bulk,tail", [("hi_small", [9, 10], [11, 18]), ("hi_medium", [13, 16], [17, 28])])
+def test_real_configs_tile_the_test_split(name, bulk, tail):
+    cfg = io.load_config(name)
+    assert cfg["test_bulk_days"] == bulk and cfg["test_tail_days"] == tail
+    days = pl.DataFrame({"day": list(range(1, cfg["split_days"]["test"][1] + 1))})
+    p = days.with_columns(splits.test_part(cfg).alias("p"))
+    assert p.filter(pl.col("day") <= cfg["split_days"]["val"][1])["p"].is_null().all()
+    assert p["p"].drop_nulls().n_unique() == 2
+
+
 def test_test_split_is_locked(built, monkeypatch):
     monkeypatch.delenv(guards.FINAL_RUN_ENV, raising=False)
     with pytest.raises(guards.TestSplitLocked):

@@ -28,9 +28,11 @@ Time-based, set by `split_days` in `configs/data/<ds>.yaml` (1-indexed, inclusiv
 | HI-Medium (16 bulk days + sparse tail to day 28) | 1-9 | 10-12 | 13-28 |
 | HI-Small (18 calendar days) | 1-6 | 7-8 | 9-18 |
 
+**Test bulk and tail (decision 4, `docs/t4_decisions_week2.md`).** The test split keeps the sparse tail so that time order holds, but the **headline test is the bulk days** and the tail is reported separately, never pooled. `configs/data/<ds>.yaml` marks them: HI-Medium `test_bulk_days: [13, 16]`, `test_tail_days: [17, 28]`; HI-Small `[9, 10]` and `[11, 18]`. `ftm.data.splits.test_part(cfg)` is a pure Polars expression of `day` returning `"bulk"`, `"tail"` or null (train/val days); `df.with_columns(splits.test_part(cfg).alias("test_part"))`. No column was added to the Parquet, and `split` and `tx_id` did not change, so nothing needed a rebuild. It checks that the two ranges tile `split_days.test`.
+
 **HI-Small rule.** The dataset paper says HI-Small spans 10 days, and 99.98% of the rows are in days 1-10; days 11-18 are a sparse tail (1,108 rows, 655 of them laundering: late legs of long attempts). We split the 10 bulk days in the HI-Medium proportions 9:3:4 (5.6 / 1.9 / 2.5 days, rounded to 6 / 2 / 2) and put the tail in test so time order is kept and nothing is dropped. Note this is not the 60/20/20 split by transaction index that the AMLworld paper and Multi-GNN use (ours is 64/19/17 of rows), so SOTA reproduction on "their" split needs their split, not ours.
 
-**Alerts and attempts.** `attempts.parquet` marks `spans_split`; drop an alert whose laundering attempt spans a split boundary (plan 5.2 step 3). In HI-Small this is 147 of 370 attempts, because attempts last days. The 72-hour evidence-window rule is applied by whoever builds alerts (T1, week 3-4), using `timestamp`.
+**Alerts and attempts.** `attempts.parquet` marks `spans_split`; drop an alert whose laundering attempt spans a split boundary (plan 5.2 step 3). In HI-Small this is 147 of 370 attempts, because attempts last days. The 72-hour evidence-window drop rule was removed (decision 3): alerts are not filtered by it; `evidence_window_hours` in the data config is only the default window of the evidence views. The span rule is a flag column on the alerts (`ftm/intake/README.md`).
 
 **Test lock.** The test rows and labels are on disk, but every reader in `ftm.data.io` that can return them calls `ftm.guards.require_final_run()` (needs `FTM_FINAL_RUN=1`, set at G5 only).
 

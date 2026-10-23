@@ -6,7 +6,7 @@ scrc_beta: 0.0005         # max laundering share among auto-cleared transactions
 scrc_delta: 0.1           # confidence level of the bound
 apply_scrc: false         # true: also alert everything below the certified clear threshold (widens alerts)
 fixed_window: [0.15, 0.85]  # ablation
-evidence_window_hours: 72
+# No 72 h evidence-window drop rule (decision 3): history before the split is legitimate evidence. The span rule is a flag column (`spans_split`) only.
 seed: 0
 bulk_days: {hi_small: 10, hi_medium: 16}   # days that hold 99.9% of rows (AMLworld paper table 4); test = bulk_days - last val day
 targets: {train: 20000, val_min: 1000, test: [2500, 4000], test_pos_min: 375}
