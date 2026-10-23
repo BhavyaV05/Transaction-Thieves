@@ -75,6 +75,7 @@ class PlannerStats:
     stops: int = 0
     questions: int = 0
     dsl_ok: int = 0
+    usable: int = 0  # outputs that were a stop or carried a valid question (a batched output counts once, however many questions)
     duplicates: int = 0
     refusals: int = 0  # asks the gate / accountant refused
     refused_repeats: int = 0  # the same refused (question, bank) proposed again, caught before it reached the gate
@@ -90,7 +91,7 @@ class PlannerStats:
 
     @property
     def usable_output_rate(self) -> float:
-        return (self.stops + self.dsl_ok) / self.outputs if self.outputs else float("nan")
+        return self.usable / self.outputs if self.outputs else float("nan")
 
     def as_counts(self) -> dict:
         """The integer counters, so a caller can take per-alert differences (E18 per_alert.jsonl)."""
@@ -181,7 +182,6 @@ class LLMPlanner:
         for it in action.wave:
             q: dict = {"action": it.action, "bank": it.bank, "eps": it.eps}
             per_q.append(q)
-            self.stats.questions += 1
             eps, left = it.eps, session.eps_left - reserved
             if it.action == "select":
                 item = self.questions[it.question_id]
@@ -198,6 +198,7 @@ class LLMPlanner:
             else:
                 program = it.program
             q["program"], q["eps"] = program, eps
+            self.stats.questions += 1  # as in the sequential path, a select that cannot get an eps level is not counted
             check = self.dsl.validate(program)
             if not check.ok:
                 q["error"] = f"dsl: {check.error}"
@@ -230,6 +231,7 @@ class LLMPlanner:
             q["canonical"] = check.canonical
             sent.append((it, check, eps, q))
         rec["wave"] = per_q
+        self.stats.usable += bool(sent)
         if not sent:
             rec["error"] = "wave: no valid question"
             return "retry", " ".join(notes) + " Propose a different wave, or stop."
@@ -316,6 +318,7 @@ class LLMPlanner:
                 strategies = self._strategies(alert, tools, typology)
             if action.action == "stop":
                 self.stats.stops += 1
+                self.stats.usable += 1
                 break
             if state.wave_k > 1:
                 got, feedback = self._wave(action, session, rec, step, alert, refused)
@@ -352,6 +355,7 @@ class LLMPlanner:
                 rec["error"] = f"dsl: {check.error}"
                 continue
             self.stats.dsl_ok += 1
+            self.stats.usable += 1
             if (check.canonical, str(action.bank)) in refused:
                 self.stats.refused_repeats += 1
                 feedback = (f"bank {action.bank} already refused this exact question ({refused[(check.canonical, str(action.bank))]}). "

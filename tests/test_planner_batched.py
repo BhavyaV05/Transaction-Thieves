@@ -78,6 +78,7 @@ def test_wave_advances_clock_by_max_then_single_then_ends():
     assert len(v.questions_log) == 3
     assert v.llm_calls == 2  # the schedule is used up: no third call, no stop needed
     assert [r["step"] for r in p.last_trace] == [1, 2]
+    assert p.stats.questions == 3 and p.stats.usable_output_rate == 1.0  # a batched output counts once
 
 
 def test_failed_step_does_not_use_a_slot_and_stop_ends():
