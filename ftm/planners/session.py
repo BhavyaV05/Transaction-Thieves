@@ -61,6 +61,12 @@ class PlanSession:
                            sim_days_left=self.limits.max_sim_time_days - self.sim_days,
                            max_delta=self.max_delta, max_weight=self.max_weight)  # fmt: skip
 
+    def stop_reason(self) -> str:
+        """Why the investigation ended (run-log `stop_reason`): the stop rule's reason, or `finish` when it was still
+        allowed to continue but had nothing left to ask."""
+        d = self.stop()
+        return d.reason if d.stop else "finish"
+
     def affordable(self, candidates: list[Candidate], one_per_family: bool = True) -> list[Candidate]:
         return [c for c in candidates
                 if c.cost <= self.eps_left + 1e-9 and (c.program, self.bank) not in self.asked

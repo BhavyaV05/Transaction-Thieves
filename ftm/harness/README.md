@@ -35,4 +35,4 @@ Eleven kinds of malformed or forbidden question never reach a bank; the third qu
 
 ## Not in v1
 
-The batched asks of RQ5 (async mode, weeks 8 to 11) and the harness-level fairness report. The sequential orchestrator for the non-LLM arms is `ftm/orchestrator/runner.py`, the run-log writer `ftm/harness/runlog_rows.py`. The `ToolBox` contract is unchanged since v0; `SessionToolBox` is an added protocol.
+The batched asks of RQ5 (async mode, weeks 8 to 11) and the harness-level fairness report. The sequential orchestrator for the non-LLM arms is `ftm/orchestrator/runner.py`, the run-log writer `ftm/harness/runlog_rows.py` (run-log v1: `verdict_rows(..., ctx=, pool=, facts=)` fills `p0`, `home_bank`, `eps_spent`, `sim_days`, `stop_reason`, `trials` on verdict rows and `family`, `kind`, `log_lr`, `note_present` on step rows, which `ftm.eval.runs.score` needs for the questions-only score; `rule_id`, `gate_reason`, `model`, `thinking`, `mode`, `val_part`, `injection_id` stay null here). The `ToolBox` contract is unchanged since v0; `SessionToolBox` is an added protocol.
