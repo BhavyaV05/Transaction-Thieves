@@ -37,6 +37,8 @@ import polars as pl  # noqa: E402
 from ftm import guards  # noqa: E402
 from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
+from ftm.external.bed_llm import BedLlm  # noqa: E402
+from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
 from ftm.external.co_investigator import CoInvestigator  # noqa: E402
 from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
 from ftm.external.dspy_react import DspyReact  # noqa: E402
@@ -51,6 +53,8 @@ from ftm.external.sharma import Sharma  # noqa: E402
 from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
 from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
+from ftm.external.uot import Uot  # noqa: E402
+from ftm.external.uot import dev_responder as uot_dev_responder  # noqa: E402
 from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.backtest_table import (  # noqa: E402
@@ -83,9 +87,10 @@ GROUP_C = {  # T4 ports (Group C, native and ported modes)
     "finfre_rag_ported": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="ported", **kw),
 }
 DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
-                  "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder}
+                  "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder,
+                  "uot": uot_dev_responder, "bed_llm": bed_llm_dev_responder}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
-           "dspy_react": DspyReact}
+           "dspy_react": DspyReact, "uot": Uot, "bed_llm": BedLlm}  # uot, bed_llm: T4 information-seeking ports
 
 
 def git_commit() -> str:
@@ -326,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.llm == "endpoint":
         llm = HttpChatClient.from_env(endpoint=a.endpoint, model=a.model)
     else:
-        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system.rsplit("_", 1)[0], dev_responder))
+        llm = MockLLM(responder=DEV_RESPONDERS.get(a.system) or DEV_RESPONDERS.get(a.system.rsplit("_", 1)[0], dev_responder))
     model = getattr(llm, "model", "mock")
     if a.record:
         llm = RecordingClient(llm, a.record)
