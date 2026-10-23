@@ -124,6 +124,8 @@ class Gate:
     jurisdiction_by_bank: dict = field(default_factory=dict)
     allow_raw_share: bool = False
     red_flags: dict = field(default_factory=dict)
+    retrieval: str = "bm25"  # bm25 (default, ftm.compliance.rag) | keyword (v0, ablation)
+    _retriever: object = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_config(cls, path: str | Path = GATE_CONFIG, **overrides) -> Gate:
@@ -133,7 +135,8 @@ class Gate:
                   default_jurisdiction=cfg["default_jurisdiction"],
                   jurisdiction_by_bank={str(k): v for k, v in (cfg.get("jurisdiction_by_bank") or {}).items()},
                   allow_raw_share=cfg["allow_raw_share"],
-                  red_flags=load_red_flags(cfg["red_flags_file"]) if cfg.get("red_flags_file") else {})  # fmt: skip
+                  red_flags=load_red_flags(cfg["red_flags_file"]) if cfg.get("red_flags_file") else {},
+                  retrieval=cfg.get("retrieval", "bm25"))  # fmt: skip
         kw.update(overrides)
         return cls(**kw)
 
@@ -194,11 +197,22 @@ class Gate:
         return Decision("allowed", rule_id=r.rule_id)
 
     def lookup_rules(self, query: str, jurisdiction: str | None = None, k: int = 5) -> list[dict]:
-        """v0 keyword lookup over legal bases and red flags (the BM25 + embedding RAG is secondary).
+        """Retrieval over legal bases and red flags: BM25 (ftm.compliance.rag) or the v0 keyword match.
 
         Returns dicts with rule_id (a legal-basis rule id or a red-flag id), kind ("rule" | "red_flag"),
         jurisdiction, text, source. Only `kind == "rule"` ids are valid citations for ask_bank.
         """
+        if self.retrieval == "bm25":
+            if self._retriever is None:
+                from ftm.compliance.rag import Retriever, docs_from_gate
+
+                self._retriever = Retriever(docs_from_gate(self))
+            return [{k_: h[k_] for k_ in ("rule_id", "kind", "jurisdiction", "text", "source")}
+                    for h in self._retriever.search(query, jurisdiction=jurisdiction, k=k)]  # fmt: skip
+        return self._keyword_lookup(query, jurisdiction, k)
+
+    def _keyword_lookup(self, query: str, jurisdiction: str | None = None, k: int = 5) -> list[dict]:
+        """v0: count of query words (> 2 letters) found in the document."""
         words = {w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2}
         docs = [(r.rule_id, "rule", r.jurisdiction, r.text, r.source, "") for r in self.rules.values()]
         docs += [(f.flag_id, "red_flag", f.jurisdiction, f.text, f.source, " ".join(f.typologies) + " " + f.signal)

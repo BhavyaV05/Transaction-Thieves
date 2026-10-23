@@ -4,10 +4,14 @@ Owner: T3 (Akshat).  Spec: tracks.md 5.4 (steps 1-4) and 5.6; plan.md 6.11 and 6
 
     # 1. distil teacher traces (run_llm_agent.py --keep-prompts on TRAIN alerts) into SFT examples
     python scripts/train_planner.py distill --runs outputs/runs/<teacher1> ... --data hi_small \
-        --backtest outputs/backtest/lr_table.jsonl --out outputs/sft/planner_train.jsonl
+        --backtest outputs/backtest/lr_table.jsonl --backtest-mode realistic --fusion-params outputs/fusion/val_fit.json \
+        --teacher-model <served model name> --teacher-revision <40-char hash> --out outputs/sft/planner_train.jsonl
     # 2. check config + data without a GPU, then train one seed (block GPU_CALENDAR.md first)
     python scripts/train_planner.py train --config configs/llm/sft_planner.yaml --dataset outputs/sft/planner_train.jsonl --dry-run
     python scripts/train_planner.py train --config configs/llm/sft_planner.yaml --dataset outputs/sft/planner_train.jsonl --seed 0
+    # 3. fast model: temperature on val `fit`, conformal sets (fast + 8B) on val `cal`, report on `eval`
+    python scripts/train_planner.py calibrate --dataset outputs/fast/val_decisions.jsonl --fast-url http://... \
+        --large-url http://... --out outputs/fast/calibration.json
 
 The trainer (Unsloth + TRL) is imported lazily, so `--dry-run`, `distill` and the tests need no GPU packages.
 NOT YET RUN ON A GPU: the Unsloth/TRL calls follow their documented APIs and must be checked on the first real run.
@@ -95,11 +99,26 @@ def train(cfg: dict, rows: list[dict], seed: int) -> Path:  # pragma: no cover -
     return out
 
 
+class TableAcceptance:
+    """RealisticAcceptance over a back-test table. Pending: T2's own adapter (PR #24) will replace this; until then the
+    caller states the mode the table was made in and anything but realistic is refused."""
+
+    def __init__(self, table, mode: str):
+        if mode != "realistic":
+            raise SystemExit(f"distillation needs a realistic-mode back-test table, not {mode!r} (exact mode ignores the noise)")
+        self.table = table
+
+    def __call__(self, canonical: str, eps: float) -> bool:
+        entry = self.table.get(canonical, eps)
+        return entry is not None and entry.accepted
+
+
 def cmd_distill(a) -> int:
     import polars as pl
 
+    from ftm.llm.fusion_adapter import FusedLR
     from ftm.llm.investigation import LRTable
-    from ftm.planners.llm_distill import distill_examples
+    from ftm.planners.llm_distill import Teacher, distill_examples
 
     labels = {}
     for split in a.splits:
@@ -108,14 +127,37 @@ def cmd_distill(a) -> int:
     table = LRTable.from_rows(json.loads(x) for x in a.backtest.read_text(encoding="utf-8").splitlines() if x.strip())
     traces = [json.loads(x) for run in a.runs for x in (run / "traces.jsonl").read_text(encoding="utf-8").splitlines()]
 
-    def accepted(c, e):
-        entry = table.get(c, e)
-        return entry is not None and entry.accepted
-
-    examples, counts = distill_examples(traces, labels, accepted, splits=tuple(a.splits))
+    runs_model = {json.loads((run / "summary.json").read_text(encoding="utf-8")).get("model") for run in a.runs}
+    if runs_model != {a.teacher_model}:
+        raise SystemExit(f"runs were made with {sorted(map(str, runs_model))}, not --teacher-model {a.teacher_model!r}")
+    fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), table)  # fitted on val (T4)
+    examples, counts = distill_examples(traces, labels, TableAcceptance(table, a.backtest_mode), fusion=fusion,
+                                        teacher=Teacher(a.teacher_model, a.teacher_revision), splits=tuple(a.splits))  # fmt: skip
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text("".join(json.dumps(e) + "\n" for e in examples), encoding="utf-8")
-    print(json.dumps({"out": str(a.out), **counts}, indent=2))
+    summary = {"out": str(a.out), "runs": [str(r) for r in a.runs], "backtest": str(a.backtest), "backtest_mode": a.backtest_mode,
+               "fusion_params": str(a.fusion_params), **counts}  # fmt: skip
+    (a.out.parent / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def cmd_calibrate(a) -> int:
+    from ftm.fastmodel.decisions import DecisionExample
+    from ftm.fastmodel.model import JsonDecisionModel, LogprobFastModel
+    from ftm.fastmodel.splits import calibrate_cascade
+    from ftm.llm.client import HttpChatClient
+
+    rows = [json.loads(x) for x in a.dataset.read_text(encoding="utf-8").splitlines() if x.strip()]
+    examples = [DecisionExample(r["decision"], r["context"], r["label"], r.get("alert_id"), r.get("split")) for r in rows]
+    fast = LogprobFastModel(HttpChatClient(a.fast_url, model=a.fast_model))
+    large = JsonDecisionModel(HttpChatClient(a.large_url, model=a.large_model))
+    temps, _, report = calibrate_cascade(examples, [r["val_part"] for r in rows], fast, large, alpha=a.alpha)
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    a.out.write_text(json.dumps({"temperatures": temps, **report}, indent=2), encoding="utf-8")
+    print(json.dumps(report, indent=2))
+    if report["flagged"]:
+        print(f"WARNING: full set (always defer) or no fit rows for: {report['flagged']}")
     return 0
 
 
@@ -143,14 +185,26 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--data", default="hi_small")
     d.add_argument("--splits", nargs="+", default=["train"])
     d.add_argument("--backtest", type=Path, required=True)
+    d.add_argument("--backtest-mode", required=True, help="mode the table was made in; only 'realistic' is accepted")
+    d.add_argument("--fusion-params", type=Path, required=True, help="Fusion.params() JSON of the model fitted on val")
+    d.add_argument("--teacher-model", required=True)
+    d.add_argument("--teacher-revision", required=True, help="weights revision (commit hash) of the served teacher")
     d.add_argument("--out", type=Path, required=True)
+    c = sub.add_parser("calibrate")
+    c.add_argument("--dataset", type=Path, required=True, help="JSONL rows: decision, context, label, val_part (fit/cal/eval)")
+    c.add_argument("--fast-url", required=True)
+    c.add_argument("--fast-model", default=None)
+    c.add_argument("--large-url", required=True)
+    c.add_argument("--large-model", default=None)
+    c.add_argument("--alpha", type=float, default=0.05)
+    c.add_argument("--out", type=Path, required=True)
     t = sub.add_parser("train")
     t.add_argument("--config", type=Path, required=True)
     t.add_argument("--dataset", type=Path, required=True)
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    return cmd_distill(a) if a.cmd == "distill" else cmd_train(a)
+    return {"distill": cmd_distill, "calibrate": cmd_calibrate, "train": cmd_train}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,11 @@ Fairness (plan.md 7.2):
     accounting are the same as for every system; DSPy's own cache is off so every call is real and counted;
   - the tools are the shared ones (ask_bank / lookup_rules through Investigation: gate, accountant, eps);
   - max_iters = max_llm_calls - 1, leaving one call for DSPy's final extraction step;
-  - tuning parity: MIPROv2 gets the same validation alerts our fine-tuned planner is tuned on.
+  - tuning parity: MIPROv2 gets the same validation alerts our fine-tuned planner is tuned on, and the split is
+    explicit (T4 review of PR #14): `optimize` takes only val `fit` alerts, the G4 selection among candidates
+    (`select_best`) only val `eval` alerts; each example carries its "part" and mixing raises;
+  - MIPROv2's own LLM calls (task and prompt model, which no per-alert BudgetedClient sees) and wall time are
+    counted by a CountingClient and written to the compute log.
 `client_lm` uses DSPy's legacy BaseLM.forward interface, supported in 3.4 and removed in 3.5 (port it to an
 engine before upgrading). dspy is imported lazily so this module imports without it (CI does not install it).
 NOT YET OPTIMISED: `optimize()` needs val alerts through harness v0 and the endpoint.
@@ -15,15 +19,18 @@ NOT YET OPTIMISED: `optimize()` needs val alerts through harness v0 and the endp
 
 from __future__ import annotations
 
+import json
 import threading
+import time
 import warnings
+from pathlib import Path
 from types import SimpleNamespace
 
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import Fusion, Investigation, NaiveLRFusion
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.types import AlertContext, Limits, Verdict
 
 from .text_agent import ToolCall, ToolExecutor, case_text, tools_doc
@@ -87,7 +94,7 @@ class DspyReact:
     def __init__(self, llm: ChatClient, *, program=None, program_path: str | None = None, dsl: DslAdapter | None = None,
                  fusion: Fusion | None = None, max_iters: int | None = None, seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm, self.extra, self.seed = llm, extra, seed
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.max_iters = max_iters
         self.program = program
@@ -135,22 +142,65 @@ def brier_metric(example, pred, trace=None) -> float:
     return 1.0 - (p - float(example.label)) ** 2
 
 
+class CountingClient:
+    """Wraps a ChatClient and counts every call; for MIPROv2, whose own calls no BudgetedClient sees."""
+
+    def __init__(self, client: ChatClient):
+        self.client = client
+        self.calls: list[dict] = []
+
+    def chat(self, messages: list[dict], **kwargs):
+        r = self.client.chat(messages, **kwargs)
+        self.calls.append({"tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "latency_s": r.latency_s})
+        return r
+
+    def totals(self) -> dict:
+        return {"llm_calls": len(self.calls), "tokens_in": sum(c["tokens_in"] for c in self.calls),
+                "tokens_out": sum(c["tokens_out"] for c in self.calls), "gpu_seconds": sum(c["latency_s"] for c in self.calls)}  # fmt: skip
+
+
+def require_part(examples: list, part: str, what: str) -> None:
+    """Every example must come from val `part` ("fit": tuning, "eval": selection); anything else, or none, raises."""
+    got = sorted({str(e.get("part")) for e in examples})
+    if not examples or got != [part]:
+        raise ValueError(f"{what} takes val '{part}' alerts only, got parts {got}: tuning on `fit` and selecting on `eval` must not mix")
+
+
+def select_best(candidates: dict[str, DspyReact], examples: list, *, limits: Limits | None = None) -> tuple[str, dict[str, float]]:
+    """G4 selection: the candidate with the lowest Brier on val `eval` examples (a missing probability scores as p0)."""
+    require_part(examples, "eval", "selection")
+    limits = limits or Limits()
+    scores = {}
+    for name, system in candidates.items():
+        sq = []
+        for e in examples:
+            v = system.investigate(e["alert"], e["tools"], limits)
+            p = e["alert"].p0 if v.probability is None else v.probability
+            sq.append((p - float(e["label"])) ** 2)
+        scores[name] = sum(sq) / len(sq)
+    return min(scores, key=scores.get), scores
+
+
 def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, auto: str = "light", seed: int = 0,
-             num_threads: int = 1):  # pragma: no cover - needs val alerts through the harness and the endpoint
-    """MIPROv2 over `examples`: dicts {"alert": AlertContext, "tools": ToolBox, "label": 0/1} (validation only).
+             num_threads: int = 1, compute_log: str | Path | None = None):  # pragma: no cover - needs val alerts and the endpoint
+    """MIPROv2 over `examples`: dicts {"alert": AlertContext, "tools": ToolBox, "label": 0/1, "part": "fit"} (val `fit` only).
 
     The program sees only case, tools_help and alert_id; the alert's ToolBox is looked up by alert_id, so tools bind
     per call. The task model is budgeted per example. Returns the compiled ReAct (save it with `.save(path)` and
-    pass `program_path=` to DspyReact).
+    pass `program_path=` to DspyReact). When `compute_log` is given, one JSON line (calls, tokens, wall seconds of the
+    whole MIPROv2 run) is appended to it.
     """
-    import dspy
-
-    limits = limits or Limits()
-    base = build_program(limits.max_llm_calls - 1)
+    require_part(examples, "fit", "MIPROv2 tuning")
     if any(e["alert"].split == "test" for e in examples):
         raise ValueError("DSPy tuning uses validation alerts only (tuning parity, plan.md 7.2)")
+    import dspy
+
+    t0 = time.perf_counter()
+    llm = CountingClient(llm)
+    limits = limits or Limits()
+    base = build_program(limits.max_llm_calls - 1)
     registry = {e["alert"].alert_id: (e["alert"], e["tools"]) for e in examples}
-    dsl = ProvisionalDsl()
+    dsl = V0Dsl()
     trainset = [dspy.Example(case=case_text(e["alert"], str(e["alert"].summary.get("evidence", ""))),
                              tools_help=tools_doc(dsl, list(e["alert"].summary.get("partner_banks", [])), limits.eps_per_alert),
                              alert_id=e["alert"].alert_id, label=e["label"]).with_inputs("case", "tools_help", "alert_id")
@@ -170,4 +220,10 @@ def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, a
 
     opt = dspy.MIPROv2(metric=brier_metric, prompt_model=client_lm(llm), task_model=client_lm(llm), auto=auto,
                        seed=seed, num_threads=num_threads)  # fmt: skip
-    return opt.compile(Bound(), trainset=trainset, requires_permission_to_run=False).react
+    program = opt.compile(Bound(), trainset=trainset, requires_permission_to_run=False).react
+    if compute_log is not None:
+        rec = {"stage": "dspy_mipro_optimize", "part": "fit", "n_examples": len(examples), "auto": auto, "seed": seed,
+               "wall_seconds": time.perf_counter() - t0, **llm.totals()}  # fmt: skip
+        with Path(compute_log).open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    return program

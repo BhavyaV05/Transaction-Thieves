@@ -20,14 +20,14 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] metrics + bootstrap code. **G1**
 
 ## Week 3
-- [ ] Ceiling checks with Bhavya. **G2**
+- [x] Ceiling checks with Bhavya. **G2**
 
 ## Week 4
 - [ ] **Pre-register thresholds**
 - [ ] lock external list. **G3**
 
 ## Week 5
-- [ ] Compliance gate + regulatory RAG
+- [x] Compliance gate + regulatory RAG
 - [ ] **Torres port**
 
 ## Week 6

@@ -12,7 +12,8 @@ Adaptations, fixed before any run (fairness protocol, plan.md 7.2):
   - Trials share ONE eps budget, ONE call cap and the same Investigation: bank answers already received are real
     facts, so the next trial sees them (and repeats are refused). The environment cannot be reset as in the paper.
   - At most `max_trials` (default 3) trials; a new trial needs at least `min_calls_for_retry` calls left.
-End-to-end probability = finish[...] of the last trial that finished; None if none did.
+End-to-end probability = finish[...] of the last trial that finished; None if none did. Verdict.trials records how
+many trials ran on the alert (the runner writes it to traces.jsonl and summary.json).
 """
 
 from __future__ import annotations
@@ -62,9 +63,10 @@ class Reflexion(React):
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         session, budget, ex = self.start(alert, tools, limits, self.name)
         memory: list[str] = []
-        final, step = None, 0
+        final, step, trials = None, 0, 0
         for trial in range(1, self.max_trials + 1):
             ex.finished = None
+            trials = trial
             preface = ""
             if memory:
                 preface += "Reflections from your earlier attempts on this alert:\n" + "\n".join(f"- {m}" for m in memory) + "\n\n"
@@ -89,4 +91,6 @@ class Reflexion(React):
                 break
             memory.append(lesson.replace("\n", " ")[:600])
         self.last_trace = ex.log + [{"reflections": memory}]
-        return session.verdict(final, budget.usage)
+        v = session.verdict(final, budget.usage)
+        v.trials = trials
+        return v
