@@ -121,8 +121,15 @@ def synthetic_alerts(n: int, seed: int, labelled: bool = False) -> list[tuple[Al
     return out
 
 
+def sample_order(height: int, seed: int, n: int, offset: int = 0) -> list[int]:
+    """The seeded shuffle of alert rows; chunk i of a long run takes rows [offset, offset + n), so chunks never overlap."""
+    order = list(range(height))
+    random.Random(seed).shuffle(order)
+    return order[offset:offset + n]
+
+
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
-                only_ids: set[str] | None = None) -> list[tuple[AlertContext, int | None]]:
+                only_ids: set[str] | None = None, offset: int = 0) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
     Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`."""
     from ftm.data import alias, io
@@ -137,12 +144,10 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         alerts = alerts.filter(pl.col("val_part") == val_part)
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
-    order = list(range(alerts.height))
-    random.Random(seed).shuffle(order)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
     banks = io.read_banks(cfg["views_dir"])["bank"].to_list()
     out = []
-    for i in order[:n]:
+    for i in sample_order(alerts.height, seed, n, offset):
         a = alerts.row(i, named=True)
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
@@ -273,6 +278,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
+    ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")
     ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
@@ -363,7 +369,7 @@ def main(argv: list[str] | None = None) -> int:
         if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
-        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids)
+        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset)
         if variant == "harness":  # offer only banks the harness can answer for (the first run offered 29, the world has 27)
             world = modelled_banks(tools)
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
