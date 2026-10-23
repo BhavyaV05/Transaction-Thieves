@@ -38,6 +38,8 @@ from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
+from ftm.external.sharma import Sharma  # noqa: E402
+from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
 from ftm.library.shape import shape_from_rows  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
@@ -49,6 +51,10 @@ from ftm.planners.llm_prompt import Mode  # noqa: E402
 from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
+GROUP_C = {  # T4 ports (Group C, native and ported modes)
+    "sharma_native": lambda llm, **kw: Sharma(llm, mode="native", **kw),
+    "sharma_ported": lambda llm, **kw: Sharma(llm, mode="ported", **kw),
+}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
            "dspy_react": DspyReact}
 
@@ -132,7 +138,7 @@ def verdict_rows(v: Verdict, base: dict, label: int | None) -> list[dict]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--system", choices=["planner", *GROUP_D], default="planner")
+    ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
     ap.add_argument("--data", default="hi_small")
@@ -159,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     elif a.llm == "endpoint":
         llm = HttpChatClient.from_env()
     else:
-        llm = MockLLM(responder=dev_responder)
+        llm = MockLLM(responder=sharma_dev_responder if a.system in GROUP_C else dev_responder)
     model = getattr(llm, "model", "mock")
     if a.record:
         llm = RecordingClient(llm, a.record)
@@ -170,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
                             use_library=a.library is not None, keep_prompts=a.keep_prompts)
         system_name = system.system_name
     else:
-        system = GROUP_D[a.system](llm, seed=a.seed, extra=extra)
+        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra)
         system_name = a.system
     alerts = synthetic_alerts(a.n, a.seed) if a.alerts == "synthetic" else data_alerts(a.data, a.alerts, a.n, a.seed, a.k)
     tools = make_toolbox(a.toolbox, a.seed)
