@@ -19,7 +19,7 @@ Team **Cache me if you can** (LMA Group Project 2026). Banks see only their own 
 |---|---|---|---|---|
 | **T1** Data, detection models, retrieval | Abhishek | `data`, `baselines`, `intake`, `retrieval` | `prepare_data`, `train_gfp`, `train_gnn`, `make_alerts`, `train_federated` | [`tasks/T1_abhishek.md`](tasks/T1_abhishek.md) |
 | **T2** Banks, questions, back-testing | Bhavya | `banks`, `dsl`, `privacy`, `backtest`, `planners` (all but `llm.py`), `agent`, `harness`, `external/{co_investigator,finfre_rag}` | `backtest`, `run_experiment` | [`tasks/T2_bhavya.md`](tasks/T2_bhavya.md) |
-| **T3** LLM planner, fine-tuning, agent frameworks | Akshat | `llm`, `planners/llm.py`, `library`, `fastmodel`, `external/{react,reflexion,rewoo,lats,llmcompiler,dspy_react}` | `serve_llm`, `bench_llm`, `train_planner` | [`tasks/T3_akshat.md`](tasks/T3_akshat.md) |
+| **T3** LLM planner, fine-tuning, agent frameworks | Akshat | `llm`, `planners/llm*.py`, `retrieval/views.py` (stub, until week 4), `library`, `fastmodel`, `external/{react,reflexion,rewoo,lats,llmcompiler,dspy_react}` | `serve_llm`, `bench_llm`, `run_llm_agent`, `build_library`, `train_planner` | [`tasks/T3_akshat.md`](tasks/T3_akshat.md) |
 | **T4** Rules, safety, evaluation, domain agents | Shreyas | `compliance`, `fusion`, `decision`, `safety`, `eval`, `external/{torres,sharma,debate_autogen,uot,bed_llm}` | `run_final` | [`tasks/T4_shreyas.md`](tasks/T4_shreyas.md) |
 
 Every module's docstring names its owner, plan section, tier and first steps. Review pairs: T1 ↔ T2, T3 ↔ T4.

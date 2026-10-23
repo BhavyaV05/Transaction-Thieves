@@ -14,7 +14,8 @@
 #   only thresholds or multiples of the alerted amount.
 # kind:        bool | count | kary | set_count (ftm.types.AnswerKind)
 # sensitivity: change of the true answer when one transaction is added or removed (the DP protection unit).
-#              Draft values; T2's sensitivity function is authoritative.
+#              T2's sensitivity function (ftm.dsl) is authoritative; values here were checked against it (2026-10-23).
+# status:      ok (default) | restricted (registered in the DSL but never askable)
 # expect:      direction we expect for laundering vs clean, which back-testing then confirms or rejects.
 
 families:
@@ -264,7 +265,7 @@ families:
     typologies: [bipartite, scatter_gather]
     kind: count
     sensitivity: 0   # a property of the customer record, not of transactions
-    status: needs_privacy_review   # transaction-level DP does not cover customer records; T2 + T4 decide whether it may be asked
+    status: restricted   # decided (T2 + T4, 2026-10-23): not askable. Transaction-level DP does not cover customer records
     template: "How many accounts does SUBJ's entity hold at the partner bank?"
     expect: "higher for laundering"
     variants:
@@ -273,7 +274,7 @@ families:
     red_flags: [RF-US-26, RF-US-27]
     typologies: [stack, bipartite]
     kind: count
-    sensitivity: 1
+    sensitivity: 3   # = chain_length's max_hops (one added transfer can join two chains); T2's DSL is authoritative
     template: "Following the money from SUBJ through accounts at the same partner bank, within {window_h} h after the alert, how many hops long is the longest chain?"
     expect: "longer for laundering (layering inside one bank)"
     variants:

@@ -1,6 +1,5 @@
 """T1: conformal intake, alert drop rules, locked subset, p0 schema. Synthetic data only."""
 
-from datetime import datetime, timedelta
 
 import numpy as np
 import polars as pl
@@ -66,17 +65,13 @@ def test_fixed_window():
     assert conformal.fixed_window([0.1, 0.15, 0.5, 0.85, 0.9]).tolist() == [False, True, True, True, False]
 
 
-def test_drop_rules():
-    t0 = datetime(2022, 9, 7)
-    a = pl.DataFrame({
-        "alert_id": [1, 2, 3, 4], "attempt_id": [10, 11, None, 10],
-        "timestamp": [t0 + timedelta(hours=h) for h in (100, 100, 100, 10)], "split": ["val"] * 4,
-    })  # fmt: skip
+def test_span_flag_only_never_filters():
+    a = pl.DataFrame({"alert_id": [1, 2, 3, 4], "attempt_id": [10, 11, None, 10]})
     sp = pl.DataFrame({"attempt_id": [10, 11], "spans_split": [True, False]})
-    out = alerts.add_drop_flags(a, sp, {"val": t0}, window_hours=72).sort("alert_id")
-    assert out["drop_spans_split"].to_list() == [True, False, False, True]
-    assert out["drop_window"].to_list() == [False, False, False, True]  # 10 h after the split start < 72 h
-    assert out["keep"].to_list() == [False, True, True, False]
+    out = alerts.add_span_flag(a, sp).sort("alert_id")
+    assert out.height == 4  # nothing dropped
+    assert out["spans_split"].to_list() == [True, False, False, True]
+    assert set(out.columns) == {"alert_id", "attempt_id", "spans_split"}  # no drop_window / keep: the 72 h rule is gone
 
 
 def test_project_test_count():
@@ -94,11 +89,11 @@ def _toy_alerts(n=3000, seed=0):
 def test_stratified_subset_is_locked_and_works_with_flag(monkeypatch):
     monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
     with pytest.raises(guards.TestSplitLocked):
-        alerts.stratified_subset(_toy_alerts())
+        alerts.stratified_subset(_toy_alerts(), strata="label_typology_bank")
     monkeypatch.setenv("FTM_FINAL_RUN", "1")
     a = _toy_alerts()
-    s1 = alerts.stratified_subset(a, n=200, seed=3)
-    s2 = alerts.stratified_subset(a, n=200, seed=3)
+    s1 = alerts.stratified_subset(a, n=200, seed=3, strata="label_typology_bank")
+    s2 = alerts.stratified_subset(a, n=200, seed=3, strata="label_typology_bank")
     assert s1.height == 200 and s1["alert_id"].n_unique() == 200
     assert s1["alert_id"].sort().to_list() == s2["alert_id"].sort().to_list()  # seeded
     # proportional: the label share is close to the population share
@@ -107,3 +102,28 @@ def test_stratified_subset_is_locked_and_works_with_flag(monkeypatch):
     key = ["label", "typology", "bank"]
     strata = lambda d: set(d.with_columns(pl.col("typology").fill_null("none")).select(key).rows())  # noqa: E731
     assert strata(s1) == strata(a)
+
+
+def _toy_alerts_p0(n=4000, seed=1):
+    rng = np.random.default_rng(seed)
+    return pl.DataFrame({"alert_id": np.arange(n), "bank": rng.choice([1, 2, 3, 4], n, p=[0.5, 0.3, 0.15, 0.05]), "p0": rng.random(n) ** 2})
+
+
+def test_strata_default_is_label_free_and_locked(monkeypatch):
+    a = _toy_alerts_p0()  # no label / typology columns at all
+    monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
+    with pytest.raises(guards.TestSplitLocked):
+        alerts.stratified_subset(a)
+    monkeypatch.setenv("FTM_FINAL_RUN", "1")
+    s1 = alerts.stratified_subset(a, n=300)
+    s2 = alerts.stratified_subset(a, n=300)
+    assert s1.height == 300 and s1["alert_id"].n_unique() == 300
+    assert s1["alert_id"].sort().to_list() == s2["alert_id"].sort().to_list()  # seed 0 by default
+    assert s1["alert_id"].sort().to_list() != alerts.stratified_subset(a, n=300, seed=1)["alert_id"].sort().to_list()
+    key = ["bank", "p0_decile"]
+    assert set(s1.select(key).rows()) == set(alerts.stratified_subset(a, n=4000).select(key).rows())  # every stratum present
+    assert sorted(s1["p0_decile"].unique().to_list()) == list(range(10))
+    # proportional: the share of the largest bank is close to its share in the population
+    assert abs((s1["bank"] == 1).mean() - (a["bank"] == 1).mean()) < 0.05
+    # p0 does not depend on a label, so shuffling labels cannot change the subset
+    assert alerts.stratified_subset(a.with_columns(pl.lit(0).alias("label")), n=300)["alert_id"].sort().to_list() == s1["alert_id"].sort().to_list()

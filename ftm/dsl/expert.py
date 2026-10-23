@@ -64,7 +64,7 @@ def expert_programs(subject: str = "receiver", specs: list[dict] | None = None) 
     out = []
     for fam in specs if specs is not None else load_specs():
         name = fam["family"]
-        if name in SKIPPED or fam.get("status") == "needs_privacy_review":
+        if name in SKIPPED or fam.get("status") in ("needs_privacy_review", "restricted"):
             continue
         build = _BUILDERS[name]
         for variant in fam["variants"]:

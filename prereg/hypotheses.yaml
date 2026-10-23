@@ -6,6 +6,13 @@
 status: draft
 version: 0
 
+privacy:                            # configs/privacy/default.yaml (T2); fixed here before G3
+  protection_unit: transaction
+  eps_per_alert: 2.0                 # H1 is tested at this value
+  eps_levels: [0.25, 0.5, 1.0, 2.0]
+  per_account_cap: 8.0               # PROVISIONAL (T4 + T2, 2026-10-23): revisit when T1's repeat-account stats arrive; E14 sweeps it
+  restricted_questions: [entity_accounts]   # customer-record answers are outside transaction-level DP
+
 statistics:
   bootstrap: {resamples: 10000, seed: 0, level: 0.95, unit: cluster}
   clusters: attempt+accounts        # ftm.eval.bootstrap.cluster_ids; HI-Small val alerts: largest share 0.03 (T1, 2026-10-19)
