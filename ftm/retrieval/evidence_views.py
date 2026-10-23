@@ -91,7 +91,7 @@ def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: st
         al = al.head(limit)
     scores = pl.read_parquet(Path("data/retrieval") / ds / "edge_scores.parquet") if prize_source == "scorer" else None  # time-guard: not transactions
     pat = io.scan_patterns(pq, split=["train", "val"]).select("tx_id", "attempt_id").collect()
-    by_att = {a: set(g["tx_id"].to_list()) for a, g in pat.group_by("attempt_id")}
+    by_att = {a: set(g["tx_id"].to_list()) for (a,), g in pat.group_by("attempt_id")}
     rows, t0 = [], time.time()
     for r in al.iter_rows(named=True):
         cand = candidates(cfg, r["bank"], r["timestamp"])

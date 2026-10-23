@@ -42,6 +42,10 @@ def test_greedy_trail_is_always_a_trail_and_respects_k():
 
 def test_pcst_picks_the_high_prize_path_through_cheap_connectors():
     pytest.importorskip("pcst_fast")
+    try:
+        pcst.check_binding()
+    except RuntimeError as e:
+        pytest.skip(str(e))  # CI's gnn extra installs the unpatched wheel
     # alert 0->1, then 1->2 (low prize connector), 2->3 (high), 3->4 (high); far edge 7->8 high prize but unreachable
     src = np.array([0, 1, 2, 3, 7])
     dst = np.array([1, 2, 3, 4, 8])
@@ -51,6 +55,17 @@ def test_pcst_picks_the_high_prize_path_through_cheap_connectors():
     t = np.array([4.0, 3.0, 2.0, 1.0, 1.0])
     sel, pc = pcst.select_pcst_trail(src, dst, t, prize, 0, k=4)
     assert sel[:4].all() and not sel[4] and pc[:4].all()
+
+
+def test_binding_guard_fires_on_garbage(monkeypatch):
+    pytest.importorskip("pcst_fast")
+    import pcst_fast
+
+    pcst.check_binding.cache_clear()
+    monkeypatch.setattr(pcst_fast, "pcst_fast", lambda *a: (np.zeros(4, np.int64), np.zeros(3, np.int64)))
+    with pytest.raises(RuntimeError, match="pcst_fast_binding.patch"):
+        pcst.check_binding()
+    pcst.check_binding.cache_clear()
 
 
 def _view_dir(tmp_path):
@@ -75,6 +90,11 @@ def test_candidates_stop_at_as_of_and_window_and_never_return_test(tmp_path, mon
 
 
 def test_select_views_k_alert_included_and_aliased(tmp_path):
+    pytest.importorskip("pcst_fast")
+    try:
+        pcst.check_binding()
+    except RuntimeError as e:
+        pytest.skip(str(e))
     rng = np.random.default_rng(1)
     n, t0 = 400, datetime(2022, 9, 1)
     cand = pl.DataFrame({

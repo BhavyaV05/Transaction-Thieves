@@ -52,13 +52,13 @@ def val_cut(pq) -> tuple:
     return v["a"][0], v["b"][0]
 
 
-def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_epochs: int, clone: Path, cm: str, workers: int, ckpt):
+def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_epochs: int, clone: Path, cm: str, workers: int, ckpt, batch_size: int = 2048):
     """Train + score one graph, calibrate on the val `fit` part, return (p0 table of the val rows, metadata)."""
     frame = frame.sort(["timestamp", "tx_id"])
     sp = frame["split"].to_numpy()
     part = np.full(frame.height, "", dtype="U4")
     part[sp == "val"] = g.val_parts(frame["timestamp"].filter(pl.Series(sp == "val")), *cut)
-    res = multi_gnn.train_and_score(frame, clone, budget_s, max_epochs, part == "fit", num_workers=workers, log=log, ckpt=ckpt)
+    res = multi_gnn.train_and_score(frame, clone, budget_s, max_epochs, part == "fit", num_workers=workers, log=log, ckpt=ckpt, batch_size=batch_size)
     v = frame.filter(pl.col("split") == "val")
     raw, y, vpart = res["raw"], v["is_laundering"].cast(pl.Int8).to_numpy(), part[sp == "val"]
     ok, fit = ~np.isnan(raw), vpart == "fit"
@@ -82,13 +82,13 @@ def our_split(a) -> None:
     out = Path("data/scores") / a.data
     out.mkdir(parents=True, exist_ok=True)
     Path("data/runs").mkdir(exist_ok=True)
-    meta = {"dataset": a.data, "mode": a.mode, "commit": cm, "seed": 1, "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}, "skipped": {}}
+    meta = {"dataset": a.data, "mode": a.mode, "commit": cm, "seed": 1, "batch_size": a.batch_size, "neighbours": list(multi_gnn.N_NEIGHS), "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}, "skipped": {}}
     t0, parts = time.time(), []
     ckdir = Path("models/multi_gnn")  # gitignored
     ckdir.mkdir(parents=True, exist_ok=True)
     if a.mode == "see_everything":
         frame = io.scan_transactions(pq, split=["train", "val"], columns=cols).collect()
-        tab, m = run_graph(frame, cut, a.mode, None, a.budget_s, a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_see.pt")
+        tab, m = run_graph(frame, cut, a.mode, None, a.budget_s, a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_see.pt", a.batch_size)
         meta["graphs"]["all"] = m
         parts.append(tab)
     else:
@@ -106,7 +106,7 @@ def our_split(a) -> None:
         size = {b: f.filter(pl.col("split") == "train").height for b, f in frames.items()}
         for b, f in frames.items():
             share = a.budget_s * size[b] / sum(size.values())
-            tab, m = run_graph(f, cut, a.mode, b, max(share, 90.0), a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_bank{b}.pt")
+            tab, m = run_graph(f, cut, a.mode, b, max(share, 90.0), a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_bank{b}.pt", a.batch_size)
             meta["graphs"][str(b)] = m
             parts.append(tab)
             log(f"bank {b} done, {time.time() - t0:.0f}s")
@@ -187,6 +187,7 @@ def main() -> None:
     ap.add_argument("--mode", choices=["see_everything", "one_bank"], default="see_everything")
     ap.add_argument("--banks", type=int, nargs="*", default=None)
     ap.add_argument("--max-epochs", type=int, default=30)
+    ap.add_argument("--batch-size", type=int, default=2048, help="2048 = reproduction config; 1024 if VRAM is short")
     ap.add_argument("--workers", type=int, default=0, help="LinkNeighborLoader workers")
     ap.add_argument("--clone", default="~/Documents/t1_external/Multi-GNN")
     ap.add_argument("--budget-s", type=int, default=8700, help="stop after the epoch that passes this many seconds")

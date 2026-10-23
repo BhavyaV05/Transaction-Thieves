@@ -87,8 +87,8 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     Train graph = train edges only. Val edges are scored on the graph of train+val edges (the paper's setup for
     validation), so a val edge's neighbourhood can contain later val edges: a look-ahead of the whole val split
     (reported in ftm/baselines/README.md). Epoch selection uses a weighted AP on all fit positives and 10% of the
-    fit negatives. `fit_mask` is a bool array over `frame` rows (val `fit` rows). The model is trained in `train()`
-    mode and scored in `eval()` mode (dropout off, running batch-norm statistics).
+    fit negatives. `fit_mask` is a bool array over `frame` rows (val `fit` rows). The model is always scored in `eval()`
+    mode (dropout off, running batch-norm statistics).
     """
     import json
 
@@ -114,11 +114,13 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     t0 = time.time()
     tr, mean, std = _hetero(ei[:, :ntr], ea[:ntr], y[:ntr], n_nodes, ns)
     va, _, _ = _hetero(ei, ea, y, n_nodes, ns, mean, std)
-    add_arange_ids([tr, va])
+    key = ("node", "to", "node")
+    add_arange_ids([tr, va])  # column 0 of edge_attr (float32, stripped before the model); exact int64 ids go to `eid`
+    for d in (tr, va):
+        d[key].eid = torch.arange(d[key].edge_index.shape[1])
     log(f"graphs built in {time.time() - t0:.0f}s: train {ntr} edges, train+val {len(y)} edges, {n_nodes} nodes")
     dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     kw = dict(num_neighbors=ns.num_neighs, batch_size=batch_size, transform=AddEgoIds(), num_workers=num_workers, persistent_workers=num_workers > 0)
-    key = ("node", "to", "node")
 
     def loader(data, pos, shuffle):
         pos = torch.as_tensor(pos)
@@ -131,16 +133,17 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
 
     def prep(batch, seeds):
         """mask of the batch's seed edges and their graph positions; strips the id column in place."""
-        ids = batch[key].edge_attr[:, 0].long()
+        ids = batch[key].eid  # int64: float32 edge_attr ids would be exact only up to 16.7M edges (HI-Medium has 31.9M)
         mask = torch.isin(ids, seeds)
         batch[key].edge_attr = batch[key].edge_attr[:, 1:]
         batch["node", "rev_to", "node"].edge_attr = batch["node", "rev_to", "node"].edge_attr[:, 1:]
         return mask, ids
 
     @torch.no_grad()
-    def score(pos, model_eval=True):
-        """P(laundering) for graph positions `pos` (val edges), NaN where a seed edge was not in its sampled subgraph."""
-        model.train(not model_eval)
+    def score(pos):
+        """P(laundering) for graph positions `pos` (val edges), NaN where a seed edge was not in its sampled subgraph.
+        Always in eval() mode: no dropout, batch-norm running statistics."""
+        model.eval()
         out = np.full(len(y), np.nan, dtype="f4")
         lo = loader(va, pos, False)
         for batch in lo:
@@ -158,12 +161,12 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     sel = fpos[(y[fpos] == 1) | (rng.random(len(fpos)) < 0.1)]
     sw = np.where(y[sel] == 1, 1.0, 10.0)
 
-    def fit_ap(model_eval):
-        p = score(sel, model_eval)[sel]
+    def fit_ap():
+        p = score(sel)[sel]
         ok = ~np.isnan(p)
         return float(average_precision_score(y[sel][ok], p[ok], sample_weight=sw[ok])) if y[sel][ok].sum() else 0.0, int((~ok).sum())
 
-    hist, best = [], (-1.0, None, None)
+    hist, best = [], (-1.0, None)
     t_start = time.time()
     for ep in range(max_epochs):
         model.train()
@@ -181,21 +184,19 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
             if nb % 200 == 0 and time.time() - t_start > budget_s:
                 stop = True
                 break
-        ap_e, miss_e = fit_ap(True)
-        ap_t, _ = fit_ap(False)
-        rec = {"epoch": ep, "batches": nb, "loss": tot / max(nb, 1), "fit_ap_eval_mode": ap_e, "fit_ap_train_mode": ap_t,
+        ap_e, miss_e = fit_ap()
+        rec = {"epoch": ep, "batches": nb, "loss": tot / max(nb, 1), "fit_ap": ap_e,
                "seed_edges_not_sampled": miss_e, "elapsed_s": time.time() - t_start, "partial": stop}  # fmt: skip
         hist.append(rec)
         log(json.dumps(rec))
-        mode_eval = ap_e >= ap_t
-        if max(ap_e, ap_t) > best[0]:
-            best = (max(ap_e, ap_t), mode_eval, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+        if ap_e > best[0]:
+            best = (ap_e, {k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
             if ckpt is not None:
-                torch.save({"epoch": ep, "state": best[2], "eval_mode": mode_eval}, ckpt)
+                torch.save({"epoch": ep, "state": best[1]}, ckpt)
         if stop or time.time() - t_start > budget_s:
             break
-    model.load_state_dict(best[2])
-    raw = score(vpos, best[1])[vpos]
-    return {"raw": raw, "tx_id": txid[vpos], "history": hist, "best_fit_ap": best[0], "eval_mode": bool(best[1]),
+    model.load_state_dict(best[1])
+    raw = score(vpos)[vpos]
+    return {"raw": raw, "tx_id": txid[vpos], "history": hist, "best_fit_ap": best[0],
             "n_not_scored": int(np.isnan(raw).sum()), "train_edges": ntr, "train_pos": int(y[:ntr].sum()),
             "seconds": time.time() - t0}  # fmt: skip

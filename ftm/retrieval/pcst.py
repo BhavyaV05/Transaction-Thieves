@@ -13,6 +13,7 @@ imported inside the function so CI without it still runs the rest.
 
 from __future__ import annotations
 
+import functools
 import heapq
 
 import numpy as np
@@ -108,6 +109,24 @@ def greedy_trail(src, dst, t, prize, alert: int, k: int, allowed=None) -> np.nda
     return chosen
 
 
+@functools.cache
+def check_binding() -> None:
+    """Solve a tiny known instance and raise if `pcst_fast` returns wrong index arrays.
+
+    The pcst_fast 1.0.10 wheel declares int32 result arrays but fills int64, so the indices come back as garbage (no error).
+    Fix: build from the sdist with `ftm/retrieval/pcst_fast_binding.patch` (see ftm/retrieval/README.md).
+    """
+    from pcst_fast import pcst_fast
+
+    # path 0-1-2-3, prize only at the ends, unit costs: the whole path is the optimum
+    nodes, edges = pcst_fast(np.array([[0, 1], [1, 2], [2, 3]], np.int64), np.array([10.0, 0, 0, 10.0]), np.ones(3), 0, 1, "gw", 0)
+    if sorted(np.asarray(nodes).tolist()) != [0, 1, 2, 3] or sorted(np.asarray(edges).tolist()) != [0, 1, 2]:
+        raise RuntimeError(
+            "pcst_fast returns wrong index arrays (unpatched 1.0.10 wheel). Rebuild it from the sdist with "
+            "ftm/retrieval/pcst_fast_binding.patch applied (pip install --no-build-isolation --no-deps)."
+        )
+
+
 def pcst_edges(src, dst, prize, alert: int, edge_cost: float = 0.05, root_prize: float = 1e3) -> np.ndarray:
     """Bool mask of the edges `pcst_fast` selects (G-Retriever construction), rooted at the alerted edge's sender.
 
@@ -117,6 +136,7 @@ def pcst_edges(src, dst, prize, alert: int, edge_cost: float = 0.05, root_prize:
     """
     from pcst_fast import pcst_fast
 
+    check_binding()
     src, dst, prize = np.asarray(src), np.asarray(dst), np.asarray(prize, "f8")
     nodes, inv = np.unique(np.concatenate([src, dst]), return_inverse=True)
     u, v = inv[: len(src)], inv[len(src) :]
