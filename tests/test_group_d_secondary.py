@@ -57,6 +57,28 @@ def test_lats_executes_best_child_and_backtracks_on_failure():
     assert llm.requests[0]["temperature"] == 0.7 and llm.requests[0]["seed"] != llm.requests[1]["seed"]
 
 
+def test_lats_stale_sibling_is_dropped_after_a_successful_step():
+    stale = "Thought: old\nAction: finish[0.99]"
+    llm = MockLLM(script=[
+        f"Thought: a\nAction: ask_bank[220 | 0.5 | {Q1}]", stale,      # step 1 children
+        "Candidate 1: 9\nCandidate 2: 8",                              # the sibling outscores the later children
+        "Thought: c\nAction: finish[0.3]", "Thought: d\nAction: finish[0.2]",  # step 2 children
+        "Candidate 1: 1\nCandidate 2: 1",
+    ])  # fmt: skip
+    v = Lats(llm, n_children=2).investigate(ALERT, ScriptedToolBox([reply(220, 0.4)]), Limits())
+    assert v.probability == 0.3 and v.llm_calls == 6  # the old sibling (0.99) never ran
+
+
+def test_lats_reexpands_when_all_siblings_fail():
+    llm = MockLLM(script=[
+        f"Thought: a\nAction: ask_bank[220 | 0.5 | {Q1}]", f"Thought: b\nAction: ask_bank[220 | 0.5 | {Q2}]",
+        "Candidate 1: 9\nCandidate 2: 8",
+        "Thought: c\nAction: finish[0.4]", "Thought: d\nAction: finish[0.5]", "Candidate 1: 9\nCandidate 2: 1",
+    ])  # fmt: skip
+    v = Lats(llm, n_children=2).investigate(ALERT, ScriptedToolBox([Decline("220"), Decline("220")]), Limits())
+    assert v.probability == 0.4 and v.llm_calls == 6
+
+
 def test_lats_respects_call_cap():
     v = Lats(MockLLM(script=["Thought: x"] * 50), n_children=3).investigate(ALERT, ScriptedToolBox(), Limits(max_llm_calls=9))
     assert v.llm_calls <= 9 and v.probability is None
