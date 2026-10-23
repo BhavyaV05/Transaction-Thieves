@@ -232,8 +232,9 @@ Source: Kaggle (CDLA-Sharing). Files: transactions CSV, accounts CSV, and `*_Pat
 1. **Download and convert** to Parquet with typed columns; parse the timestamp; assign a stable `tx_id`.
 2. **Parse the pattern file:** map each laundering transaction to `(attempt_id, typology)`. This gives labels for "which pattern" and "edge in a laundering pattern".
 3. **Temporal split (HI-Medium):** days 1–9 train, 10–12 validation, 13–16 test.
+   - The sparse tail after day 16 (late legs of long attempts, mostly laundering) is kept in test but **reported separately and never pooled** into headline numbers (`docs/t4_decisions_week2.md` item 4).
    - HI-Small: check its actual date range and split in the same proportions.
-   - Drop an alert if its laundering attempt spans a split boundary, or if its 72-hour evidence window starts before the split.
+   - No alert is dropped for its evidence window reaching into an earlier split: that is past data, available at `as_of`. Alerts whose laundering attempt spans a split boundary are **flagged, not dropped**; headline numbers use all alerts, and the kept-only subset is a sensitivity analysis (item 3).
 4. **Bank views:** pick the 30 largest banks by transaction count. View(b) = transactions where `from_bank == b` or `to_bank == b`. Store each view as Parquet.
 5. **Aliasing:** map account IDs to random aliases (per run seed) for anything an LLM reads. Keep the mapping server-side only.
 6. **Time guard:** all tool queries take an `as_of` timestamp and filter `timestamp ≤ as_of`. Unit tests check this for every tool.
@@ -282,7 +283,7 @@ Each component lists **what it does**, **how we build it**, and **done when** (a
 - **What:** decides which transactions are "unsure" and become alerts.
 - **Build:**
   1. **Class-conditional (Mondrian) conformal prediction** on the one-bank score. The non-conformity score is calibrated separately for laundering and clean. This bounds misses among actual launderers; the plain version could meet its target by calling almost everything clean.
-  2. An alert passes when the prediction set is {launder, clean}, i.e. the model can't confidently rule out either answer.
+  2. An alert passes when **launder is in the prediction set**, i.e. the model can't confidently rule out laundering. (No row ever gets both labels at a usable budget, so the literal {launder, clean} rule gives zero alerts; `docs/t4_decisions_week2.md` item 5.) Rows with an empty set are not alerts and count as intake misses in end-to-end numbers.
   3. **Selective conformal risk control** [38] bounds misses among the transactions the model clears on its own.
   4. **Time weighting for drift** [39]: weight recent calibration days more.
   5. Always log the achieved miss rate next to the target.
@@ -419,7 +420,8 @@ All choose questions under the same budget and stop rule:
     | 27–31B dense | Qwen3.8-27B UD-Q3_K_XL GGUF | 27B dense | Q3 GGUF | The model we use for CIBC reasoning; largest that fits Akshat's PC | Core |
     | 27–31B dense | Gemma 4 31B | 31B dense | Q3 GGUF | Top of the Gemma ladder; only if it fits at the context cap | If time |
 
-  - Parity: every candidate gets the same prompt text in its own chat template, the same sampling settings and context cap, and thinking/reasoning mode on with thinking tokens counted in the token cap. No per-model prompt tuning.
+  - Parity: every candidate gets the same prompt text in its own chat template, the same sampling settings and prompt cap, and no per-model prompt tuning.
+  - Thinking mode: **off** for every system by default (planner, Group C and D), so the 8–20 s per-alert target holds; gpt-oss, which cannot fully switch it off, runs at `reasoning_effort: low`. E18 runs all candidates with thinking off. In stage 2 the winner also gets a **thinking-on arm** on the same ≈500 alerts, with a fixed output budget (1,024 tokens per step, counted in tokens and latency). If thinking-on beats off by more than the §9.3 margin and still meets the latency target, it becomes the setting for **every** system.
   - Serving: GGUF models run on llama.cpp, the rest on vLLM, and the run log records which. Once E18 picks a model, its serving stack becomes the fixed stack for all machines.
   - Different parts use different sizes: the fast model (C13) stays small (4B), and only the planner and the external-agent backbone follow E18.
   - Qwen3-8B is the working default until E18 is done. Elsewhere in this plan, "the 8B" means "the planner backbone chosen by E18".
@@ -507,7 +509,7 @@ See §7.1 for the list. How we build them:
 - **Group A (SOTA detection models):** see §6.2.
 - **Group B (federated):**
   - **DP-FedAvg GNN** (Flower + Opacus): 30 clients = 30 bank views, edge-level DP-SGD, ε reported with an explicit caveat. Training-time ε is not the same unit as our per-question ε.
-  - One AML-specific method: Tian et al. [8], Ceydeli et al. [9], FedGraph-VASP, or FC2L. Pick by code availability at G0.
+  - One AML-specific method: **Tian et al. [8]** (the only candidate with code that reads AMLworld HI-Small; no licence, so permission is asked from the authors). Fallback: Ceydeli et al. [9], reimplemented.
 - **Group C (domain agents):**
   - Use official code where released; otherwise reimplement from the paper and label as "reimplementation".
   - Each runs in two modes: **native** (as published, one-bank view, no `ask_bank`) and **ported** (given `ask_bank` + same ε).
@@ -561,7 +563,7 @@ The protocol also requires:
 - **Native vs ported** for domain agents.
 - **Tuning parity:** we fine-tune our planner, so the DSPy-tuned ReAct gets the same validation data.
 - **Evaluation set:**
-  - all external systems run on the frozen 1,000-alert subset
+  - all external systems run on the frozen 1,000-alert subset. Its **rule** (home bank × p₀ decile, no labels, seed 0) is frozen at G3, and the IDs are drawn at G5 before any system runs; the ID hash goes to the run log and `prereg/subset_manifest.txt` (`docs/t4_decisions_week2.md` item 1)
   - the top 2–3 (chosen at G4 on validation) also run on the full test set
   - our system and all ablations run on both, so subset numbers are directly comparable
 
@@ -632,6 +634,9 @@ E18 uses validation only and never touches the test set. The fine-tuned planner 
 - **Gap closed** = [Brier(one bank) − Brier(system)] / [Brier(one bank) − Brier(see everything)].
   - Reported against **both** upper limits: GFP and the best SOTA model.
   - If the denominator is tiny, report raw Brier differences instead.
+- **Two levels, always side by side** (`docs/t4_decisions_week2.md` item 2):
+  - **on alerts** (gap closed above; the agent only sees alerts);
+  - **end-to-end over all rows** (alerts plus auto-cleared rows), with the intake miss rate next to every number, because intake auto-clears most laundering at the alert budget (α ≈ 0.6).
 
 ### 9.2 Full metric set
 
@@ -649,7 +654,9 @@ E18 uses validation only and never touches the test set. The fine-tuned planner 
 
 ### 9.3 Statistics
 - **Cluster bootstrap,** 10,000 resamples. Clusters = laundering attempts + connected account components.
-- **Holm correction:** primary order H1 → H2 → H3 → H4 → H9; secondary corrected separately; exploratory uncorrected and labelled as such.
+- **Holm correction** (step-down by p-value; the order H1 → H2 → H3 → H4 → H9 is for reporting): primary family H1–H4 + H9; secondary corrected separately; exploratory uncorrected and labelled as such.
+- **Clusters:** laundering attempt + shared accounts (largest cluster 3% of HI-Small val alerts). If it passes 20% on HI-Medium val, accounts in more than a fixed number of rows stop linking (hub cap), fixed in `prereg/` before test.
+- **Validation data:** E18, fusion fitting and the G2 check use **HI-Medium** validation alerts; fusion is cross-fitted inside validation (HI-Small val has only 49 positive alerts in its `eval` part).
 - **Equivalence margin:** two planners are "as good as" each other only if their difference is < half the gap between the best simple planner and random.
 - **Power:** with ~4,000 test alerts we can detect Brier improvements of ≈0.011. On the 1,000-alert subset it's ≈0.022, which we state up front.
 - **Error tagging:** every error is tagged with the step where it went wrong. We write up **10 case studies** (good and bad).
@@ -691,8 +698,8 @@ Hardware: four machines (§12.1); default cost is $0. Estimates below are in **r
 | Running our agents (all ablations) | 75–170 GPU-h | ≈28k investigations + ≈4k teacher runs, 8–20 s each |
 | **SOTA GNNs + federated training (new)** | 20–40 GPU-h | Multi-GNN etc. one-bank + see-everything; DP-FedAvg |
 | **External agents (new)** | 40–70 GPU-h | 1k subset × ~10 systems; top 2–3 on full test; LATS/debate token-capped |
-| **Backbone size sweep (E18, new)** | 12–22 GPU-h | Stage 1: up to 8 models × ≈200 val alerts; stage 2: top 3 × ≈500; the 27–31B models are the slowest |
-| **Total GPU** | 172–347 h; **expected ≈190–240 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
+| **Backbone size sweep (E18, new)** | 17–31 GPU-h | Stage 1: up to 8 models × ≈200 val alerts; stage 2: top 3 × ≈500; thinking-on arm for the winner × ≈500 (5–9 h); the 27–31B models are the slowest |
+| **Total GPU** | 177–356 h; **expected ≈195–245 h** | Budget 250 h. Worst case exceeds, so the cut order (§14) applies |
 
 **Where the hours run:**
 
@@ -832,7 +839,7 @@ Secondary items are cut only after all stretch items, starting with the second S
 |---|---|---|---|
 | 1 | Use a frontier API model as backbone on 200–300 alerts? Breaks "$0, all local" | Stretch only; decide at G4 based on budget | G4 |
 | 2 | H9 in the primary tier? | Yes; it's what the instructor asked for, and placing it last in the Holm order leaves H1–H4 unaffected | G0 (TA addendum) |
-| 3 | Which AML-specific federated method? | Whichever has working code: check [8], [9], FedGraph-VASP, FC2L | G0 |
+| 3 | Which AML-specific federated method? | **Decided: Tian et al. [8]**; fallback Ceydeli et al. [9] reimplemented. Email the authors about the licence | Done |
 | 4 | Stream owners | **Assigned (§12.1):** S1 Abhishek, S2 Bhavya, S3 Akshat, S4 Shreyas | Done |
 | 5 | RAM / CPU of each non-reference machine; does Qwen3-8B 4-bit run on the 3070 Ti laptop at the harness context cap? | Test in week 0; the answer decides whether S1 is a second LLM server | G0 |
 | 6 | Where shared large artifacts live (bank views, scores, alert sets, back-test cache) | Rebuild from scripts by default; share the rest through one cloud folder or DVC remote with a hash manifest | Week 1 |
