@@ -53,7 +53,13 @@ from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
 from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
-from ftm.llm.backtest_table import BacktestTableError, load_backtest  # noqa: E402
+from ftm.llm.backtest_table import (  # noqa: E402
+    ACCOUNT_SLOTS,
+    BacktestTableError,
+    accepted_menu,
+    applicable_to,
+    load_backtest,
+)
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
 from ftm.llm.fusion_adapter import FusedLR  # noqa: E402
@@ -174,6 +180,13 @@ def askable_ids(tools) -> set[str]:
     return set(tools._h.bindings)  # noqa: SLF001
 
 
+def modelled_banks(tools) -> set[str]:
+    """Partner banks that exist in the harness world (have a ledger). The bank table lists more banks than the harness
+    models; asking an unmodelled one is refused ("not a partner bank"), so none of them may be offered to any system.
+    Reads the harness's private bank map; T2 to add a public accessor."""
+    return {str(b) for b in tools._h.banks}  # noqa: SLF001
+
+
 def finish_session(v: Verdict, log: list, tools) -> Verdict:
     """The harness's own log replaces the system's (it cannot misreport what it asked); posterior_after, which only the
     system knows, is carried over by matching (bank, program, eps) in order."""
@@ -273,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="assembled back-test dir (scripts/backtest.py --assemble) or its lr_table.jsonl: LRs for fusion; "
                          "realistic mode only (read from the cache entries beside it)")
     ap.add_argument("--backtest-mode", default=None, help="cross-check of the table's mode (read from its cache otherwise)")
+    ap.add_argument("--no-select-menu", action="store_true",
+                    help="planner: do not show the accepted back-tested questions as a select menu (the first-run behaviour)")
     ap.add_argument("--fusion-params", type=Path, default=None,
                     help="Fusion.params() JSON fitted on val (T4): FusedLR over the table; default is the naive summed fusion")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
@@ -318,7 +333,11 @@ def main(argv: list[str] | None = None) -> int:
 
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
     if a.system == "planner":
-        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra, fusion=fusion,
+        menu = []
+        if bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
+            menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
+        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
+                            question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))), seed=a.seed, extra=extra, fusion=fusion,
                             use_library=a.library is not None, keep_prompts=a.keep_prompts,
                             max_output_tokens=a.max_output_tokens)
         system_name = system.system_name
@@ -337,6 +356,10 @@ def main(argv: list[str] | None = None) -> int:
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
         alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids)
+        if variant == "harness":  # offer only banks the harness can answer for (the first run offered 29, the world has 27)
+            world = modelled_banks(tools)
+            alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
+                      for c, y in alerts]  # fmt: skip
     library_hash = None
     if a.library is not None:
         library = StrategyLibrary.load(a.library)
