@@ -87,6 +87,9 @@ class LRTable:
         return cls(LREntry(r["program_canonical"], float(r["eps"]), bool(r["accepted"]), dict(r["lr"]),
                            r.get("family"), tuple(r["bins"]) if r.get("bins") else None) for r in rows)  # fmt: skip
 
+    def entries(self) -> list[LREntry]:
+        return list(self._d.values())
+
     def __len__(self) -> int:
         return len(self._d)
 
@@ -170,6 +173,7 @@ class Investigation:
     posterior: float = field(init=False)
     _asked: set = field(default_factory=set, repr=False)
     _batch: list | None = field(default=None, repr=False)
+    last_refusal: str | None = field(default=None, repr=False)  # the gate / accountant message of the latest refusal
 
     def __post_init__(self):
         self.eps_left = self.limits.eps_per_alert
@@ -187,6 +191,7 @@ class Investigation:
         if key in self._asked:
             raise DuplicateQuestion(f"already asked bank {bank}: {check.canonical}")
         entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+        self.last_refusal = None
         if eps > self.eps_left + 1e-9:
             entry.gate_decision = "over_budget"
         else:
@@ -197,6 +202,7 @@ class Investigation:
                 if decision is None:
                     raise
                 entry.gate_decision = decision
+                self.last_refusal = str(exc)
         if entry.gate_decision == "allowed":
             self._asked.add(key)
             r = entry.response

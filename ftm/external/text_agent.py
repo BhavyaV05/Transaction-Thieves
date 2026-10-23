@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from ftm.harness.interface import ToolBox
 from ftm.llm.investigation import DuplicateQuestion, Investigation, describe
-from ftm.planners.llm_dsl import DslAdapter
+from ftm.planners.llm_dsl import DslAdapter, retry_hint
 from ftm.planners.llm_prompt import EPS_LEVELS, eps_levels
 from ftm.types import AlertContext
 
@@ -127,9 +127,12 @@ class ToolExecutor:
         self.n_questions += 1
         if not check.ok:
             self.n_invalid += 1
-            return f"Invalid question: {check.error}"
+            return f"Invalid question: {check.error}. {retry_hint(program, check.error, self.dsl.reference_text())}"
         try:
             entry = self.session.ask(bank, check, eps, step)
         except DuplicateQuestion as e:
             return f"{e}. Its answer is above; ask something else or finish."
-        return describe(entry) + f" eps left: {self.session.eps_left:g}."
+        obs = describe(entry)
+        if entry.gate_decision != "allowed" and self.session.last_refusal:
+            obs += f" Reason: {self.session.last_refusal}."
+        return obs + f" eps left: {self.session.eps_left:g}."

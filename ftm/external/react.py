@@ -9,7 +9,8 @@ sequence before "Observation", and Finish ending the episode. The tools and the 
 (the paper's exemplars are for other tasks) and are shared by every Group D port. No code is copied.
 
 Same backbone, gate, eps, caps and evidence as every other system (text_agent.py). One LLM call per step.
-End-to-end probability = the number in finish[...]; None if the calls run out first. Questions-only scoring
+End-to-end probability = the number in finish[...]; if the loop ends without one (simulated time or eps used up)
+one of the remaining capped calls asks for it; None only if the calls run out first. Questions-only scoring
 uses the questions log, as for every system.
 """
 
@@ -80,6 +81,25 @@ class React:
                 messages.append({"role": "user", "content": f"Observation {step}: {obs}\nThought {step + 1}:"})
         return step
 
+    def wrap_up(self, messages: list[dict], ex: ToolExecutor, budget: BudgetedClient, step: int) -> None:
+        """The loop ended without finish[p] (simulated time or eps used up, or the model stopped asking) while calls
+        remain: ask once for the final answer. This uses one of the SAME capped calls (never an extra one), and
+        no further question can be asked, so it only turns what was learnt into the answer the system owes."""
+        if ex.finished is not None or budget.calls_left <= 0:
+            return
+        note = ("\n\nNo further question can be asked (time or privacy budget used up). Give your final answer now: "
+                "Action: finish[<probability of laundering, 0 to 1>]")
+        msgs = [*messages[:-1], {**messages[-1], "content": messages[-1]["content"] + note}] if messages[-1]["role"] == "user" \
+            else [*messages, {"role": "user", "content": note.strip() + "\nThought:"}]  # fmt: skip
+        try:
+            resp = budget.chat(msgs, max_tokens=self.max_tokens_per_step, temperature=self.temperature,
+                               stop=["\nObservation", "Observation:"], seed=self.seed, extra=self.extra)  # fmt: skip
+        except (BudgetExceeded, PromptTooLong):
+            return
+        call = parse_tool_call(resp.text.strip())
+        if call is not None and call.tool == "finish":
+            ex.run(call, step + 1)
+
     def first_messages(self, alert: AlertContext, ex: ToolExecutor, preface: str = "") -> list[dict]:
         case = case_text(alert, str(alert.summary.get("evidence", "")))
         return [
@@ -89,6 +109,8 @@ class React:
 
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         session, budget, ex = self.start(alert, tools, limits, self.name)
-        self.episode(self.first_messages(alert, ex), ex, budget)
+        messages = self.first_messages(alert, ex)
+        step = self.episode(messages, ex, budget)
+        self.wrap_up(messages, ex, budget, step)
         self.last_trace = ex.log
         return session.verdict(ex.finished, budget.usage)

@@ -11,6 +11,8 @@ restricted ones (`entity_accounts`) are rejected until T2 and T4 allow them.
 
 from __future__ import annotations
 
+import difflib
+import re
 from typing import Protocol
 
 from ftm.dsl.parser import Check as DslCheck
@@ -35,3 +37,41 @@ class V0Dsl:
 
     def reference_text(self) -> str:
         return reference_text()
+
+
+# -- retry feedback helpers (shared by the planner and the Group D ports) --------------------------------------
+_FN_LINE = re.compile(r"^- (\w+) \[")
+_EG_LINE = re.compile(r"^\s+e\.g\. (.+)$")
+_IDENT = re.compile(r"\w+")
+
+
+def examples_by_function(reference: str) -> dict[str, str]:
+    """function name -> its one example, read from the language description (`reference_text`), so nothing about
+    the language is duplicated here."""
+    out: dict[str, str] = {}
+    current = None
+    for line in reference.splitlines():
+        m = _FN_LINE.match(line)
+        if m:
+            current = m.group(1)
+            continue
+        m = _EG_LINE.match(line)
+        if m and current and current not in out:
+            out[current] = m.group(1).strip()
+    return out
+
+
+def retry_hint(program: str, error: str | None, reference: str, limit: int = 3) -> str:
+    """Feedback for a rejected question: the error plus a valid example of the function the model was trying to use
+    (or the closest function names with their examples when it invented one)."""
+    ex = examples_by_function(reference)
+    m = _IDENT.match((program or "").strip())
+    name = m.group(0) if m else ""
+    if name in ex:
+        return f"Write a full call with a slot and its parameters, like {ex[name]}"
+    close = difflib.get_close_matches(name, list(ex), n=limit, cutoff=0.4) if name else []
+    if not close:
+        close = list(ex)[:limit]
+    return "There is no such function. Valid functions have the form name(ALERT.<slot>, key=value), for example " + "; ".join(
+        ex[c] for c in close
+    )

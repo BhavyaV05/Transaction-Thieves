@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from ftm.llm.investigation import LRTable
+from ftm.llm.investigation import LREntry, LRTable
 
 TABLE_NAME = "lr_table.jsonl"
 PLANNER_EPS_LEVELS = (0.25, 0.5, 1.0, 2.0)  # ftm.planners.llm_prompt.EPS_LEVELS, configs/compliance/gate.yaml
@@ -108,3 +109,43 @@ class TableAcceptance:
     def __call__(self, canonical: str, eps: float) -> bool:
         e = self.bt.table.get(canonical, eps)
         return e is not None and e.accepted
+
+
+# -- the select menu (tracks.md 5.4: the planner may SELECT a back-tested question or COMPOSE a new one) ------------
+_SLOT = re.compile(r"ALERT\.(\w+)")
+ACCOUNT_SLOTS = frozenset({"sender", "receiver"})  # bound for every alert (the harness binds both parties)
+
+
+def program_slots(program: str) -> frozenset[str]:
+    return frozenset(_SLOT.findall(program))
+
+
+def _lr_text(lr: dict[str, float]) -> str:
+    """How the answer moves the odds of laundering (LR > 1 raises them), shown to the planner as back-test statistics."""
+    if set(lr) <= {"true", "false"}:
+        return ", ".join(f"{'yes' if k == 'true' else 'no'} x{lr[k]:.2f}" for k in ("true", "false") if k in lr)
+    vals = list(lr.values())
+    return f"x{min(vals):.2f} to x{max(vals):.2f} depending on the answer"
+
+
+def accepted_menu(table: LRTable, id_prefix: str = "B") -> list[dict]:
+    """One menu item per accepted canonical program (its accepted eps levels merged), in a neutral order (family, then
+    program), with a stable id. Item: {id, program, family, eps (accepted levels, ascending), slots, lr_text}.
+    Only rows accepted by e-BH are offered: a question that failed back-testing cannot move the posterior."""
+    by_prog: dict[str, list[LREntry]] = {}
+    for e in table.entries():
+        if e.accepted:
+            by_prog.setdefault(e.canonical, []).append(e)
+    items = []
+    for prog, es in by_prog.items():
+        es.sort(key=lambda e: e.eps)
+        items.append({"program": prog, "family": es[0].family or "", "eps": [e.eps for e in es],
+                      "slots": sorted(program_slots(prog)), "lr_text": _lr_text(es[0].lr)})  # fmt: skip
+    items.sort(key=lambda x: (x["family"], x["program"]))
+    width = max(2, len(str(len(items))))
+    return [{"id": f"{id_prefix}{i + 1:0{width}d}", **it} for i, it in enumerate(items)]
+
+
+def applicable_to(item: dict, available_slots: frozenset[str] = ACCOUNT_SLOTS) -> bool:
+    """A menu question applies to an alert iff every ALERT.<slot> it names is bound for that alert."""
+    return set(item.get("slots") or ()) <= set(available_slots)
