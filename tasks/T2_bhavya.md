@@ -31,9 +31,9 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] **G3**: needs real-data back-testing (>= 20 expert questions accepted) and ReAct on 50 val alerts through the harness (Akshat)
 
 ## Week 5
-- [ ] Small-decision dataset v1
-- [ ] raw-sharing baseline
-- [ ] per-account cap tests
+- [x] Small-decision dataset v1 (`scripts/make_decision_set.py`, `ftm/orchestrator/README.md`; the real 50k run needs `data/`)
+- [x] raw-sharing baseline (`ftm/orchestrator/raw_share.py`)
+- [x] per-account cap tests and the cap sweep tool (`scripts/cap_sweep.py`)
 
 ## Week 6
 - [ ] Exact-mode back-testing

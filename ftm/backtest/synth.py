@@ -23,6 +23,7 @@ from ftm.banks.partner import BankConfig, PartnerBank
 
 HOME = 1
 PARTNERS = (2, 3, 4)
+TYPOLOGIES = ("fan_in", "fan_out", "cycle", "scatter_gather", "gather_scatter", "bipartite", "stack", "random")
 T_START = datetime(2022, 9, 1, 0, 0)
 SCHEMA = {
     "timestamp": pl.Datetime("us"), "from_bank": pl.Int64, "to_bank": pl.Int64, "src_id": pl.Int64,
@@ -99,5 +100,6 @@ def make_world(n_alerts: int = 400, seed: int = 0, signal: float = 1.0, prevalen
         txrow = dict(timestamp=t0, src_id=s, dst_id=r, from_bank=HOME, to_bank=bank_of[r], amount_received=amt,
                      receiving_currency="USD")  # fmt: skip
         home_upto = ledgers[HOME].filter(pl.col("timestamp") <= t0)  # the home bank has only seen the past
-        alerts.append(BtAlert(aid, bool(y), bind_alert(aid, txrow, HOME, home_upto)))
+        typ = rng.choice(TYPOLOGIES) if y else None
+        alerts.append(BtAlert(aid, bool(y), bind_alert(aid, txrow, HOME, home_upto), 0.2, typ))
     return World(banks, alerts, ledgers, ledgers[HOME], full)

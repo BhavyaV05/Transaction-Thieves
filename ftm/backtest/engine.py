@@ -48,6 +48,8 @@ class BtAlert:
     label: bool
     binding: AlertBinding
     p0: float = 0.5  # the one-bank score the alert was raised with
+    typology: str | None = None  # pattern-file typology of the laundering attempt the alerted transfer belongs to
+    split: str = "train"
 
 
 @dataclass(frozen=True)
