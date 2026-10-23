@@ -21,21 +21,21 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 
 ## Week 3
 - [x] Conformal intake (Mondrian + time weighting + selective-risk bound reported, not applied; achieved vs target in `ftm/intake/README.md`; exact SCRC of plan ref [38] is a TODO there)
-- [ ] Multi-GNN on our split (one-bank + see-everything)
-- [ ] p₀ and upper-limit predictions to T2/T4. **G2** support (p₀ one-bank + see-everything GFP are on disk, schema in `ftm/baselines/README.md`; SOTA GNN upper limits not done)
+- [x] Multi-GNN on our split (one-bank + see-everything), HI-Small; HI-Medium command in ftm/baselines/README.md (5070 Ti)
+- [x] p₀ and upper-limit predictions to T2/T4. **G2** support (GFP p₀ and `p0_multi_gnn.parquet` on disk for HI-Small, schema in `ftm/baselines/README.md`; HI-Medium see-everything still blocked-compute)
 
 ## Week 4
 - [ ] Final alert sets (draft train/val sets built; drop-rule ruling and test projection need the team, see `ftm/intake/README.md`)
 - [ ] freeze 1k subset
-- [ ] start edge scorer training. **G3** (data prep + tiny MLP baseline in `ftm/retrieval/edge_scorer.py`, val AUC 0.986)
+- [x] start edge scorer training. **G3** (trained: val eval AUC 0.993, AP 0.228; `ftm/retrieval/README.md`)
 
 ## Week 5
-- [ ] DP-FedAvg setup
-- [ ] PCST
+- [x] DP-FedAvg setup
+- [x] PCST (time-respecting; needs the patched pcst_fast, see ftm/retrieval/README.md)
 
 ## Week 6
-- [ ] DP-FedAvg training
-- [ ] FraudGT (secondary)
+- [x] DP-FedAvg training (client-level and edge-level curves, HI-Small)
+- [x] FraudGT (secondary): partial reproduction on our val days (3 h, 111 of 500 epochs, val F1 0.648; full run is a 5070 Ti job), see ftm/baselines/README.md
 
 ## Week 7
 - [ ] AML-specific federated method (secondary)
