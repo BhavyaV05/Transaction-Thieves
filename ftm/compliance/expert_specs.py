@@ -46,5 +46,7 @@ def expand(families: list[dict]) -> list[ExpertQuestion]:
     return out
 
 
-def load_questions(path: str | Path = SPECS) -> list[ExpertQuestion]:
-    return expand(load_families(path))
+def load_questions(path: str | Path = SPECS, askable_only: bool = False) -> list[ExpertQuestion]:
+    """All spec questions; `askable_only` drops families whose status is not ok (e.g. restricted)."""
+    qs = expand(load_families(path))
+    return [q for q in qs if q.status == "ok"] if askable_only else qs
