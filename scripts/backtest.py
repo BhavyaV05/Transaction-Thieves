@@ -57,7 +57,7 @@ def read_programs(args) -> list[str]:
     return list(dict.fromkeys(canonical(parse(p)) for p in ok))  # dedup by canonical form
 
 
-def main(argv=None) -> None:
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--split", default="train", choices=["train", "val"])
@@ -66,7 +66,13 @@ def main(argv=None) -> None:
     ap.add_argument("--max-size", type=int, default=4, help="program size bound for --questions enumerate")
     ap.add_argument("--questions-file", default=None)
     ap.add_argument("--shard", default="0/1", help="i/n")
-    ap.add_argument("--exact", action="store_true", help="no-noise variant (eps = inf)")
+    ap.add_argument("--exact", action="store_true", help="no-noise variant (eps = inf) on the same alerts")
+    ap.add_argument("--exact-labels", action="store_true",
+                    help="exact mode proper: every bank's labels (a label-stratified sample of cross-bank transactions), no noise")
+    ap.add_argument("--n-pos", type=int, default=2000, help="laundering transactions sampled for --exact-labels")
+    ap.add_argument("--neg-ratio", type=int, default=4, help="clean per laundering transaction for --exact-labels")
+    ap.add_argument("--compare", nargs=2, metavar=("REALISTIC_DIR", "EXACT_DIR"),
+                    help="compare two assembled cache directories (realistic vs exact) and print the summary")
     ap.add_argument("--assemble", action="store_true")
     ap.add_argument("--fdr", type=float, default=0.10)
     ap.add_argument("--seed", type=int, default=0)
@@ -75,11 +81,24 @@ def main(argv=None) -> None:
     ap.add_argument("--out", default="data/backtest")
     a = ap.parse_args(argv)
 
-    world = load_world(a.data, a.split, a.seed, max_alerts=a.max_alerts, only_keep=a.only_keep)
-    cfg = BacktestConfig(mode="exact" if a.exact else "realistic")
+    if a.compare:
+        from ftm.backtest.exact import compare_modes
+
+        loaded = [assemble(BacktestCache(Path(d).parent, Path(d).name), a.fdr) for d in a.compare]
+        out = compare_modes(*loaded)
+        print(json.dumps(out, indent=1))
+        return out
+    exact = a.exact or a.exact_labels
+    if a.exact_labels:
+        from ftm.backtest.exact import load_exact_world
+
+        world = load_exact_world(a.data, a.split, a.n_pos, a.neg_ratio, a.seed)
+    else:
+        world = load_world(a.data, a.split, a.seed, max_alerts=a.max_alerts, only_keep=a.only_keep)
+    cfg = BacktestConfig(mode="exact" if exact else "realistic")
     ns = cfg.namespace(world.alert_set_id, a.seed)
     cache = BacktestCache(Path(a.out) / Path(a.data).stem, ns)
-    eps_levels = [float("inf")] if a.exact else a.eps
+    eps_levels = [float("inf")] if exact else a.eps
     if a.assemble:
         entries = assemble(cache, a.fdr)
         outdir = cache.dir

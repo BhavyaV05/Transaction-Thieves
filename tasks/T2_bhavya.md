@@ -36,9 +36,9 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] per-account cap tests and the cap sweep tool (`scripts/cap_sweep.py`)
 
 ## Week 6
-- [ ] Exact-mode back-testing
-- [ ] ε-sweep tooling
-- [ ] dataset to Akshat
+- [x] Exact-mode back-testing (`--exact-labels`, `--compare`; real numbers need `data/`)
+- [x] ε-sweep tooling (`scripts/eps_sweep.py`)
+- [ ] dataset to Akshat: the builder and format are ready (week 5); the real 50k run needs `data/`
 
 ## Week 7
 - [ ] Co-Investigator / FinFRE-RAG ports (secondary)

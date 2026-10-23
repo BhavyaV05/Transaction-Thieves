@@ -103,7 +103,9 @@ class BacktestCache:
         os.replace(tmp, p)  # atomic: a reader never sees half a file
 
     def entries(self) -> list[dict]:
-        return [json.loads(p.read_text()) for p in sorted(self.dir.glob("*.json"))]
+        # entries are <20 hex digits>.json; report.json and the other files written next to them are not entries
+        keyed = (p for p in self.dir.glob("*.json") if len(p.stem) == 20 and all(c in "0123456789abcdef" for c in p.stem))
+        return [json.loads(p.read_text()) for p in sorted(keyed)]
 
 
 def shard_of(canon: str, n_shards: int) -> int:

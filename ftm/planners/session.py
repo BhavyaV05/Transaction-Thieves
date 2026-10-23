@@ -9,6 +9,7 @@ Evidence enters only as numbers: the back-tested log-LR of an answer cell, summe
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from ftm.compliance.gate import BudgetRefused, GateBlocked
@@ -62,7 +63,7 @@ class PlanSession:
 
     def affordable(self, candidates: list[Candidate], one_per_family: bool = True) -> list[Candidate]:
         return [c for c in candidates
-                if c.eps <= self.eps_left + 1e-9 and (c.program, self.bank) not in self.asked
+                if c.cost <= self.eps_left + 1e-9 and (c.program, self.bank) not in self.asked
                 and not (one_per_family and c.family in self.families_asked)]  # fmt: skip
 
     def ask(self, c: Candidate) -> QuestionLogEntry:
@@ -76,7 +77,8 @@ class PlanSession:
             entry.gate_decision = "over_budget"
         r = entry.response
         if isinstance(r, Reply):
-            self.eps_left -= r.eps_spent
+            if math.isfinite(r.eps_spent):
+                self.eps_left -= r.eps_spent
             self.sim_days += r.latency_days
             self.families_asked.add(c.family)
             llr = c.log_lr(r.value)

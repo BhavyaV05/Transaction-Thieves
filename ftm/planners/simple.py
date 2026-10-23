@@ -111,9 +111,9 @@ class EIGPlanner(_Base):
     name: str = "eig"
 
     def choose(self, s, options):
-        scored = [(expected_brier_gain(s.p, c) / c.eps, c) for c in options]
-        best = max(scored, key=lambda t: (t[0], t[1].program, -t[1].eps), default=None)
-        if best is None or best[0] * best[1].eps <= MIN_GAIN:
+        scored = [(expected_brier_gain(s.p, c) / c.rank_cost, c) for c in options]
+        best = max(scored, key=lambda t: (t[0], t[1].program, -t[1].rank_cost), default=None)
+        if best is None or best[0] * best[1].rank_cost <= MIN_GAIN:
             return None  # nothing left that is expected to help
         return best[1]
 

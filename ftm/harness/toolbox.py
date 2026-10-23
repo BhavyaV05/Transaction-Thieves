@@ -96,6 +96,7 @@ class Harness:
     graph_fn: Callable[[str, datetime], list[dict]] | None = None  # T1's aliased evidence views
     library_fn: Callable[[dict], list[dict]] | None = None  # T3's strategy library
     mode: str = "ported"
+    allow_exact: bool = False  # the no-noise arm (eps = inf); never set outside the eps sweep
     t0_of: Callable[[AlertContext], datetime] | None = None
 
     def toolbox(self) -> HarnessToolBox:
@@ -181,8 +182,11 @@ class HarnessToolBox:
             raise exc(reason)
 
         partners = [b for b in h.banks if str(b) != str(alert.home_bank)]
+        # The no-noise arm of the eps sweep (eps = inf) is an explicit opt-in of the harness: the gate still checks
+        # everything but the eps level (it is checked at the largest level), and there is nothing to price.
+        exact = h.allow_exact and isinstance(eps, float) and math.isinf(eps) and eps > 0
         d = h.gate.check("ask_bank", alert_id=alert.alert_id, home_bank=alert.home_bank, bank=bank, program=program,
-                         eps=eps, rule_id=rule_id, partners=partners)  # fmt: skip
+                         eps=h.gate.eps_levels[-1] if exact else eps, rule_id=rule_id, partners=partners)  # fmt: skip
         if d.decision == "blocked":
             refuse("blocked", d.reason, GateBlocked)
         if d.decision == "over_budget":
@@ -191,7 +195,7 @@ class HarnessToolBox:
             node = parse(program)  # the gate may have no validator plugged in: never run what does not parse
         except DslError as e:
             refuse("blocked", f"invalid question: {e}", GateBlocked)
-        if not (eps > 0) or math.isinf(eps):
+        if not exact and (not (eps > 0) or math.isinf(eps)):
             refuse("blocked", f"eps must be positive and finite, got {eps!r}", GateBlocked)
         bank_obj = h.banks.get(int(bank))
         if bank_obj is None:
@@ -199,12 +203,12 @@ class HarnessToolBox:
         if self._binding is None and getattr(bank_obj, "needs_binding", True):
             entry.gate_decision = "blocked"
             raise SessionError(f"no real-id binding for alert {alert.alert_id}: cannot ask a bank with a ledger")
-        if self._eps_spent + eps > limits.eps_per_alert + TOL:
+        if not exact and self._eps_spent + eps > limits.eps_per_alert + TOL:
             refuse("over_budget", "per-alert eps budget of this run is used up", BudgetRefused)
         if self._elapsed >= limits.max_sim_time_days - TOL:
             refuse("over_budget", "simulated time for this alert is used up", BudgetRefused)
         keys = charge_keys(node, self._binding, int(bank)) if self._binding is not None else []
-        if not h.accountant.can_spend(alert.alert_id, int(bank), eps, keys):
+        if not exact and not h.accountant.can_spend(alert.alert_id, int(bank), eps, keys):
             refuse("over_budget", "privacy accountant refused", BudgetRefused)
 
         as_of = self._t0 + timedelta(days=self._elapsed)
@@ -213,7 +217,7 @@ class HarnessToolBox:
         if self._elapsed + wait > limits.max_sim_time_days + TOL:  # would arrive after the deadline
             wait = limits.max_sim_time_days - self._elapsed
             response = Timeout(int(bank), after_days=wait)
-        if isinstance(response, Reply):
+        if isinstance(response, Reply) and not exact:
             try:
                 h.accountant.spend(alert.alert_id, int(bank), eps, keys)
             except BudgetExceeded as e:  # cannot happen after can_spend; if it does, the answer is withheld

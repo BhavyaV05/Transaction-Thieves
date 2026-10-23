@@ -36,3 +36,12 @@ It is gated twice. Every hand-over asks the compliance gate for `request_records
 ## Per-account cap
 
 `ftm/privacy/cap_sweep.py` and `scripts/cap_sweep.py`: how often one partner account is the subject of several alerts, and the refused share of questions per cap. Run it on the real alert sets to settle `per_account_cap` (currently 8.0): `python scripts/cap_sweep.py --data hi_medium --split val`.
+
+## eps sweep (E2)
+
+`eps_sweep.py`, `scripts/eps_sweep.py`: one system at per-alert budgets 0.5, 1, 2, 4 and no noise on the same validation alerts through the same harness. The no-noise point (eps = inf) answers exactly from a pool back-tested the same way; it is an explicit opt-in of the harness (`Harness.allow_exact`): the gate still checks everything but the eps level and nothing is priced. Every row carries the theoretical ceiling (basic composition, unit sensitivity: `B` eps can move the log-odds by at most `B`, the LR by at most `e^B`), the line to draw on the privacy plot.
+
+```
+python scripts/eps_sweep.py --system eig --synthetic 360                       # smoke test, never a result
+python scripts/eps_sweep.py --system eig --data hi_medium --split val --table-noisy <lr_table.jsonl> --table-exact <lr_table_exact.jsonl>
+```
