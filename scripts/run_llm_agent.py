@@ -41,6 +41,8 @@ from ftm.external.bed_llm import BedLlm  # noqa: E402
 from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
 from ftm.external.co_investigator import CoInvestigator  # noqa: E402
 from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
+from ftm.external.debate_autogen import Debate  # noqa: E402
+from ftm.external.debate_autogen import dev_responder as debate_dev_responder  # noqa: E402
 from ftm.external.dspy_react import DspyReact  # noqa: E402
 from ftm.external.finfre_rag import ExemplarPool, FinfreRag  # noqa: E402
 from ftm.external.finfre_rag import dev_responder as finfre_dev_responder  # noqa: E402
@@ -87,10 +89,11 @@ GROUP_C = {  # T4 ports (Group C, native and ported modes)
     "finfre_rag_ported": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="ported", **kw),
 }
 DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
-                  "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder,
+                  "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder, "debate": debate_dev_responder,
                   "uot": uot_dev_responder, "bed_llm": bed_llm_dev_responder}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
-           "dspy_react": DspyReact, "uot": Uot, "bed_llm": BedLlm}  # uot, bed_llm: T4 information-seeking ports
+           "dspy_react": DspyReact, "debate": Debate,  # debate: T4, reimplementation of Du et al. (debate_autogen.py)
+           "uot": Uot, "bed_llm": BedLlm}  # uot, bed_llm: T4 information-seeking ports (uot.py, bed_llm.py)
 
 
 def git_commit() -> str:
