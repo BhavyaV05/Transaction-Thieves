@@ -97,6 +97,7 @@ class PlannerState:
     answers: list[AnswerSoFar] = field(default_factory=list)
     posterior: float | None = None
     feedback: str | None = None  # why the previous output was rejected, if it was
+    wave_k: int = 1  # E13: >1 = this step proposes up to wave_k questions, asked together as one wave
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ class PlannerAction:
     eps: float = 0.0
     rule_id: str | None = None
     belief: float | None = None
+    wave: tuple[PlannerAction, ...] = field(default=(), compare=False)  # batched step: the proposed questions, in order
     raw: dict = field(default_factory=dict, compare=False)
 
 
@@ -130,6 +132,8 @@ def planner_schema(mode: Mode, state: PlannerState) -> dict:
 
     Strict-mode compatible: every property is required, nullable ones use anyOf with null.
     """
+    if state.wave_k > 1:
+        return _wave_schema(mode, state)
     actions = ["select", "compose", "stop"] if mode.can_compose else ["select", "stop"]
     if not state.questions:
         actions.remove("select")
@@ -161,6 +165,50 @@ def planner_schema(mode: Mode, state: PlannerState) -> dict:
         "required": list(props),
         "additionalProperties": False,
     }
+
+
+def _hypothesis_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "typology": {"enum": [*TYPOLOGIES, "none", "unsure"]},
+            "rationale": {"type": "string", "maxLength": RATIONALE_MAX},
+        },
+        "required": ["typology", "rationale"],
+        "additionalProperties": False,
+    }
+
+
+def _wave_item_schema(mode: Mode, state: PlannerState) -> dict:
+    """One question of a batched step: the sequential step's fields, with a non-zero eps and a select / compose kind."""
+    kinds = ["select", "compose"] if mode.can_compose else ["select"]
+    if not state.questions:
+        kinds.remove("select")
+    qids = [q["id"] for q in state.questions]
+    rids = [r["rule_id"] for r in state.rules]
+    props = {
+        "action": {"enum": kinds},
+        "question_id": _nullable({"enum": qids}) if qids else {"type": "null"},
+        "program": _nullable({"type": "string", "maxLength": PROGRAM_MAX, "pattern": PROGRAM_PATTERN}) if mode.can_compose else {"type": "null"},
+        "bank": {"enum": list(state.partner_banks)},
+        "eps": {"enum": eps_levels(state.eps_left)},
+        "rule_id": _nullable({"enum": rids}) if rids else _nullable({"type": "string", "maxLength": 64}),
+    }
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+def _wave_schema(mode: Mode, state: PlannerState) -> dict:
+    """Batched step (E13): `action` is ask | stop and `questions` is a list of 1..wave_k questions (empty on stop).
+    Only batched steps use this; every other step keeps the single-question schema above."""
+    props: dict = {}
+    if mode.has_hypothesis:
+        props["hypothesis"] = _hypothesis_schema()
+    props["action"] = {"enum": ["ask", "stop"]}
+    props["questions"] = {"type": "array", "items": _wave_item_schema(mode, state), "minItems": 0, "maxItems": state.wave_k}
+    if mode.has_belief:
+        props["belief"] = {"type": "number", "minimum": 0.0, "maximum": 1.0}
+    return {"title": "planner_wave_step", "type": "object", "properties": props, "required": list(props),
+            "additionalProperties": False}
 
 
 # -- prompt ---------------------------------------------------------------------------------------------------
@@ -227,7 +275,31 @@ def _answers_text(answers: list[AnswerSoFar]) -> str:
     return "\n".join(lines)
 
 
+def _wave_output_spec(mode: Mode, state: PlannerState, dsl: DslAdapter) -> str:
+    k = state.wave_k
+    lines = [f"This step is a wave: propose up to {k} questions that are sent TOGETHER (you see no answer before all {k} are back).",
+             "Actions:",
+             f"- ask: set questions to a list of 1 to {k} items; each item is select (question_id, program null) or compose "
+             "(program, question_id null), with bank, eps and rule_id",
+             "- stop: end the investigation (questions empty list)",
+             "Ask questions that are different from each other (never two of the same family); their eps adds up and must fit the eps left. "
+             "You cannot adapt one question to another's answer, so pick the questions that are informative on their own.",
+             f"JSON keys (all required): {', '.join(planner_schema(mode, state)['properties'])}",
+             f"Each question's eps must be one of {eps_levels(state.eps_left)}; bank one of the partner banks listed."]
+    if mode.can_compose:
+        eg = examples_by_function(dsl.reference_text())
+        lines.append("program (compose) is a complete call on an alert slot, never a bare function name, e.g. "
+                     + eg.get("n_tx", next(iter(eg.values()), "n_tx(ALERT.receiver, dir=in, window=before(72))")))  # fmt: skip
+    if mode.has_hypothesis:
+        lines.append(f"hypothesis.typology is one of {', '.join(TYPOLOGIES)}, none, unsure; rationale at most one sentence.")
+    if mode.has_belief:
+        lines.append("belief is your current probability (0 to 1) that the alert is money laundering.")
+    return "\n".join(lines)
+
+
 def _output_spec(mode: Mode, state: PlannerState, dsl: DslAdapter) -> str:
+    if state.wave_k > 1:
+        return _wave_output_spec(mode, state, dsl)
     acts = [ACTIONS[a] for a in ("select", "compose", "stop") if a in planner_schema(mode, state)["properties"]["action"]["enum"]]
     keys = list(planner_schema(mode, state)["properties"])
     lines = ["Actions:", *[f"- {a}" for a in acts], f"JSON keys (all required, use null when unused): {', '.join(keys)}"]
@@ -306,6 +378,8 @@ def parse_action(text: str, mode: Mode, state: PlannerState) -> PlannerAction:
         raise PlannerParseError(str(e)) from e
     act = obj["action"]
     hyp = obj.get("hypothesis") or {}
+    if state.wave_k > 1:
+        return _parse_wave(obj, act, hyp)
     if act == "select" and not obj.get("question_id"):
         raise PlannerParseError("action select needs question_id")
     if act == "compose" and not obj.get("program"):
@@ -329,6 +403,27 @@ def parse_action(text: str, mode: Mode, state: PlannerState) -> PlannerAction:
     )
 
 
-def output_token_budget(mode: Mode) -> int:
+def _parse_wave(obj: dict, act: str, hyp: dict) -> PlannerAction:
+    qs = obj.get("questions") or []
+    if act == "stop" and qs:
+        raise PlannerParseError("action stop needs an empty questions list")
+    if act == "ask" and not qs:
+        raise PlannerParseError("action ask needs at least one question")
+    items = []
+    for i, q in enumerate(qs, 1):
+        if q["action"] == "select" and not q.get("question_id"):
+            raise PlannerParseError(f"question {i}: action select needs question_id")
+        if q["action"] == "compose" and not q.get("program"):
+            raise PlannerParseError(f"question {i}: action compose needs program")
+        items.append(PlannerAction(
+            action=q["action"], question_id=q.get("question_id") if q["action"] == "select" else None,
+            program=q.get("program") if q["action"] == "compose" else None, bank=q["bank"], eps=float(q["eps"]),
+            rule_id=q.get("rule_id"), raw=q))  # fmt: skip
+    return PlannerAction(action="stop" if act == "stop" else "wave", typology=hyp.get("typology"), rationale=hyp.get("rationale"),
+                         belief=obj.get("belief"), wave=tuple(items), raw=obj)
+
+
+def output_token_budget(mode: Mode, wave_k: int = 1) -> int:
     """max_tokens for the answer: the JSON is short; rationale is capped at RATIONALE_MAX characters."""
-    return 160 + estimate_tokens("x" * (RATIONALE_MAX + PROGRAM_MAX)) + (8 if mode.has_belief else 0)
+    base = 160 + estimate_tokens("x" * (RATIONALE_MAX + PROGRAM_MAX)) + (8 if mode.has_belief else 0)
+    return base + (wave_k - 1) * (estimate_tokens("x" * PROGRAM_MAX) + 60)  # each extra question: a program and its other fields

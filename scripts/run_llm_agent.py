@@ -305,6 +305,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fusion-params", type=Path, default=None,
                     help="Fusion.params() JSON fitted on val (T4): FusedLR over the table; default is the naive summed fusion")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
+    ap.add_argument("--batch-schedule", default=None,
+                    help="planner, E13 / H8: comma-separated wave sizes, e.g. 2,1 = the first step proposes 2 questions asked "
+                         "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
@@ -316,6 +319,9 @@ def main(argv: list[str] | None = None) -> int:
     if (a.alerts == "val") != (a.val_part is not None):
         ap.error("--val-part is required with --alerts val (and only then): the val parts must not be mixed")
     refuse_devtools_test("devtools" if a.toolbox == "dev" else "harness", a.alerts)  # before any file or data is touched
+    schedule = tuple(int(x) for x in a.batch_schedule.split(",")) if a.batch_schedule else None
+    if schedule and a.system != "planner":
+        ap.error("--batch-schedule applies to --system planner only")
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.run_dir or a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -353,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
         system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
                             question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))), seed=a.seed, extra=extra, fusion=fusion,
                             use_library=a.library is not None, keep_prompts=a.keep_prompts,
-                            max_output_tokens=a.max_output_tokens)
+                            max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
         system_name = system.system_name
     else:
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
@@ -418,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
                "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking,
-               "reasoning_effort": a.reasoning_effort, "max_output_tokens": a.max_output_tokens,
+               "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,
                "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
                "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
