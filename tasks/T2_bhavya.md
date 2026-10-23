@@ -16,7 +16,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] **Grammar v0 to Akshat** (`ftm/dsl/README.md`; handed over once the PR is up)
 
 ## Week 2
-- [ ] Partner banks, DP mechanisms, accountant. **G1**
+- [x] Partner banks (`ftm/banks`), DP mechanisms and accountant (`ftm/privacy`), see `ftm/banks/README.md`
+- [ ] **G1**: needs T1's one-bank/alert results and T3's endpoint; the banks, DP and accountant side is ready
 
 ## Week 3
 - [ ] Realistic back-testing

@@ -321,3 +321,9 @@ def _param_doc(key: str, p: P) -> str:
     if p.kind == "set_slot":
         return f"{key}=ALERT.<set slot>"
     return f"{key} {p.kind} {p.lo:g}..{p.hi:g}{d}"
+
+
+def gate_validator(program: str) -> tuple[bool, str | None, str | None]:
+    """Adapter for the compliance gate (ftm/compliance/gate.py) `Validator`: (ok, answer kind, error)."""
+    c = check(program)
+    return c.ok, c.kind, c.error
