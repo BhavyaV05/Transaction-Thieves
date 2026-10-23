@@ -98,11 +98,12 @@ class HttpChatClient:
         self.default_extra = dict(default_extra or {})
 
     @classmethod
-    def from_env(cls, **kwargs: Any) -> HttpChatClient:
+    def from_env(cls, endpoint: str | None = None, model: str | None = None, **kwargs: Any) -> HttpChatClient:
+        """Environment first; `endpoint` / `model` override it (E18 serves one candidate per endpoint)."""
         return cls(
-            base_url=os.environ.get("FTM_LLM_ENDPOINT", DEFAULT_ENDPOINT),
+            base_url=endpoint or os.environ.get("FTM_LLM_ENDPOINT", DEFAULT_ENDPOINT),
             api_key=os.environ.get("FTM_LLM_API_KEY"),
-            model=os.environ.get("FTM_LLM_MODEL"),
+            model=model or os.environ.get("FTM_LLM_MODEL"),
             **kwargs,
         )
 

@@ -19,7 +19,7 @@ from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import Fusion, Investigation, NaiveLRFusion
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.types import AlertContext, Limits, Verdict
 
 from .text_agent import ToolExecutor, case_text, parse_tool_call, tools_doc
@@ -34,10 +34,10 @@ INSTRUCTION = (
 
 EXEMPLAR = """Example (a different alert):
 Thought 1: Many small payments arrive at the receiver, then one large payment leaves. If the receiver passes most of it on within a day, that looks like a fan-in mule.
-Action 1: ask_bank[1588 | 0.5 | passthrough(ALERT.receiver, min_frac=0.8, within_h=24)]
+Action 1: ask_bank[1588 | 0.5 | passed_on(ALERT.receiver, window=after(24), min_frac=0.8)]
 Observation 1: bank 1588 answered True (bool, noisy; eps 0.5 spent, 0.6 days) eps left: 1.5.
 Thought 2: A noisy yes. A second, independent signal: how many distinct accounts paid the receiver at that bank.
-Action 2: ask_bank[1588 | 0.5 | n_counterparties(ALERT.receiver, direction=in, window_h=48)]
+Action 2: ask_bank[1588 | 0.5 | n_counterparties(ALERT.receiver, dir=in, window=before(48))]
 Observation 2: bank 1588 answered 9 (count, noisy; eps 0.5 spent, 0.4 days) eps left: 1.0.
 Thought 3: Both answers point the same way and the home view already looked suspicious.
 Action 3: finish[0.8]"""
@@ -49,7 +49,7 @@ class React:
     def __init__(self, llm: ChatClient, *, dsl: DslAdapter | None = None, fusion: Fusion | None = None,
                  max_tokens_per_step: int = 256, temperature: float = 0.0, seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm = llm
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.max_tokens_per_step = max_tokens_per_step
         self.temperature, self.seed, self.extra = temperature, seed, extra

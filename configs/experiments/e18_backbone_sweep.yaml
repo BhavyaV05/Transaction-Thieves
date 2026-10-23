@@ -36,3 +36,26 @@ decision:
   ci_level: 0.95
   n_boot: 10000
 seed: 0
+
+# --- run settings for scripts/run_e18.py (T3). Nothing above is changed; the prereg rule wins on any disagreement. ---
+reference_machine: t3-5070ti  # latency and GPU-s count only from here (ftm/eval/runlog.py)
+data: hi_medium               # HI-Medium val alerts (docs/t4_decisions_week2.md item 9); the val part is a required CLI arg
+gpt_oss_thinking_on_effort: medium   # gpt-oss has no thinking switch: the "on" arm raises reasoning_effort from low
+budget:                       # plan.md section 12 (17-31 GPU-h): only used by --dry-run
+  plan_total_gpu_h: [17, 31]
+  thinking_arm_gpu_h: [5, 9]  # for 500 alerts
+
+# One server at a time on the 16 GB GPU: serve a candidate, then `run_e18.py stage1 --only <name>`. The driver skips
+# a candidate whose endpoint does not list `served_model`. size_gb: null = estimated from params x bits per weight.
+# endpoint: null = FTM_LLM_ENDPOINT. revision: null = to pin from the model card before serving (docs/t3_week0.md).
+# llama.cpp candidates need a backend in scripts/serve_llm.py (vLLM-only today); until then serve them with
+# `llama-server -m <gguf> -c 8192 --alias <served_model>` by hand and keep the flags in the run log notes.
+serving:
+  qwen3-8b:        {served_model: qwen3-8b,        revision: null, max_model_len: 8192, size_gb: 6.0,  endpoint: null}
+  gemma4-12b:      {served_model: gemma4-12b,      revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-12B-it}
+  qwen3-14b:       {served_model: qwen3-14b,       revision: null, max_model_len: 8192, size_gb: 10.0, endpoint: null, hf_id: Qwen/Qwen3-14B-AWQ}
+  phi4-reasoning:  {served_model: phi4-reasoning,  revision: null, max_model_len: 8192, size_gb: null, endpoint: null}
+  gpt-oss-20b:     {served_model: gpt-oss-20b,     revision: null, max_model_len: 8192, size_gb: 13.0, endpoint: null}
+  gemma4-26b-a4b:  {served_model: gemma4-26b-a4b,  revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-26B-A4B-it}
+  qwen3.8-27b-q3:  {served_model: qwen3.8-27b-q3,  revision: null, max_model_len: 8192, size_gb: 13.1, endpoint: null, hf_id: unsloth/Qwen3.8-27B-GGUF}
+  gemma4-31b-q3:   {served_model: gemma4-31b-q3,   revision: null, max_model_len: 8192, size_gb: null, endpoint: null, hf_id: google/gemma-4-31B-it}

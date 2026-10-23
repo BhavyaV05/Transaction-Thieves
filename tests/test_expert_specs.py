@@ -50,3 +50,9 @@ def test_coverage_of_typologies_and_observable_red_flags():
     assert len(cited & observable) >= 15
     assert all(g.load_red_flags()[f].observable != "no" for f in cited)  # no question rests on an unobservable flag
     assert Counter(q.kind for q in qs).keys() == KINDS  # every answer kind is exercised
+
+
+def test_family_order_is_the_expert_ranking():
+    fams = [f["family"] for f in es.load_families()]
+    assert fams[:2] == ["pass_through", "payees_hit_home_payers"]  # the proposal's worked example comes first
+    assert fams[-1] == "entity_accounts"  # restricted, never asked, last
