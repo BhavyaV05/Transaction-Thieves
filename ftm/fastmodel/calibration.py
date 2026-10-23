@@ -1,4 +1,4 @@
-"""Temperature scaling for the fast model's label distribution (C13). Fit on validation only.
+"""Temperature scaling for the fast model's label distribution (C13). Fit on the validation `fit` part only (see splits.py).
 
 Owner: T3 (Akshat).  Spec: plan.md 6.14 ("constrained single-token outputs + temperature scaling").
 """
@@ -31,8 +31,10 @@ def fit_temperature(logps: np.ndarray, y: np.ndarray, bounds: tuple[float, float
     return float(math.exp(res.x))
 
 
-def ece(probs: np.ndarray, y: np.ndarray, bins: int = 15) -> float:
-    """Expected calibration error of the top label."""
+def top_label_ece(probs: np.ndarray, y: np.ndarray, bins: int = 15) -> float:
+    """Expected calibration error of the top label of a k-way distribution (equal-width bins on the confidence).
+
+    Not the binary, equal-mass-bin `ftm.eval.metrics.ece` on P(laundering): different quantity, do not compare."""
     probs, y = np.asarray(probs, float), np.asarray(y, int)
     conf, pred = probs.max(axis=1), probs.argmax(axis=1)
     edges = np.linspace(0, 1, bins + 1)
