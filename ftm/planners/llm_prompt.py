@@ -63,7 +63,7 @@ class Mode(str, Enum):
 @dataclass
 class AnswerSoFar:
     step: int
-    bank: int
+    bank: int | str
     program: str
     eps: float
     outcome: str  # "reply" | "decline" | "timeout" | "blocked" | "over_budget" | "invalid"
