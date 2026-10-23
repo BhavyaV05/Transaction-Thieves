@@ -201,24 +201,98 @@ class Investigation:
             try:
                 entry.response = self.tools.ask_bank(bank, check.canonical, eps)
             except Exception as exc:  # noqa: BLE001 - classified, unknown errors re-raised
-                decision = _gate_outcome(exc)
-                if decision is None:
-                    raise
-                entry.gate_decision = decision
-                self.last_refusal = str(exc)
+                self._refuse(entry, exc)
+        days = self._record(entry, key)
+        if self._batch is None:
+            self.sim_days += days
+        elif entry.gate_decision == "allowed":
+            self._batch.append(days)
+        return entry
+
+    def _refuse(self, entry: QuestionLogEntry, exc: Exception) -> None:
+        decision = _gate_outcome(exc)
+        if decision is None:
+            raise exc
+        entry.gate_decision = decision
+        self.last_refusal = str(exc)
+
+    def _record(self, entry: QuestionLogEntry, key: tuple) -> float:
+        """Book one finished question (eps, asked set, log, posterior); returns the days it took (0 if refused)."""
+        days = 0.0
         if entry.gate_decision == "allowed":
             self._asked.add(key)
             r = entry.response
             self.eps_left -= float(getattr(r, "eps_spent", 0.0) or 0.0)
             days = r.latency_days if isinstance(r, Reply) else r.after_days if isinstance(r, Timeout) else 0.0
-            if self._batch is None:
-                self.sim_days += days
-            else:
-                self._batch.append(days)
         self.log.append(entry)
         self.posterior = self.fusion.posterior(self.alert.p0, self.log)
         entry.posterior_after = self.posterior
-        return entry
+        return days
+
+    def ask_wave(self, requests: list[tuple]) -> list[QuestionLogEntry | DuplicateQuestion]:
+        """Ask several validated questions at the same simulated moment. requests = [(bank, check, eps, step)].
+
+        Per request the handling is that of ask(): a repeat (of an earlier question or of one earlier in the same
+        wave) comes back as a DuplicateQuestion object in its slot instead of being raised, a question over the eps
+        left is refused with no call (eps already requested by earlier questions of the wave count as spent), the
+        rest go out in ONE `tools.ask_banks` call when the toolbox has it (it gates and charges each on its own and
+        bills the wave its slowest answer), else one by one through `ask_bank`. Simulated time advances by the
+        slowest answer. Returns one item per request, in order.
+        """
+        for r in requests:
+            if not r[1].ok:
+                raise ValueError(f"ask_wave() needs validated questions: {r[1].error}")
+        out: list[QuestionLogEntry | DuplicateQuestion | None] = [None] * len(requests)
+        send: list[int] = []
+        seen: set = set()
+        reserved = 0.0
+        for i, (bank, check, eps, step) in enumerate(requests):
+            key = (check.canonical, str(bank))
+            if key in self._asked or key in seen:
+                out[i] = DuplicateQuestion(f"already asked bank {bank}: {check.canonical}")
+                continue
+            seen.add(key)
+            if eps > self.eps_left - reserved + 1e-9:
+                entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+                entry.gate_decision = "over_budget"
+                out[i] = entry
+            else:
+                reserved += float(eps)
+                send.append(i)
+        self.last_refusal = None
+        responses: dict[int, object] = {}
+        if send:
+            if hasattr(self.tools, "ask_banks"):
+                res = self.tools.ask_banks([(requests[i][0], requests[i][1].canonical, requests[i][2]) for i in send])
+                if len(res) != len(send):
+                    raise RuntimeError(f"ask_banks returned {len(res)} results for {len(send)} requests")
+                responses = dict(zip(send, res, strict=True))
+            else:
+                for i in send:
+                    try:
+                        responses[i] = self.tools.ask_bank(requests[i][0], requests[i][1].canonical, requests[i][2])
+                    except Exception as exc:  # noqa: BLE001 - classified, unknown errors re-raised
+                        if _gate_outcome(exc) is None:
+                            raise
+                        responses[i] = exc
+        waits = [0.0]
+        for i, (bank, check, eps, step) in enumerate(requests):
+            if i in responses:
+                entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+                r = responses[i]
+                if isinstance(r, Exception):
+                    self._refuse(entry, r)
+                else:
+                    entry.response = r
+                out[i] = entry
+            if isinstance(out[i], QuestionLogEntry):
+                waits.append(self._record(out[i], (check.canonical, str(bank))))
+        wave_days = max(waits)
+        if self._batch is None:
+            self.sim_days += wave_days
+        else:
+            self._batch.append(wave_days)
+        return out  # type: ignore[return-value]
 
     @contextmanager
     def parallel(self) -> Iterator[None]:

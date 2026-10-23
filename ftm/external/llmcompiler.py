@@ -106,12 +106,16 @@ class LlmCompiler:
                 tasks = parse_tasks(plan)
                 results: dict[int, str] = {}
                 for wave in waves(tasks):
-                    with session.parallel():
-                        for i in wave:
-                            step += 1
-                            arg = substitute(tasks[i].arg, results)
-                            results[i] = ex.run(ToolCall(tasks[i].tool, arg), step)
-                            history.append(f"{tasks[i].tool}[{arg}] -> {results[i]}")
+                    # tasks of one wave never reference each other ($k only points to earlier waves), so every
+                    # argument is substituted before the wave starts
+                    calls = []
+                    for i in wave:
+                        step += 1
+                        assert not any(int(k) in wave for k in re.findall(r"\$(\d+)", tasks[i].arg))
+                        calls.append((ToolCall(tasks[i].tool, substitute(tasks[i].arg, results)), step))
+                    for i, (call, _), obs in zip(wave, calls, ex.run_wave(calls), strict=True):
+                        results[i] = obs
+                        history.append(f"{call.tool}[{call.arg}] -> {obs}")
                 trace.append({"round": rnd, "plan": plan, "waves": waves(tasks)})
                 join = self._chat(budget, JOINER, case + "\n\nResults:\n" + ("\n".join(history) or "(none)"), self.join_tokens)
                 trace[-1]["join"] = join
