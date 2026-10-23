@@ -38,8 +38,23 @@ class Investigator(Protocol):
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict: ...
 
 
+@runtime_checkable
+class SessionToolBox(ToolBox, Protocol):
+    """A ToolBox that serves one alert at a time (the real harness toolbox, `ftm.harness.HarnessToolBox`).
+
+    `begin(alert, limits)` starts a session, `end()` closes it and returns the authoritative questions log.
+    `wrap(investigator)` returns an Investigator that runs `investigate` inside a session. A runner that reuses one
+    toolbox across alerts calls `tools.wrap(system)` once, or begin/end around each alert."""
+
+    def begin(self, alert: AlertContext, limits: Limits) -> None: ...
+
+    def end(self) -> list: ...
+
+    def wrap(self, investigator: Investigator) -> Investigator: ...
+
+
 class ScriptedToolBox:
-    """Placeholder mock so T3/T4 can develop before harness v0 (week 3). T2 replaces this with the real
+    """Placeholder mock (superseded by `ftm.harness.make_toolbox(mode="mock")`, which also goes through the gate) so T3/T4 can develop before harness v0 (week 3). T2 replaces this with the real
     mock mode. Returns the scripted responses in order and records the calls."""
 
     def __init__(self, responses: list[BankResponse] | None = None):

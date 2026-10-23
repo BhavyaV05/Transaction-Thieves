@@ -20,9 +20,10 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] **G1**: needs T1's one-bank/alert results and T3's endpoint; the banks, DP and accountant side is ready
 
 ## Week 3
-- [ ] Realistic back-testing
-- [ ] e-values + e-BH
-- [ ] **harness v0**. **G2**
+- [x] Realistic back-testing (`ftm/backtest`, `scripts/backtest.py`; real-data run needs T1's data, see `ftm/backtest/README.md`)
+- [x] e-values + e-BH (+ e-LOND for new questions at test time)
+- [x] **harness v0** (`ftm/harness`, `ftm/harness/README.md`)
+- [ ] **G2**: needs the real-data back-test of the expert list (T1's data and alert sets) and the Brier-gain check with T4's fusion
 
 ## Week 4
 - [ ] Simple planners + enumerator

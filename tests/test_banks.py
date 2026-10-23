@@ -188,7 +188,7 @@ def test_replies_are_scalars_never_rows():
         if isinstance(r, Reply):
             assert type(r.value) in (bool, int) and (r.note is None or isinstance(r.note, str))
     assert Reply in seen
-    assert not [a for a in dir(b) if not a.startswith("_") and a not in {"bank", "cfg", "seed", "handle", "respond", "ask"}]
+    assert not [a for a in dir(b) if not a.startswith("_") and a not in {"bank", "cfg", "seed", "handle", "respond", "ask", "needs_binding"}]
 
 
 def test_no_banks_code_path_can_return_rows():
