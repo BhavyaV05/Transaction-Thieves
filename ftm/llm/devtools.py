@@ -93,8 +93,15 @@ def dev_responder(messages: list[dict], kw: dict, n_questions: int = 2) -> str:
     if "variable #E" in system:  # ReWOO planner
         bank = _first_bank(messages)
         return "\n".join(f"Plan: check {i}\n#E{i + 1} = ask_bank[{bank} | 0.5 | {examples[i]}]" for i in range(n_questions))
-    if "as finish[p]" in system:  # ReWOO solver
+    if "as finish[p]" in system or system.startswith("You see an anti-money-laundering alert, the tasks"):  # solvers
         return "finish[0.4]"
+    if "utmost parallelizability" in system:  # LLMCompiler planner
+        bank = _first_bank(messages)
+        return "\n".join(f"{i + 1}. ask_bank[{bank} | 0.5 | {examples[i]}]" for i in range(n_questions)) + f"\n{n_questions + 1}. join()"
+    if "[[ ## completed ## ]]" in "".join(m["content"] for m in messages):  # DSPy ChatAdapter
+        if "next_tool_name" not in system:  # the final extraction step
+            return "[[ ## reasoning ## ]]\ndev\n\n[[ ## probability ## ]]\n0.4\n\n[[ ## completed ## ]]"
+        return "[[ ## next_thought ## ]]\ndev\n\n[[ ## next_tool_name ## ]]\nfinish\n\n[[ ## next_tool_args ## ]]\n{}\n\n[[ ## completed ## ]]"
     if system.startswith("You are checking"):  # Reflexion evaluator
         return "CONFIDENT. The answers agree."
     asked = sum(1 for m in messages if m["role"] == "user" and m["content"].startswith("Observation"))

@@ -102,6 +102,7 @@ class LLMPlanner:
         seed: int = 0,
         extra: dict | None = None,
         max_failures_in_row: int = 3,
+        keep_prompts: bool = False,
     ):
         self.llm = llm
         self.mode = Mode(mode)
@@ -116,6 +117,7 @@ class LLMPlanner:
         self.batch_writer = batch_writer
         self.temperature, self.seed, self.extra = temperature, seed, extra
         self.max_failures_in_row = max_failures_in_row
+        self.keep_prompts = keep_prompts  # teacher runs: traces keep the exact prompts for distillation
         self.stats = PlannerStats()
         self.last_trace: list[dict] = []
 
@@ -167,7 +169,10 @@ class LLMPlanner:
                 rec["error"] = f"{type(e).__name__}: {e}"
                 break
             self.stats.outputs += 1
-            rec.update(text=resp.text, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out, latency_s=resp.latency_s)
+            rec.update(text=resp.text, tokens_in=resp.tokens_in, tokens_out=resp.tokens_out, latency_s=resp.latency_s,
+                       posterior_before=session.posterior)
+            if self.keep_prompts:
+                rec["messages"] = msgs
             try:
                 action = parse_action(resp.text, self.mode, state)
             except PlannerParseError as e:

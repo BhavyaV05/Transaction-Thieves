@@ -32,6 +32,9 @@ import polars as pl  # noqa: E402
 
 from ftm import guards  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS  # noqa: E402
+from ftm.external.dspy_react import DspyReact  # noqa: E402
+from ftm.external.lats import Lats  # noqa: E402
+from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
@@ -46,7 +49,8 @@ from ftm.planners.llm_prompt import Mode  # noqa: E402
 from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
-GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo}
+GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
+           "dspy_react": DspyReact}
 
 
 def git_commit() -> str:
@@ -140,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--toolbox", choices=["dev", "harness"], default="dev")
     ap.add_argument("--thinking", action="store_true", help="Qwen3 thinking mode (off by default, see docs/t3_week0.md)")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
+    ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
     ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "runs")
@@ -162,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
     if a.system == "planner":
         system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, seed=a.seed, extra=extra,
-                            use_library=a.library is not None)
+                            use_library=a.library is not None, keep_prompts=a.keep_prompts)
         system_name = system.system_name
     else:
         system = GROUP_D[a.system](llm, seed=a.seed, extra=extra)
