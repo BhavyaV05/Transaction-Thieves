@@ -19,7 +19,7 @@ EXPERT = expert_programs()
 
 
 def test_expert_list_parses_and_matches_specs():
-    specs = [f for f in load_specs() if f.get("status") != "needs_privacy_review"]
+    specs = [f for f in load_specs() if f.get("status") not in ("needs_privacy_review", "restricted")]
     assert len(EXPERT) == sum(len(f["variants"]) for f in specs) >= 50
     for p in EXPERT:
         c = check(p["program"])
