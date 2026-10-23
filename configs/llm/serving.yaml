@@ -25,7 +25,7 @@ models:
     revision: 4da05a8edb55c6046cce958586c33b61da07bb79
     licence: apache-2.0
     max_model_len: 8192                    # >= Limits.max_tokens (6000 prompt) + room for the answer
-    gpu_memory_utilization: 0.90
+    gpu_memory_utilization: 0.85           # was 0.90: on Linux with the KDE desktop (~1.6 GB VRAM) 0.90 fails the free-memory check
     reasoning_parser: qwen3
   qwen3-4b:                                # System 1 fast model base (C13) and harness smoke tests
     repo: Qwen/Qwen3-4B-AWQ
