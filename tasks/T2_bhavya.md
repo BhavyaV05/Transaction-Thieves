@@ -44,8 +44,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] Co-Investigator / FinFRE-RAG ports (secondary), native + ported (`ftm/external/GROUPC_T2.md`); runs on the real backbone need the endpoint
 
 ## Week 8
-- [ ] Async mode (stretch prep)
-- [ ] back-testing rerun for held-out cycles (with Abhishek)
+- [x] Async mode (stretch prep): waves, batched planners, SimPy runner, sequential-vs-batched study (`ftm/orchestrator/README.md`)
+- [x] back-testing rerun for held-out cycles: loader flag, CLI flag, transfer report (the real run needs `data/` and T1)
 
 ## Week 9
 - [ ] All non-LLM planners + ablation configs on val. **G4**

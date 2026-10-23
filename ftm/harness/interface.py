@@ -59,6 +59,14 @@ class SessionToolBox(ToolBox, Protocol):
     def wrap(self, investigator: Investigator) -> Investigator: ...
 
 
+@runtime_checkable
+class BatchToolBox(SessionToolBox, Protocol):
+    """Extension (not part of the frozen v1 contract): ask several questions as one wave. The wave costs its slowest
+    answer. Each request is (bank, program, eps); each result is the response or the refusal exception."""
+
+    def ask_banks(self, requests: list[tuple]) -> list: ...
+
+
 class ScriptedToolBox:
     """Placeholder mock (superseded by `ftm.harness.make_toolbox(mode="mock")`, which also goes through the gate) so T3/T4 can develop before harness v0 (week 3). T2 replaces this with the real
     mock mode. Returns the scripted responses in order and records the calls."""

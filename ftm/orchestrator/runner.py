@@ -29,15 +29,16 @@ SYSTEMS = ("random", "fixed", "eig", "enumerator")
 
 
 def build_planner(system: str, pool: QuestionPool, seed: int = 0, eps: float = 1.0, threshold: float | None = None,
-                  ranking: Sequence[str] | None = None, max_size: int = 4):  # fmt: skip
+                  ranking: Sequence[str] | None = None, max_size: int = 4, waves: tuple[int, ...] | None = None):  # fmt: skip
+    """`waves`: batched mode (E13), e.g. (2, 1) = two questions asked together, then one more."""
     if system == "random":
-        return RandomPlanner(pool, threshold=threshold, seed=seed)
+        return RandomPlanner(pool, threshold=threshold, waves=waves, seed=seed)
     if system == "fixed":
-        return FixedOrderPlanner(pool, threshold=threshold, ranking=tuple(ranking or expert_ranking()), eps=eps)
+        return FixedOrderPlanner(pool, threshold=threshold, waves=waves, ranking=tuple(ranking or expert_ranking()), eps=eps)
     if system == "eig":
-        return EIGPlanner(pool, threshold=threshold)
+        return EIGPlanner(pool, threshold=threshold, waves=waves)
     if system == "enumerator":
-        return EnumeratorPlanner(pool, threshold=threshold, max_size=max_size)
+        return EnumeratorPlanner(pool, threshold=threshold, waves=waves, max_size=max_size)
     raise ValueError(f"system must be one of {SYSTEMS}")
 
 
@@ -53,12 +54,13 @@ def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Lim
     """Investigate every alert in a fresh harness session and score the verdicts against the labels."""
     tools = harness.toolbox()
     system = tools.wrap(planner)
-    rows, verdicts, p0s, ps, ys, secs = [], [], [], [], [], []
+    rows, verdicts, p0s, ps, ys, secs, sims = [], [], [], [], [], [], []
     for a in alerts:
         ctx = alert_context(a.binding, a.p0, split)
         t = time.perf_counter()
         v = system.investigate(ctx, tools, limits)
         secs.append(time.perf_counter() - t)
+        sims.append(tools.last_elapsed_days)
         rows += verdict_rows(v, {**base, "split": split, "alert_id": a.alert_id}, int(a.label))
         verdicts.append(v)
         p0s.append(a.p0)
@@ -73,6 +75,8 @@ def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Lim
         "mean_eps": float(np.mean([sum(e.eps for e in v.questions_log if hasattr(e.response, "eps_spent"))
                                    for v in verdicts])) if verdicts else 0.0,
         "mean_seconds_per_alert": float(np.mean(secs)) if secs else 0.0,
+        "mean_sim_days": float(np.mean(sims)) if sims else 0.0,
+        "p95_sim_days": float(np.percentile(sims, 95)) if sims else 0.0,
         "eps_cal": None,
     }  # fmt: skip
     summary["brier_gain"] = summary["brier_p0"] - summary["brier_final"]
