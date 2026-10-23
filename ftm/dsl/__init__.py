@@ -1,10 +1,6 @@
-"""dsl: Typed question language: Lark grammar, parser, type checker, canonical form, sensitivity, Polars executor, size measure, ~60 expert questions.
+"""Question language (C4). Owner: T2. Grammar: grammar.lark; types: spec.py; parser/checker: parser.py;
+exact execution: executor.py; the expert list: expert.py. Docs: README.md."""
 
-Owner: T2 (Bhavya).  Component: C4.  Tier: Core.
-Spec: plan.md 6.5; tracks.md 4.3.
+from pathlib import Path
 
-First steps:
-  - grammar v0 to Akshat in week 1
-  - slots relative to the alert (ALERT.payers, ALERT.receiver, ALERT.arrival_day)
-  - executor cross-checked on 50 toy graphs
-"""
+GRAMMAR_PATH = Path(__file__).with_name("grammar.lark")

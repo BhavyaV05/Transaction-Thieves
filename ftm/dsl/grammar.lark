@@ -1,0 +1,18 @@
+// Question language (C4), grammar v0. Owner: T2 (Bhavya). Types and meaning: ftm/dsl/spec.py, docs: ftm/dsl/README.md.
+//   n_counterparties(ALERT.receiver, dir=in, window=before(72))
+//   at_least(n_tx(ALERT.receiver, dir=in, window=before(72), max_amount=3000), k=5)
+// No account id, alias, date or amount of a specific transaction is part of the language: slots are relative
+// to the alert. The grammar only fixes the shape; the type checker (ftm/dsl/parser.py) decides what is valid.
+
+start: expr
+expr: NAME "(" [arg ("," arg)*] ")"
+?arg: kwarg | value
+kwarg: NAME "=" value
+?value: expr | slot | NUMBER -> number | NAME -> ident | list
+slot: "ALERT" "." NAME
+list: "[" [value ("," value)*] "]"
+
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+NUMBER: /-?\d+(\.\d+)?([eE][-+]?\d+)?/
+%import common.WS
+%ignore WS

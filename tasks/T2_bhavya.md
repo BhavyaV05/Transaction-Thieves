@@ -4,18 +4,20 @@ Checklist generated from tracks.md section 4.10. Read the whole track section fi
 Tick items off in your PRs and post one line per week in STATUS.md. Weeks count from TA approval (G0).
 
 ## Week 0
-- [ ] Install SimPy, Lark
-- [ ] DSL grammar sketch
-- [ ] report RAM/CPU
+- [x] Install SimPy, Lark
+- [x] DSL grammar sketch
+- [x] report RAM/CPU
 - [ ] small-model smoke test (Qwen3-1.7B / 4B-4bit)
 
 ## Week 1
-- [ ] DSL parser + executor
-- [ ] start expert questions with Shreyas
-- [ ] agree run-log schema with Shreyas. **Grammar v0 to Akshat**
+- [x] DSL parser + executor (`ftm/dsl`, `tests/test_dsl*.py`)
+- [x] start expert questions with Shreyas (55 programs for T4's 28 askable families, `ftm/dsl/expert.py`; `entity_accounts` and `internal_chain` sensitivity need his call)
+- [ ] agree run-log schema with Shreyas
+- [x] **Grammar v0 to Akshat** (`ftm/dsl/README.md`; handed over once the PR is up)
 
 ## Week 2
-- [ ] Partner banks, DP mechanisms, accountant. **G1**
+- [x] Partner banks (`ftm/banks`), DP mechanisms and accountant (`ftm/privacy`), see `ftm/banks/README.md`
+- [ ] **G1**: needs T1's one-bank/alert results and T3's endpoint; the banks, DP and accountant side is ready
 
 ## Week 3
 - [ ] Realistic back-testing
