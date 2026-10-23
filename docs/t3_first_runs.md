@@ -73,3 +73,62 @@ Server up time (wall clock): Qwen3-8B 795 s (load, both planner runs, 8B scoring
 
 - Planner has nothing to fuse until it asks accepted questions: needs either a table with more accepted rows (T2/T4, more eps levels at 0.25 and 0.5 have 0 accepted) or select mode / library to steer it onto the 23. T4: fusion-params fit on val would change nothing without accepted LRs.
 - T2: `askable_ids` reads the harness's private `bindings` (already noted in `run_llm_agent.py`).
+
+## After fixes (2026-10-23, branch `t3/planner-quality`)
+
+Same 20 HI-Medium val-fit alerts (hash `7118abb7f8f5bc1b`), same seed 0, same back-test table, Qwen3-8B-AWQ, thinking off, harness world. n=20, descriptive only. Run dirs: `outputs/t3_first/runs/{planner20_after, planner20_after_nomenu, react20_after}` (the "before" columns are `planner20`, `react20` above). `planner20_after_nomenu` has every fix except the select menu (`--no-select-menu`), to separate the two effects. The typology re-score ran the full report once (one pass, no iteration on it); prompt variants for typology were compared on 240 val-fit rows only.
+
+### Root causes and fixes
+
+| # | Finding | Root cause | Fix |
+|---|---|---|---|
+| 1 | Planner asked 0 accepted questions | The compose prompt never showed the back-tested questions: `run_llm_agent.py` passed no `questions`, so "select" did not exist and the 8B composed free-form programs (33 of 79 landed in the table, 0 of the 23 accepted rows). tracks.md 5.4: the planner may *select* a library question or *compose* one, and only back-tested ones move the posterior. | `accepted_menu()` (ftm/llm/backtest_table.py): one item per accepted canonical program (accepted eps levels merged, neutral order, ids B01..), shown as "Back-tested questions (select by id, or compose a new one)" with the eps it may be asked at and its LR per answer (per eps when several). Filtered per alert by slot binding (`applicable_to`: only `ALERT.sender/receiver` are bound, set-slot questions are hidden). A selected question is asked at an accepted eps (nearest; logged as `eps_requested`). `no_backtest` strips eps and LRs; `fixed_list` now has a list. The per-mode JSON schema still constrains every field. |
+| 2 | 36/79 planner and 23/76 ReAct gate refusals | Harness-world mismatch, not the gate. All 36 planner refusals were `GateBlocked: bank N is not a partner bank`: the prompt listed the 29 banks of the bank table, the harness models 27. The models picked unmodelled banks (e.g. 114) and, since refusals did not count as failures, repeated them (the two 20-call loops). | `run_llm_agent.py` intersects `partner_banks` with the harness banks for every system (`modelled_banks`). Refusals now count toward the 3-in-a-row stop rule, the gate's reason is fed back (and shown in ReAct's observation), a refused (question, bank) is not re-sent, and a "used up" refusal (clock or eps) ends the loop. |
+| 3 | 18 invalid DSL (14 bare function names), 17 duplicates | The 8B wrote a bare function name into `program` and ignored the one-line error. | (a) `program` has a regex in the guided-decoding schema (outline only; T2's validator still decides). (b) Retry feedback = the error plus a valid example of the function it tried to use, or the closest functions with examples (`retry_hint`, read from T2's reference text; ReAct uses it too). (c) Output section shows a full-call example; the system prompt says a (bank, question) is asked once and an eps-e question uses e. (d) Duplicate feedback names a bank not yet asked that question. |
+| 3b | (new) 7 of 20 first prompts over the cap once the menu was added | `estimate_tokens` (3.2 chars/token) under-counts evidence rows (aliases and amounts tokenise at about 1.7 chars/token): the server counted up to 22 percent more. | Trim loop adds 0.30 tokens per evidence character. Largest prompt 5,905 of 6,000, 0 `PromptTooLong`. |
+| 4 | ReAct: 10 of 20 never finished | 5 ended on a timeout/decline that pushed the simulated clock past 5 days (loop stops, no way to answer); 3 looped on gate refusals (cause 2); 2 hit the shared 6,000-token prompt cap as the history grew. `finish[...]` parsing was not the problem. | After the loop, if calls remain, ReAct makes **one** wrap-up call (inside the same 20-call cap, no extra budget) with a compact prompt (system + case + one line per question asked) that asks only for `finish[p]`. Plus causes 2 and 3. |
+| 5 | Typology accuracy 0.01 to 0.12 | Not a token collision: the 9 letters A..I are distinct single tokens and are read correctly. The 8B answered `A` (= `fan_in`) for 240 of 240 sampled val-fit rows because the prompt gave only names and no way to say "no pattern". Separately the typology contexts hold no signal (below). | `Decision.hint`: one-line definitions of the 8 patterns and "Choose none when the text shows no clear pattern" (inference and SFT examples alike). |
+
+### Typology after the prompt fix (4B fast tier and 8B large tier re-scored on typology rows only; other rows reuse the cache)
+
+| | before | after |
+|---|---|---|
+| 4B argmax accuracy (eval) | 0.403 | 0.679 |
+| 8B JSON / logprob accuracy | 0.124 / 0.013 | 0.546 / 0.679 |
+| fitted T | 4.59 | 7.66 |
+| kept by 4B / to 8B / default | 0 / 0 / 1.0 | 0 / 0 / 1.0 |
+
+0.679 is the share of `none` among eval typology rows: both models now answer `none` almost everywhere, so the improvement is the majority-class rate, not signal. The typology contexts in `decisions_*.jsonl` are the alert's own single payment ("1 payments in from 1 home-side accounts ..."), the same shape for all nine labels, and each alert appears 4 times (190 val-fit alerts, 760 rows). No model can recover the pattern from that text; the cascade still defers 100 percent. This is a dataset issue for T2. `stop` (T = 20.0) is not a prompt bug: about 81 percent of labels are yes, driven by "Answers so far (n)", eps left and posterior vs threshold in the context, which the zero-shot 4B does not use; left for fine-tuning. Files: `outputs/t3_first/fast_after/`.
+
+### Before / after (20 alerts)
+
+| | planner before | planner after (menu) | planner after, no menu | ReAct before | ReAct after |
+|---|---|---|---|---|---|
+| valid-DSL rate | 0.842 | 1.000 | 0.986 | 0.96 (asks not rejected as invalid) | 0.975 |
+| questions asked (reached gate) / per alert | 79 / 3.95 | 21 / 1.05 | 58 / 2.90 | 76 / 3.80 | 44 / 2.20 |
+| accepted-question count (asked with an accepted LR) | **0** | **19** (19 of 20 alerts) | 0 | 0 | 1 |
+| gate refusals | 36 | 0 | 1 | 23 | 0 |
+| duplicates | 17 | 1 | 11 | 2 | 5 |
+| alerts at the 20-call cap | 2 | 0 | 0 | 1 | 0 |
+| verdicts without probability | 0 | 0 | 0 | 10 | 0 |
+| Brier (p0 Brier 0.0819) | 0.0819 | 0.1148 | 0.0819 | 0.1429 | 0.2436 |
+| seconds per alert, median / p90 / max | 7.5 / 11.5 / 35.2 | 2.0 / 2.1 / 5.9 | 5.7 / 10.6 / 13.5 | 4.8 / 6.7 / 15.8 | 4.5 / 6.4 / 7.2 |
+| LLM calls per alert | 5.7 | 1.1 | 3.5 | 6.1 | 5.2 |
+| largest prompt (tokens; ReAct: largest per-alert mean) | 5,515 | 5,905 | 5,646 | 5,702 | 5,656 |
+
+Reading (n=20, nothing here is a result):
+- The menu fixes coverage (0 to 19 accepted questions), but the 8B then asks the same question on 18 of 20 alerts (`n_repeated(ALERT.receiver, window=around(168))` at eps 2, the widest LR range in the menu), which spends the whole eps 2 budget, so it asks one question and stops. That is a rational read of the displayed statistics, not alert-specific reasoning. With accepted LRs live, the posterior is worse than p0 on these 20 (Brier 0.1148 vs 0.0819; 14 of 20 positive, p0 already informative). Whether the table's LRs help on a larger set is T4's fusion question.
+- ReAct now always answers; its Brier is worse because its own probabilities are unfused and uncalibrated (the 10 missing verdicts used to be scored as p0, which flattered it). Fairness kept: same 20-call and prompt caps, the wrap-up call comes out of the same budget, and ReAct does not see the back-test menu (that is the planner's own mode).
+- No-menu planner: validity 0.84 to 0.99 and the refusal loops are gone, but it still composes outside the accepted rows (0 accepted of 58 asks).
+- Latency: one question per alert puts the menu planner at 2 s, below the 8 to 20 s target; the no-menu planner (5.7 s median, 10.6 s p90) is closer. Not tuned.
+- Overfitting guard: every change is general (bank list, menu from the table, token estimate, guided pattern, feedback text); nothing refers to an alert id or a specific question.
+
+### GPU time
+
+Server up: Qwen3-8B 1,493 s (reruns, typology experiments, 8B typology scoring) + Qwen3-4B about 100 s = 0.44 h; GPU back at about 1.6 GB idle.
+
+### For T2 / T4
+
+- T2: (1) `partner_banks` of a real alert come from the bank table (29) but the harness models 27; expose the modelled banks (and bindings) publicly. Repro: hi_medium val alert V000553, `ask_bank(114, "n_tx(ALERT.sender, dir=in, window=before(72))", 0.5)` raises `GateBlocked: bank 114 is not a partner bank` although 114 is in the alert's partner list. (2) Typology decision contexts do not contain the evidence and repeat 4 rows per alert. (3) One timeout of 3.4 days leaves 1.6 days, which ends most sessions after 2 questions; confirm that is intended.
+- T4: with live accepted LRs the naive summed fusion moves p0 the wrong way on these 20; check `FusedLR` fitted on val. Should Group D ports see the back-tested question list (plan.md 7.2)? Only our planner does now.
+- Group D: Reflexion, ReWOO, LATS, LLMCompiler share `ToolExecutor` (retry hint, refusal reason) but only ReAct got the wrap-up call.

@@ -17,4 +17,4 @@ Convert laptop hours with the week-0 benchmark factor (see `docs/hardware.md`). 
 | Week | 5070 Ti PC | 3070 Ti laptop | 3050 Ti laptop | CPU-only | Total GPU | Cumulative |
 |---|---|---|---|---|---|---|
 | 0 | 0.2 (2026-10-23: vLLM smoke test, ~10 min of server time incl. failed starts, factor 1.0) | | | n/a | 0.2 | 0.2 |
-| 8 | 0.26 (2026-10-23: first real runs, Qwen3-8B 795 s + Qwen3-4B 136 s of server time, factor 1.0; `docs/t3_first_runs.md`) | | | n/a | 0.26 | 0.46 |
+| 8 | 0.70 (2026-10-23: first real runs 0.26 h, Qwen3-8B 795 s + Qwen3-4B 136 s; planner-quality reruns 0.44 h, Qwen3-8B 1,493 s + Qwen3-4B about 100 s; factor 1.0; `docs/t3_first_runs.md`) | | | n/a | 0.70 | 0.90 |
