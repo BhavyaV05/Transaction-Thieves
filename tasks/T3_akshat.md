@@ -37,10 +37,10 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] planner-view decision with Abhishek (default: train on top-40, the current stub)
 
 ## Week 8
-- [ ] LATS, LLMCompiler (secondary)
+- [x] LATS (adapted: no rollouts, since bank answers cannot be reset), LLMCompiler (parallel waves count the slowest answer) (secondary)
 
 ## Week 9
-- [ ] DSPy-tuned ReAct
+- [ ] DSPy-tuned ReAct: program, fair LM adapter (our BudgetedClient) and MIPROv2 `optimize()` written and tested on mocks; the optimisation run needs val alerts through the harness and the endpoint
 - [ ] fine-tuned models ready. **G4**
 
 ## Week 10

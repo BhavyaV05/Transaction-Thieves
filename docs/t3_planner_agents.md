@@ -64,7 +64,9 @@ The tool grammar is the same for every port (`text_agent.py`): `ask_bank[bank | 
 | ReAct | **done** (week 4) | Reimplementation; official code MIT, nothing copied | Interleaved Thought/Action/Observation, a stop sequence before Observation, Finish ends the episode. One in-domain exemplar, written by us and shared by every port |
 | Reflexion | **done** (week 6) | Reimplementation; official code MIT, nothing copied | Actor (our ReAct loop), Evaluator, verbal Self-Reflection, episodic memory across trials on the same alert. **Adaptations:** the evaluator is the LLM judging itself (labels are never shown); all trials share one ε budget, call cap and `Investigation`, so later trials see the real answers already received |
 | ReWOO | **done** (week 6) | Reimplementation; official code MIT, nothing copied | Planner writes the whole plan (`#E<n> = tool[args]`, later steps may cite `#E<k>`), the Worker runs it with no LLM call, the Solver gives `finish[p]`. 2 LLM calls per alert. The Solver output must be `finish[p]` or a bare number; a stray number is never taken as the answer |
-| LATS, LLMCompiler, DSPy-ReAct | weeks 8–9 | | |
+| LATS | **done** (week 8), **adapted** | Reimplementation; official code MIT, nothing copied | Expansion (n sampled children, one call each), an LM value function (one call scores all children), executing the best child, and backtracking to the best unexecuted child when an action fails. **Dropped:** simulated rollouts and value back-propagation, because every `ask_bank` spends ε and cannot be reset. Labelled "LATS (adapted: no rollouts)" |
+| LLMCompiler | **done** (week 8) | Reimplementation; official code MIT, nothing copied | Planner (numbered tasks, `$k` dependencies, `join()`), Task Fetching Unit (waves of independent tasks inside `Investigation.parallel()`, so simulated time = the slowest answer per wave; relevant to RQ5/E13), and a Joiner that finishes or replans (up to 2 replans) |
+| DSPy-tuned ReAct | **code done** (week 9); **not yet optimised** | The library (dspy 3.4.x, MIT) | `dspy.ReAct` over the shared tools. Every LM call goes through our `BudgetedClient` (DSPy cache off), `max_iters = max_llm_calls − 1`. `optimize()` runs MIPROv2 with 1 − Brier as the metric on **validation** alerts (tuning parity) |
 
 End-to-end probability is the number in `finish[...]`. It is `None` if the calls run out first. The run script scores a `None` as `p0` and counts these cases in `summary.json`; T4's eval code should use the same rule (to agree). Questions-only scoring uses the questions log, as for every system.
 
@@ -90,7 +92,7 @@ End-to-end probability is the number in `finish[...]`. It is `None` if the calls
 python scripts/run_llm_agent.py --system planner --mode compose --n 5
 python scripts/run_llm_agent.py --system react --n 5
 
-python scripts/run_llm_agent.py --system reflexion --n 5        # or rewoo
+python scripts/run_llm_agent.py --system reflexion --n 5        # or rewoo, lats, llmcompiler, dspy_react (needs pip install -e .[llm])
 
 # record a real run, replay it later without a GPU (token counts and latency replay too)
 python scripts/run_llm_agent.py --system planner --llm endpoint --record outputs/cassettes/p20.jsonl ...
