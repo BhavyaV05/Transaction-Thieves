@@ -92,3 +92,4 @@ class Verdict:
     tokens_out: int = 0
     llm_calls: int = 0
     gpu_seconds: float = 0.0
+    trials: int | None = None  # Reflexion: trials run on this alert; None for systems without trials

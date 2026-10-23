@@ -29,6 +29,7 @@ class ConformalSet:
         self.alpha = alpha
         self.q: dict[str, float] = {}
         self.n: dict[str, int] = {}
+        self.fallback: dict[str, bool] = {}  # too few calibration points: the set is the full label set (always defer)
 
     def fit(self, decisions: list[str], probs: list[dict[str, float]], labels: list[str]) -> ConformalSet:
         scores: dict[str, list[float]] = defaultdict(list)
@@ -39,7 +40,12 @@ class ConformalSet:
             k = math.ceil((n + 1) * (1 - self.alpha))
             self.q[d] = sorted(s)[k - 1] if k <= n else 1.0  # too few calibration points: the full set
             self.n[d] = n
+            self.fallback[d] = k > n
         return self
+
+    def fell_back(self, decision: str) -> bool:
+        """True when this decision type has no usable calibration (unseen or too few rows): its set is the full set."""
+        return self.fallback.get(decision, True)
 
     def predict_set(self, decision: str, probs: dict[str, float]) -> list[str]:
         q = self.q.get(decision, 1.0)

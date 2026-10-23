@@ -75,3 +75,4 @@ tests/        pytest; CI runs the CPU-only tests
 6. **Branches:** `t<N>/<short-topic>`, PR into `main`, reviewed by your pair partner within two working days. CI must pass (ruff + CPU tests).
 7. **Don't commit** data, weights, or CSV/Parquet. Large derived artifacts are shared via the agreed cloud folder with a hash manifest (decision 6 in `plan.md` section 16).
 8. **Trained weights are never released** (`plan.md` section 10).
+9. **No AI-assistant attribution** in commits or PRs: no `Co-Authored-By:` trailers for AI tools and no "Generated with ..." footers in PR descriptions. The author of record is the person who opens the PR.

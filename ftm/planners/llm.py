@@ -26,7 +26,7 @@ from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, NaiveLRFusion, outcome
 from ftm.planners.llm_batches import QuestionBatchWriter
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.planners.llm_prompt import (
     EPS_LEVELS,
     Mode,
@@ -37,7 +37,7 @@ from ftm.planners.llm_prompt import (
     parse_action,
     planner_schema,
 )
-from ftm.types import AlertContext, Limits, Verdict
+from ftm.types import AlertContext, Limits, Reply, Verdict
 
 EvidenceFn = Callable[[AlertContext, ToolBox], str]
 RULES_QUERY = "sharing information with another financial institution about suspected money laundering"
@@ -75,6 +75,10 @@ class PlannerStats:
     def usable_output_rate(self) -> float:
         return (self.stops + self.dsl_ok) / self.outputs if self.outputs else float("nan")
 
+    def as_counts(self) -> dict:
+        """The integer counters, so a caller can take per-alert differences (E18 per_alert.jsonl)."""
+        return {k: getattr(self, k) for k in ("outputs", "json_ok", "stops", "questions", "dsl_ok", "duplicates")}
+
     def as_dict(self) -> dict:
         s = sorted(self.seconds_per_alert)
         return {"alerts": self.alerts, "outputs": self.outputs, "json_parse_rate": self.json_parse_rate,
@@ -103,10 +107,11 @@ class LLMPlanner:
         extra: dict | None = None,
         max_failures_in_row: int = 3,
         keep_prompts: bool = False,
+        max_output_tokens: int | None = None,
     ):
         self.llm = llm
         self.mode = Mode(mode)
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.questions = {q["id"]: q for q in (questions or [])}
         if self.mode is Mode.FIXED_LIST and not self.questions:
@@ -117,6 +122,7 @@ class LLMPlanner:
         self.batch_writer = batch_writer
         self.temperature, self.seed, self.extra = temperature, seed, extra
         self.max_failures_in_row = max_failures_in_row
+        self.max_output_tokens = max_output_tokens  # None = the JSON-sized default; E18 thinking arm: 1,024 per step
         self.keep_prompts = keep_prompts  # teacher runs: traces keep the exact prompts for distillation
         self.stats = PlannerStats()
         self.last_trace: list[dict] = []
@@ -163,7 +169,7 @@ class LLMPlanner:
             try:
                 msgs = build_messages(self.mode, state, self.dsl, limits.max_tokens)
                 resp = budget.chat(msgs, json_schema=planner_schema(self.mode, state),
-                                   max_tokens=output_token_budget(self.mode), temperature=self.temperature,
+                                   max_tokens=self.max_output_tokens or output_token_budget(self.mode), temperature=self.temperature,
                                    seed=self.seed, extra=self.extra)  # fmt: skip
             except (BudgetExceeded, PromptTooLong, PlannerParseError) as e:
                 rec["error"] = f"{type(e).__name__}: {e}"
@@ -208,6 +214,8 @@ class LLMPlanner:
             failures, feedback = 0, None
             rec.update(canonical=check.canonical, bank=action.bank, eps=action.eps, outcome=outcome(entry),
                        posterior_after=entry.posterior_after)  # fmt: skip
+            if isinstance(entry.response, Reply):  # the answer, so distillation can re-fuse with the real fusion model
+                rec.update(answer_value=entry.response.value, answer_kind=entry.response.kind)
             if action.action == "compose" and self.batch_writer is not None and entry.gate_decision == "allowed":
                 self.batch_writer.add(canonical=check.canonical, kind=check.kind, family=check.family, eps=action.eps,
                                       bank=action.bank, alert_id=alert.alert_id, split=alert.split, step=step,
