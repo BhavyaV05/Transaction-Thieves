@@ -107,6 +107,28 @@ class ToolExecutor:
         return self._ask(call.arg, step)
 
     def _ask(self, arg: str, step: int) -> str:
+        prep = self._prepare_ask(arg)
+        if isinstance(prep, str):
+            return prep
+        bank, check, eps = prep
+        try:
+            entry = self.session.ask(bank, check, eps, step)
+        except DuplicateQuestion as e:
+            return self._duplicate_obs(e)
+        return self._ask_obs(entry)
+
+    @staticmethod
+    def _duplicate_obs(e: Exception) -> str:
+        return f"{e}. Its answer is above; ask something else or finish."
+
+    def _ask_obs(self, entry) -> str:
+        obs = describe(entry)
+        if entry.gate_decision != "allowed" and self.session.last_refusal:
+            obs += f" Reason: {self.session.last_refusal}."
+        return obs + f" eps left: {self.session.eps_left:g}."
+
+    def _prepare_ask(self, arg: str):
+        """Validate an ask_bank argument: an observation string if it is bad, else (bank, DslCheck, eps)."""
         parts = [p.strip() for p in arg.split("|", 2)]
         if len(parts) != 3:
             self.n_invalid += 1
@@ -128,11 +150,26 @@ class ToolExecutor:
         if not check.ok:
             self.n_invalid += 1
             return f"Invalid question: {check.error}. {retry_hint(program, check.error, self.dsl.reference_text())}"
-        try:
-            entry = self.session.ask(bank, check, eps, step)
-        except DuplicateQuestion as e:
-            return f"{e}. Its answer is above; ask something else or finish."
-        obs = describe(entry)
-        if entry.gate_decision != "allowed" and self.session.last_refusal:
-            obs += f" Reason: {self.session.last_refusal}."
-        return obs + f" eps left: {self.session.eps_left:g}."
+        return bank, check, eps
+
+    def run_wave(self, calls: list[tuple[ToolCall, int]]) -> list[str]:
+        """Run independent (call, step) pairs as one wave: the ask_bank calls are validated first, then sent together
+        through Investigation.ask_wave (the wave costs its slowest answer); other tools run as in run(). Observations
+        come back in order and are logged like run() does."""
+        obs: list[str | None] = [None] * len(calls)
+        pending: list[tuple[int, tuple]] = []
+        for i, (call, step) in enumerate(calls):
+            if call.tool == "ask_bank":
+                prep = self._prepare_ask(call.arg)
+                if isinstance(prep, str):
+                    obs[i] = prep
+                else:
+                    pending.append((i, (*prep, step)))
+            else:
+                obs[i] = self._run(call, step)
+        if pending:
+            for (i, _), res in zip(pending, self.session.ask_wave([r for _, r in pending]), strict=True):
+                obs[i] = self._duplicate_obs(res) if isinstance(res, DuplicateQuestion) else self._ask_obs(res)
+        for (call, step), o in zip(calls, obs, strict=True):
+            self.log.append({"step": step, "tool": call.tool, "arg": call.arg, "observation": o})
+        return obs  # type: ignore[return-value]
