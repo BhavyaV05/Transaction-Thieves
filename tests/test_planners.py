@@ -246,6 +246,26 @@ def test_verdict_rows_keep_refusals_as_steps():
     assert verdict_rows(r.verdicts[0], {"alert_id": "a"})[-1]["event"] == "verdict"
 
 
+def test_run_log_rows_fill_the_v1_fields_scoring_needs():
+    from ftm.eval.runlog import RUN_LOG_COLUMNS, validate
+
+    w, val, pool = make_env()
+    h = make_harness(w.banks, {a.alert_id: a.binding for a in val}, eps_levels=(1.0, 2.0))
+    base = {"system": "random", "run_id": "x", "variant": "t", "seed": 0, "commit": "", "machine": ""}
+    r = run_alerts(build_planner("random", pool), val[:6], h, Limits(), base)
+    frame = to_frame(r.rows)
+    assert not validate(frame.columns, set(frame["event"]))
+    v = frame.filter(pl.col("event") == "verdict")
+    for c in ("home_bank", "p0", "eps_spent", "sim_days", "stop_reason", "trials"):
+        assert v[c].null_count() == 0, c
+    assert set(v["stop_reason"]) <= {"budget", "fast_clear", "cannot_cross", "finish"}
+    assert (v["trials"] == 1).all()
+    asked = frame.filter((pl.col("event") == "step") & (pl.col("response_kind") == "reply"))
+    assert len(asked) and asked["family"].null_count() == 0 and asked["kind"].null_count() == 0
+    assert asked["log_lr"].null_count() == 0  # the pool only holds accepted questions, so every answer has an LR
+    assert set(RUN_LOG_COLUMNS) == set(frame.columns)
+
+
 # --- the enumerator's search space ---------------------------------------------------------------------------------
 def test_enumeration_respects_the_size_bound_and_is_canonical_and_stable():
     for n in (2, 3, 4):
