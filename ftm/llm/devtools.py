@@ -11,7 +11,9 @@ import json
 import random
 import re
 
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.dsl.parser import parse
+from ftm.dsl.spec import PRIMS
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.types import BankResponse, Decline, Reply, Timeout
 
 DEV_RULES = [
@@ -26,7 +28,7 @@ class DevRandomToolBox:
     def __init__(self, seed: int = 0, p_decline: float = 0.05, p_timeout: float = 0.02, dsl: DslAdapter | None = None):
         self.rng = random.Random(seed)
         self.p_decline, self.p_timeout = p_decline, p_timeout
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.calls: list[tuple] = []
 
     def local_graph(self, query: str, as_of: str) -> list[dict]:
@@ -45,8 +47,7 @@ class DevRandomToolBox:
             value = self.rng.random() < 0.5
         elif kind == "kary":
             try:
-                _, args = ProvisionalDsl().parse(program)
-                banks = next(a[2] for a in args if isinstance(a, tuple) and a[0] == "kw" and a[1] == "banks")
+                banks = list(parse(program).arg("banks"))
             except Exception:  # noqa: BLE001 - dev only: another DSL's syntax
                 banks = [0]
             value = self.rng.choice(banks)
@@ -68,9 +69,7 @@ def dev_responder(messages: list[dict], kw: dict, n_questions: int = 2) -> str:
     Structured requests (our planner) get planner JSON built from the schema's enums; free-text requests (Group D
     text loops) get a ReAct-style Thought/Action.
     """
-    from ftm.planners.llm_dsl import FUNCTIONS
-
-    examples = [f.example for f in FUNCTIONS.values()]
+    examples = [p.example for p in PRIMS.values() if not p.restricted]
     schema = kw.get("json_schema")
     if schema:
         user = messages[-1]["content"]

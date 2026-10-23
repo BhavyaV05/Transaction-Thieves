@@ -7,12 +7,12 @@ from ftm.external.llmcompiler import LlmCompiler, parse_tasks, waves
 from ftm.harness.interface import Investigator, ScriptedToolBox
 from ftm.llm.investigation import Investigation
 from ftm.llm.mock import MockLLM
-from ftm.planners.llm_dsl import ProvisionalDsl
+from ftm.planners.llm_dsl import V0Dsl
 from ftm.types import AlertContext, Decline, Limits, Reply
 
-DSL = ProvisionalDsl()
-Q1 = "passthrough(ALERT.receiver, min_frac=0.8, within_h=24)"
-Q2 = "fan_in(ALERT.receiver, min_senders=5, window_h=48)"
+DSL = V0Dsl()
+Q1 = "passed_on(ALERT.receiver, window=after(24), min_frac=0.8)"
+Q2 = "at_least(n_counterparties(ALERT.receiver, dir=in, window=before(48)), k=5)"
 ALERT = AlertContext("V9", "70", "2022-09-05T12:00:00", "val", 0.2,
                      {"receiver": "R", "evidence": "rows", "partner_banks": [220, 1588]})  # fmt: skip
 

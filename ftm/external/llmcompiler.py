@@ -20,7 +20,7 @@ from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import Fusion, Investigation, NaiveLRFusion
-from ftm.planners.llm_dsl import DslAdapter, ProvisionalDsl
+from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.types import AlertContext, Limits, Verdict
 
 from .rewoo import solver_probability
@@ -80,7 +80,7 @@ class LlmCompiler:
                  max_replans: int = 2, plan_tokens: int = 512, join_tokens: int = 96, temperature: float = 0.0,
                  seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm = llm
-        self.dsl = dsl or ProvisionalDsl()
+        self.dsl = dsl or V0Dsl()
         self.fusion = fusion or NaiveLRFusion()
         self.max_replans, self.plan_tokens, self.join_tokens = max_replans, plan_tokens, join_tokens
         self.temperature, self.seed, self.extra = temperature, seed, extra
