@@ -8,6 +8,11 @@ Loop per alert (one LLM call per step, through BudgetedClient so the shared caps
   2. parse the step; on a bad JSON / bad DSL / repeated question, feed the error back and retry (costs a call);
   3. select -> listed question; compose -> new DSL question (exported for back-testing, hand-off #8); stop -> end;
   4. ask through Investigation.ask (gate + accountant behind ToolBox.ask_bank) and update the posterior.
+Batched option (E13, H8): `batch_schedule=(2, 1)` makes planner step i propose up to schedule[i] questions in one JSON
+object; they go out as ONE wave (Investigation.ask_wave: the clock advances by the slowest answer), then the next
+step. Same definition as T2's `waves=` for the non-LLM planners: stop rules are checked before each wave, no two
+questions of one family in a wave, the wave's eps must fit the eps left together, and the investigation ends when the
+schedule is used up. Off (None) = the sequential loop, unchanged.
 Stops on: stop action, calls used, eps left below the smallest level, simulated time used, or 3 failures in a row.
 
 Verdict probability: the formula's posterior (Fusion) in compose / fixed_list / act_only; the LLM's own `belief`
@@ -21,6 +26,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from ftm.dsl.parser import family as dsl_family
+from ftm.dsl.parser import parse as dsl_parse
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
@@ -45,6 +52,13 @@ RULES_QUERY = "sharing information with another financial institution about susp
 _SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape"}  # passed in their own prompt sections
 
 
+def _family(canonical: str) -> str | None:
+    try:
+        return dsl_family(dsl_parse(canonical))
+    except Exception:  # noqa: BLE001 - an unparsable program has no family
+        return None
+
+
 def summary_evidence(alert: AlertContext, tools: ToolBox) -> str:
     """Default evidence: the text the orchestrator put in `alert.summary['evidence']` (e.g. from
     ftm.retrieval.views). Every system gets the same evidence text (fairness protocol)."""
@@ -61,6 +75,7 @@ class PlannerStats:
     stops: int = 0
     questions: int = 0
     dsl_ok: int = 0
+    usable: int = 0  # outputs that were a stop or carried a valid question (a batched output counts once, however many questions)
     duplicates: int = 0
     refusals: int = 0  # asks the gate / accountant refused
     refused_repeats: int = 0  # the same refused (question, bank) proposed again, caught before it reached the gate
@@ -76,7 +91,7 @@ class PlannerStats:
 
     @property
     def usable_output_rate(self) -> float:
-        return (self.stops + self.dsl_ok) / self.outputs if self.outputs else float("nan")
+        return self.usable / self.outputs if self.outputs else float("nan")
 
     def as_counts(self) -> dict:
         """The integer counters, so a caller can take per-alert differences (E18 per_alert.jsonl)."""
@@ -112,6 +127,7 @@ class LLMPlanner:
         max_failures_in_row: int = 3,
         keep_prompts: bool = False,
         max_output_tokens: int | None = None,
+        batch_schedule: tuple[int, ...] | None = None,
     ):
         self.llm = llm
         self.mode = Mode(mode)
@@ -131,6 +147,9 @@ class LLMPlanner:
         self.max_failures_in_row = max_failures_in_row
         self.max_output_tokens = max_output_tokens  # None = the JSON-sized default; E18 thinking arm: 1,024 per step
         self.keep_prompts = keep_prompts  # teacher runs: traces keep the exact prompts for distillation
+        self.batch_schedule = tuple(int(k) for k in batch_schedule) if batch_schedule else None
+        if self.batch_schedule and (min(self.batch_schedule) < 1 or max(self.batch_schedule) > 4):
+            raise ValueError(f"batch_schedule sizes must be in 1..4, got {self.batch_schedule}")
         self.stats = PlannerStats()
         self.last_trace: list[dict] = []
 
@@ -153,6 +172,100 @@ class LLMPlanner:
         shape = {**alert.summary.get("shape", {}), "typology": typology or "any"}
         return [{"text": str(s.get("text", ""))[:300]} for s in tools.search_library(shape)[:5]]
 
+    def _wave(self, action, session: Investigation, rec: dict, step: int, alert: AlertContext, refused: dict) -> tuple[str, str | None]:
+        """Ask one batched step's questions as one wave. Returns (outcome, feedback): outcome is "asked" (the schedule
+        slot is used), "retry" (nothing could be sent: feedback goes back to the model) or "break" (clock / eps used up)."""
+        sent: list[tuple] = []  # (action item, check, eps) per question that is sent
+        notes: list[str] = []
+        per_q: list[dict] = []
+        reserved, families, keys = 0.0, set(), set()
+        for it in action.wave:
+            q: dict = {"action": it.action, "bank": it.bank, "eps": it.eps}
+            per_q.append(q)
+            eps, left = it.eps, session.eps_left - reserved
+            if it.action == "select":
+                item = self.questions[it.question_id]
+                program = item["program"]
+                if item.get("eps"):
+                    ok_eps = [e for e in item["eps"] if e <= left + 1e-9]
+                    if not ok_eps:
+                        q["error"] = "select: not enough eps"
+                        notes.append(f"{it.question_id} needs eps {min(item['eps']):g} but only {left:g} is left for this wave.")
+                        continue
+                    if eps not in ok_eps:
+                        q["eps_requested"] = eps
+                        eps = min(ok_eps, key=lambda e: (abs(e - eps), e))
+            else:
+                program = it.program
+            q["program"], q["eps"] = program, eps
+            self.stats.questions += 1  # as in the sequential path, a select that cannot get an eps level is not counted
+            check = self.dsl.validate(program)
+            if not check.ok:
+                q["error"] = f"dsl: {check.error}"
+                notes.append(f"invalid question {program!r}: {check.error}. {retry_hint(program, check.error, self.dsl.reference_text())}")
+                continue
+            self.stats.dsl_ok += 1
+            if (check.canonical, str(it.bank)) in refused:
+                self.stats.refused_repeats += 1
+                q["error"] = "duplicate_refused"
+                notes.append(f"bank {it.bank} already refused this exact question ({refused[(check.canonical, str(it.bank))]}).")
+                continue
+            if (check.canonical, str(it.bank)) in keys:
+                self.stats.duplicates += 1
+                q["error"] = "duplicate_in_wave"
+                notes.append(f"{check.canonical} to bank {it.bank} appears twice in the wave.")
+                continue
+            fam = _family(check.canonical)
+            if fam is not None and fam in families:
+                q["error"] = "same_family_in_wave"
+                notes.append(f"{check.canonical} is of the same family ({fam}) as another question in the wave: ask different families together.")
+                continue
+            if eps > left + 1e-9:
+                q["error"] = "wave_over_eps"
+                notes.append(f"the wave's questions do not fit the eps left together ({session.eps_left:g}).")
+                continue
+            keys.add((check.canonical, str(it.bank)))
+            if fam is not None:
+                families.add(fam)
+            reserved += eps
+            q["canonical"] = check.canonical
+            sent.append((it, check, eps, q))
+        rec["wave"] = per_q
+        self.stats.usable += bool(sent)
+        if not sent:
+            rec["error"] = "wave: no valid question"
+            return "retry", " ".join(notes) + " Propose a different wave, or stop."
+        results = session.ask_wave([(it.bank, check, eps, step) for it, check, eps, _ in sent])
+        any_allowed, outcome_, why_last = False, "asked", None
+        for (it, check, eps, q), entry in zip(sent, results, strict=True):
+            if isinstance(entry, DuplicateQuestion):
+                self.stats.duplicates += 1
+                q["error"] = "duplicate"
+                notes.append(f"{entry} (the answer is under Answers so far).")
+                continue
+            q.update(canonical=check.canonical, outcome=outcome(entry), posterior_after=entry.posterior_after)
+            if entry.gate_decision != "allowed":
+                self.stats.refusals += 1
+                why = session.last_refusal or entry.gate_decision
+                refused[(check.canonical, str(it.bank))] = why
+                q["error"] = f"refused: {why}"
+                notes.append(f"the {entry.gate_decision} refusal for bank {it.bank}: {why}.")
+                why_last = why
+                continue
+            any_allowed = True
+            if isinstance(entry.response, Reply):
+                q.update(answer_value=entry.response.value, answer_kind=entry.response.kind)
+            if it.action == "compose" and self.batch_writer is not None:
+                self.batch_writer.add(canonical=check.canonical, kind=check.kind, family=check.family, eps=eps, bank=it.bank,
+                                      alert_id=alert.alert_id, split=alert.split, step=step, mode=self.mode.value,
+                                      typology_guess=action.typology)  # fmt: skip
+        if not any_allowed:
+            rec["error"] = "wave: nothing allowed"
+            if why_last and "used up" in why_last:
+                return "break", None
+            return "retry", " ".join(notes) + " Propose a different wave, or stop."
+        return outcome_, None
+
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         t0 = time.perf_counter()
         session = Investigation(alert, tools, limits, fusion=self.fusion)
@@ -164,21 +277,23 @@ class LLMPlanner:
         feedback, failures, belief, typology = None, 0, None, None
         menu = [q for q in self.questions.values() if self.question_filter is None or self.question_filter(q, alert)]
         refused: dict[tuple[str, str], str] = {}  # (canonical, bank) the gate / accountant refused -> why
-        step = 0
-        while (budget.calls_left > 0 and session.eps_left + 1e-9 >= min(EPS_LEVELS) and not session.out_of_time
+        step, slot = 0, 0  # slot: position in batch_schedule (a retried step does not use one up)
+        schedule = self.batch_schedule
+        while (budget.calls_left > 0 and (schedule is None or slot < len(schedule)) and session.eps_left + 1e-9 >= min(EPS_LEVELS) and not session.out_of_time
                and failures < self.max_failures_in_row):  # fmt: skip
             step += 1
             state = PlannerState(
                 alert_summary=summary, evidence_text=evidence, partner_banks=banks, eps_left=session.eps_left,
                 calls_left=budget.calls_left, questions=menu, strategies=strategies,
                 rules=rules, answers=session.answers_so_far(), posterior=session.posterior, feedback=feedback,
+                wave_k=schedule[slot] if schedule else 1,
             )  # fmt: skip
             rec: dict = {"step": step}
             trace.append(rec)
             try:
                 msgs = build_messages(self.mode, state, self.dsl, limits.max_tokens)
                 resp = budget.chat(msgs, json_schema=planner_schema(self.mode, state),
-                                   max_tokens=self.max_output_tokens or output_token_budget(self.mode), temperature=self.temperature,
+                                   max_tokens=self.max_output_tokens or output_token_budget(self.mode, state.wave_k), temperature=self.temperature,
                                    seed=self.seed, extra=self.extra)  # fmt: skip
             except (BudgetExceeded, PromptTooLong, PlannerParseError) as e:
                 rec["error"] = f"{type(e).__name__}: {e}"
@@ -203,7 +318,17 @@ class LLMPlanner:
                 strategies = self._strategies(alert, tools, typology)
             if action.action == "stop":
                 self.stats.stops += 1
+                self.stats.usable += 1
                 break
+            if state.wave_k > 1:
+                got, feedback = self._wave(action, session, rec, step, alert, refused)
+                if got == "asked":
+                    failures, feedback, slot = 0, None, slot + 1
+                else:
+                    failures += 1
+                    if got == "break":
+                        break
+                continue
             eps = action.eps
             if action.action == "select":
                 item = self.questions[action.question_id]
@@ -230,6 +355,7 @@ class LLMPlanner:
                 rec["error"] = f"dsl: {check.error}"
                 continue
             self.stats.dsl_ok += 1
+            self.stats.usable += 1
             if (check.canonical, str(action.bank)) in refused:
                 self.stats.refused_repeats += 1
                 feedback = (f"bank {action.bank} already refused this exact question ({refused[(check.canonical, str(action.bank))]}). "
@@ -259,7 +385,7 @@ class LLMPlanner:
                 if "used up" in why:  # the clock or the per-alert eps budget is spent: no question can succeed any more
                     break
                 continue
-            failures, feedback = 0, None
+            failures, feedback, slot = 0, None, slot + 1
             if isinstance(entry.response, Reply):  # the answer, so distillation can re-fuse with the real fusion model
                 rec.update(answer_value=entry.response.value, answer_kind=entry.response.kind)
             if action.action == "compose" and self.batch_writer is not None and entry.gate_decision == "allowed":
