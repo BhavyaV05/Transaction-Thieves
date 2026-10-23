@@ -169,8 +169,45 @@ Because of that, the "gap" (the project's denominator) is only measured on HI-Sm
 | **5** | 48.9 | **60.1** | **67.6** |
 | 6 | 49.1 | 56.9 | 65.5 |
 
-Model selection by best val F1 (epoch 5): **test F1 67.64 vs the paper's Multi-PNA+EU 68.16 +- 2.65 on AML Small HI** (Table 2 of arXiv:2306.11586; Multi-GIN+EU is 64.79; Multi-PNA without EU 64.59). Reproduced (inside one paper standard deviation) even though it is a short, single-seed run; the curve was still rising at epoch 5 on val and fell at epoch 6, so longer training or more seeds could move it a point or two either way. Metrics: `data/multignn/pna_metrics.jsonl`, log `data/multignn/pna_train.log` (gitignored). Our-split Multi-GNN (one-bank, see-everything) is not done.
+Model selection by best val F1 (epoch 5): **test F1 67.64 vs the paper's Multi-PNA+EU 68.16 +- 2.65 on AML Small HI** (Table 2 of arXiv:2306.11586; Multi-GIN+EU is 64.79; Multi-PNA without EU 64.59). Reproduced (inside one paper standard deviation) even though it is a short, single-seed run; the curve was still rising at epoch 5 on val and fell at epoch 6, so longer training or more seeds could move it a point or two either way. Metrics: `data/multignn/pna_metrics.jsonl`, log `data/multignn/pna_train.log` (gitignored). Our-split Multi-GNN (one-bank, see-everything) is in the next section.
 
+
+## Multi-GNN on OUR split (M2, #17): one-bank vs see-everything, HI-Small
+
+```
+python scripts/train_gnn.py --our-split --data hi_small --mode see_everything --budget-s 4200 [--batch-size 1024] [--resume]   # GPU, 7.1 GB at batch 2048
+python scripts/train_gnn.py --our-split --data hi_small --mode one_bank --max-epochs 100 --budget-s 7200                       # all bank views, ~100 min
+python scripts/train_gnn.py --compare --data hi_small                                                                           # table below -> data/runs/multi_gnn_vs_gfp_hi_small.json
+```
+
+Multi-PNA+EU (the reproduced config: edge updates, reverse message passing, ego ids, port numbering; `model_settings.json` PNA parameters, seed 1), batch 2048, neighbours [100, 100] (the reproduction config; VRAM was free enough, no change was needed). Input is built from our Parquet (`ftm.data.io`, train and val only, our split; node ids from the dense ids of `src_id`/`dst_id`, kept as **int64**; the four edge features of IBM's `format_kaggle_files.py`: seconds since the first row, amount received, receiving currency, payment format). The train graph holds train edges only, validation and scoring use the train+val graph, no test edge is ever read (`edge_arrays` raises on a test row). Output goes to **`data/scores/hi_small/p0_multi_gnn.parquet`** (GFP's files are untouched), same schema as the p0 table above with `model = multi_gnn` and **val rows only** (no train rows: the GNN has no out-of-fold train scores). Calibration is the GFP protocol: the val `fit` part fits the calibrator (isotonic only with >= 30 positives and signal, else Platt; a bank view with no positive in the `fit` part gets `p0 = null`, as GFP skips such views), `cal` is left for conformal, `eval` is for metrics. The epoch is picked by a weighted AP on the `fit` part (all positives + 10 % of negatives). `p0` is also null for the few val seed edges that were not in their own sampled subgraph (68 of 965,524 in see-everything).
+
+**Fixes from the review of the paused run.** (1) **Scoring is always in `eval()` mode** (no dropout, batch-norm running statistics); the paused version also tried `train()` mode and kept the better one, which was removed. (2) Edge ids used to locate the seed edges passed through a float32 column (exact only to 16.7 M); they are now an int64 `eid` attribute, so HI-Medium (31.9 M edges) does not break. (3) The val look-ahead is documented below, not removed.
+
+**Limitation: val look-ahead.** A val edge is scored on the graph of train + the whole val split, so its sampled neighbourhood can contain later val edges (as in Multi-GNN's own setup and GFP's 127-edge batches). Size on HI-Small (val = days 7-8): for a val edge, 12.6 % of its incident edges (both endpoints, train + val) are later than it on average (median 12.2 %), 94 % of val edges have at least one later neighbour edge, median 11 later neighbour edges. Train edges have the same look-ahead inside the train split, so there is no train/val feature shift. It is not cross-split leakage (nothing after the val end, no test), but it flatters the see-everything and one-bank GNN scores a little compared with a strictly causal deployment; a time-restricted neighbourhood (`time_attr` in `LinkNeighborLoader`) would remove it at the cost of a train/score mismatch and was not done.
+
+**Training length.** The time boxes were removed during the run, so: **see-everything** was first trained 4 epochs (4,589 s, best val-`fit` AP 0.528 at the last, partial, epoch: still rising; epochs took 17-20 min on the 3070 Ti with the CPU-bound sampler); **one-bank** runs up to 100 epochs per bank view (74-100 reached; the time share of a view is proportional to its train size), batch 2048, [100, 100]. Seed 1, one run per graph; no seed variance is available. SEE_EXTENSION_PLACEHOLDER
+
+**Results on val `eval` (HI-Small).** One-bank rows are the 28 scored bank views (93,240 rows, 122 laundering), the same rows for both models; two views (banks 19 and 1674) have no positive in the val `fit` part and are null for both. See-everything is the whole graph on the whole val `eval` part (GFP 234,572 rows, Multi-GNN 234,539: 33 seed edges unsampled). F1 at the best-F1 threshold of the same model's val `fit` part.
+
+| | Brier | PR-AUC | F1 | constant Brier |
+|---|---|---|---|---|
+| GFP+LightGBM one-bank | 0.001167 | 0.202 | 0.283 | 0.001307 |
+| Multi-GNN one-bank (28 views) | **0.001110** | **0.243** | **0.341** | 0.001307 |
+| GFP+LightGBM see-everything | 0.000830 | 0.481 | 0.541 | 0.001294 |
+| Multi-GNN see-everything (4 epochs) | **0.000810** | 0.482 | **0.581** | 0.001290 |
+
+Paired cluster bootstrap (attempt + shared-account clusters, 2,000 resamples, `ftm.eval`): **see-everything, GFP minus Multi-GNN Brier = +0.000016, 95 % CI [-0.000051, +0.000084]: no detectable difference**. **The gap (one-bank minus see-everything Brier, same rows): Multi-GNN 0.000333 [0.000162, 0.000511]; GFP 0.000261 [0.000115, 0.000394].** One-bank Multi-GNN is not significantly better than one-bank GFP either (0.001110 vs 0.001167, no CI computed; PR-AUC 0.243 vs 0.202).
+
+**Headline:** on our split Multi-GNN see-everything is **not a clearly stronger upper limit than GFP see-everything** (Brier 0.000810 vs 0.000830, PR-AUC 0.482 vs 0.481, F1 0.581 vs 0.541; the Brier difference CI contains 0). The project's denominator, the one-bank to see-everything gap, exists under both models and is a little larger with Multi-GNN (0.000333 vs 0.000261), so the gap does not depend on the choice of the strong model. Caveats: the GNN had 4 of 100 epochs on the full graph (EXTENSION_CAVEAT), 303 eval positives, one seed. Per-view numbers, epochs, calibrator and best fit AP of every bank: `data/runs/p0_hi_small_multi_gnn_one_bank.json`; compare json: `data/runs/multi_gnn_vs_gfp_hi_small.json`; logs `data/runs/logs/mg_*.log` (gitignored).
+
+**HI-Medium** (not run here; 5070 Ti machine; needs about 24 GB RAM for the 23 M-row train+val graph and 8+ GB VRAM; the int64 ids make 31.9 M edges safe):
+
+```
+python scripts/train_gnn.py --our-split --data hi_medium --mode see_everything --budget-s 28800 --batch-size 2048
+python scripts/train_gnn.py --our-split --data hi_medium --mode one_bank --max-epochs 100 --budget-s 28800
+python scripts/train_gnn.py --compare --data hi_medium        # needs p0 of GFP see-everything too (blocked, see HI-Medium above)
+```
 
 ## DP-FedAvg over the bank views (Group B, M5)
 
@@ -216,7 +253,7 @@ Training hyper-parameters are fixed, not tuned on private data (SGD lr 0.5, posi
 | 8 | 0.77 | 0.001317 | 0.000 | 0.0015 | 0.002 |
 | inf (no clipping, no noise) | 0 | 0.001305 | 0.009 | 0.0216 | 0.066 |
 
-**Reading.** (1) Client-level: the Brier-vs-epsilon curve is monotone and recovers about 70 % of the non-private federated skill at epsilon 8-16, but it is below 1 % under epsilon 2; with 30 clients the noise on the averaged update (std sigma S / 30 per coordinate) swamps the signal at small epsilon. (2) Edge-level: the transaction's own attributes (amount, currency, format, hour) carry almost no laundering signal on HI-Small (non-private skill 0.009), so the DP curve is flat at the constant predictor for every epsilon; nothing is lost and nothing is gained. The edge-level guarantee is therefore only available for a model that cannot see the structure that makes laundering detectable; getting that signal back needs neighbour features, which break the unit. (3) The federated models are far weaker than GFP (one-bank Brier skill 0.107, 28 views, `0.001167` vs `0.001307`) because they are a 1,000-parameter MLP on 14 aggregates, not a GBT on 55 graph features; the curve shows the privacy cost relative to the same non-private federated model, not to the project's strongest one-bank model. The 30 views here include banks 19 and 1674, which GFP skipped.
+**Reading.** (1) Client-level: the Brier-vs-epsilon curve is monotone and recovers about 75-80 % of the non-private federated skill at epsilon 8-16, but it is below 1 % under epsilon 2; with 30 clients the noise on the averaged update (std sigma S / 30 per coordinate) swamps the signal at small epsilon. (2) Edge-level: the transaction's own attributes (amount, currency, format, hour) carry almost no laundering signal on HI-Small (non-private skill 0.009), so the DP curve is flat at the constant predictor for every epsilon; nothing is lost and nothing is gained. The edge-level guarantee is therefore only available for a model that cannot see the structure that makes laundering detectable; getting that signal back needs neighbour features, which break the unit. (3) The federated models are far weaker than GFP (one-bank Brier skill 0.107, 28 views, `0.001167` vs `0.001307`) because they are a 1,000-parameter MLP on 14 aggregates, not a GBT on 55 graph features; the curve shows the privacy cost relative to the same non-private federated model, not to the project's strongest one-bank model. The 30 views here include banks 19 and 1674, which GFP skipped.
 
 **Caveat for the report (tracks.md 3.7).** The training-time epsilon above is a guarantee about the released federated model for the stated unit. It is **not** the per-question epsilon the project reports for its answers: the values come from different mechanisms and units (a bank's dataset or a transaction vs a query answer), and epsilons of different units or different accountants must not be compared or added. The calibrator and the epoch/hyper-parameter choices use val labels outside the DP accounting. Server weights in the edge arm depend on client sizes (not protected). Results are for HI-Small only.
 
@@ -226,4 +263,6 @@ Json (settings, per-seed rows, commit): `data/runs/federated_hi_small_{edge,clie
 
 - `gfp_gbt.py`: GFP wrapper, features, LightGBM fit, calibrators, metrics, `score_graph`, `p0_table`, `read_p0`.
 - `multi_gnn.py`, `multi_gnn_t1.patch`: launcher and compatibility patch for the IBM code (kept outside the repo).
-- Not done in this stage: our-split Multi-GNN (one-bank, see-everything), FraudGT, MEGA-GNN, federated baselines.
+- `federated.py`, `scripts/train_federated.py`: DP-FedAvg (client-level and edge-level arms).
+- `fraudgt_t1.patch`: patch for the FraudGT checkout (reproduction only, section above).
+- Not done in this stage: MEGA-GNN, the AML-specific federated method.

@@ -188,6 +188,18 @@ def compare(ds: str) -> None:
         y = j["label"].cast(pl.Int8).to_numpy()
         r = bs.brier_diff(y, j["p_gfp"].to_numpy(), j["p_mg"].to_numpy(), cl, n_boot=2000)
         out["see_everything_brier_gfp_minus_multi_gnn"] = {"diff": r["diff"], "ci95": r["ci"], "clusters": bs.cluster_report(cl), "n": int(len(y))}
+    # the project's gap: one-bank minus see-everything Brier on the same val `eval` rows of the scored banks, per model
+    pq = cfg["parquet_dir"]
+    tx = io.scan_transactions(pq, split="val", columns=["tx_id", "src_id", "dst_id"]).collect()
+    pat = io.scan_patterns(pq, split="val").select("tx_id", "attempt_id").collect()
+    out["one_bank_minus_see_everything_brier"] = {}
+    for model, df in (("multi_gnn", mg), ("gfp_lgbm", gf)):
+        ob = df.filter((pl.col("mode") == "one_bank") & pl.col("bank").is_in(banks) & (pl.col("val_part") == "eval")).select("tx_id", pl.col("p0").alias("p_one"), "label")
+        se = df.filter((pl.col("mode") == "see_everything") & (pl.col("val_part") == "eval")).select("tx_id", pl.col("p0").alias("p_see"))
+        j = ob.join(se, on="tx_id").drop_nulls().join(tx, on="tx_id", how="left").join(pat, on="tx_id", how="left").sort("tx_id")
+        cl = bs.cluster_ids(j["attempt_id"].to_list(), [j["src_id"].to_list(), j["dst_id"].to_list()])
+        r = bs.brier_diff(j["label"].cast(pl.Int8).to_numpy(), j["p_one"].to_numpy(), j["p_see"].to_numpy(), cl, n_boot=2000)
+        out["one_bank_minus_see_everything_brier"][model] = {"diff": r["diff"], "ci95": r["ci"], "n": j.height}
     Path(f"data/runs/multi_gnn_vs_gfp_{ds}.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps(out, indent=1, default=str))
 
