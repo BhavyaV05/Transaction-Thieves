@@ -215,7 +215,14 @@ class Gate:
 
 
 class GatedToolBox:
-    """Wraps any ToolBox so every ask_bank goes through the gate and then the accountant, for every system."""
+    """Wraps any ToolBox so every ask_bank goes through the gate and then the accountant, for every system.
+
+    Charge exactly once. `Gate.check` only READS the accountant (`can_spend`, per-alert budget); spending happens
+    in one place:
+      - here, for stand-alone use (per-alert budget only: the gate does not know which accounts a question touches);
+      - or in the harness (ftm/harness/toolbox.py, T2): it calls `gate.check`, then `can_spend` / `spend` with
+        accounts=charge_keys(...), so the per-account cap applies. Do not wrap the harness toolbox in this class.
+    """
 
     def __init__(self, inner, gate: Gate, alert_id: str, home_bank, partners=None):
         self.inner, self.gate, self.alert_id, self.home_bank, self.partners = inner, gate, alert_id, home_bank, partners

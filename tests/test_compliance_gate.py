@@ -143,3 +143,24 @@ def test_lookup_finds_red_flags_but_they_are_not_citations(gate):
     assert hits[0]["rule_id"] == "RF-SG-13" and hits[0]["kind"] == "red_flag"
     assert ask(gate, rule_id="RF-US-14").decision == "blocked"  # a red flag is not a legal basis
     assert any(h["rule_id"] == "RF-US-14" for h in gate.lookup_rules("moved back to the first bank cycle"))
+
+
+def test_gate_without_accountant_never_charges():
+    # the harness set-up: gate checks only, the harness charges the accountant itself (one charge)
+    acct = Acct()
+    gt = g.Gate.from_config(validator=_validator, accountant=None)
+    tb = g.GatedToolBox(ScriptedToolBox([Reply("1588", "bool", True, 1.0, 0.5)]), gt, "V1", "7", PARTNERS)
+    tb.ask_bank("1588", "bool: ALERT.receiver.passes_through(0.8, 24h)", 1.0)
+    assert acct.spent == {}
+
+
+def test_gate_accepts_t2_dsl_and_accountant():
+    from ftm.dsl.parser import gate_validator
+    from ftm.privacy.accountant import PrivacyAccountant
+
+    gt = g.Gate.from_config(validator=gate_validator, accountant=PrivacyAccountant(2.0, 8.0, None))
+    d = gt.check("ask_bank", alert_id="V9", home_bank="7", bank="1588", eps=1.0, partners=PARTNERS,
+                 program="passed_on(ALERT.receiver, window=after(24), min_frac=0.8)")  # fmt: skip
+    assert d.allowed, d.reason
+    assert gt.check("ask_bank", alert_id="V9", home_bank="7", bank="1588", eps=1.0, partners=PARTNERS,
+                    program="passed_on(A00f3a1c, window=after(24), min_frac=0.8)").decision == "blocked"  # fmt: skip

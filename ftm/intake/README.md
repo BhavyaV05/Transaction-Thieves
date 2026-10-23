@@ -13,7 +13,7 @@ Writes `data/alerts/<ds>/{train,val}.parquet` (gitignored) and `data/runs/alerts
 
 Input: one-bank `p0` (calibrated, `ftm/baselines`). Non-conformity of label k is 1 - P(k|x). Calibration rows are the val **`cal` part** (the quarter of the val time span after the half used for early stopping and the isotonic/Platt fit), pooled over the 28 scored bank views. Everything is reported on the val **`eval` part** (the last quarter), which no step above has seen.
 
-- **Mondrian split conformal** (`conformal.mondrian_thresholds`): thresholds are computed separately on laundering and on clean calibration rows. `launder in set <=> p0 >= t_launder`, `clean in set <=> p0 <= t_clean`. Targets: miss rate `alpha_launder` among laundering rows, `alpha_clean` among clean rows (config). Finite-sample (n+1) correction. **Alert = launder is in the prediction set.** This deviates from the plan's wording ("the set is {launder, clean}") on purpose: at every alpha that gives a usable alert budget, `t_launder > t_clean`, so *no* row has both labels in its set (0 of 320k HI-Medium eval rows); alerts are all `{launder}`-only sets, and the plan's literal rule would produce zero alerts. The rows in between (`t_clean < p0 < t_launder`) have an **empty** set; they are not alerts and hold 87 of the 527 eval laundering rows on HI-Medium (see `set_types_eval` in `data/runs/alerts_<ds>.json`). Decide whether empty sets should be alerts.
+- **Mondrian split conformal** (`conformal.mondrian_thresholds`): thresholds are computed separately on laundering and on clean calibration rows. `launder in set <=> p0 >= t_launder`, `clean in set <=> p0 <= t_clean`. Targets: miss rate `alpha_launder` among laundering rows, `alpha_clean` among clean rows (config). Finite-sample (n+1) correction. **Alert = launder is in the prediction set.** This deviates from the plan's wording ("the set is {launder, clean}") on purpose: at every alpha that gives a usable alert budget, `t_launder > t_clean`, so *no* row has both labels in its set (0 of 320k HI-Medium eval rows); alerts are all `{launder}`-only sets, and the plan's literal rule would produce zero alerts. The rows in between (`t_clean < p0 < t_launder`) have an **empty** set; they are not alerts and hold 87 of the 527 eval laundering rows on HI-Medium (see `set_types_eval` in `data/runs/alerts_<ds>.json`). Decision 5: empty sets are not alerts but are counted as intake misses in the end-to-end numbers.
 - **Time-weighted calibration** (`time_weights`): calibration row weight `0.5 ** (age / half_life)`, age in fractional days from the last calibration row; the test point has weight 1 (weighted conformal prediction, Tibshirani et al. 2019, applied to the drift idea of plan ref [39]). `half_life_days: 0.25` because the `cal` part spans under one day. Equal weights are `half_life_days: null`.
 - **Selective risk bound** (`selective_clear_threshold`, `selective_risk_upper_bound`): the simplest correct variant, not the exact procedure of plan ref [38]. The auto-cleared region is `p0 < lam`; `lam` is the largest value at which a one-sided Clopper-Pearson (1-delta) upper bound on P(laundering | cleared) from the calibration rows is <= `scrc_beta`, scanning `lam` upwards with a fixed start (4 ln(1/delta)/beta cleared rows) and stopping at the first failure (fixed-sequence testing as in Learn-then-Test, Angelopoulos et al. 2021). Unweighted. It is **reported, not applied**, by default (`apply_scrc: false`): see the finding below. **TODO:** implement [38] exactly (weighted, finite-sample selective guarantee) if the team wants it applied.
 - **Ablation**: a fixed `0.15 <= p0 <= 0.85` window.
@@ -30,11 +30,9 @@ Input: one-bank `p0` (calibrated, `ftm/baselines`). Non-conformity of label k is
 | p0, label | calibrated one-bank score, `is_laundering` |
 | attempt_id, typology | from `patterns.parquet`; null when the transaction is in no attempt (clean rows and the laundering rows missing from the pattern file) |
 | split, val_part | val rows carry `fit`/`cal`/`eval`; train alerts use out-of-fold scores |
-| drop_spans_split | the laundering attempt spans a split boundary (plan.md 5.2 step 3) |
-| drop_window | the 72 h evidence window `[timestamp - 72h, timestamp]` starts before the start of the alert's own split |
-| keep | `not drop_spans_split and not drop_window` |
+| spans_split | the laundering attempt spans a split boundary (plan.md 5.2 step 3). **A flag for the sensitivity analysis only; the headline alert set is never filtered by it** (decision 3 of `docs/t4_decisions_week2.md`). The 72 h evidence-window rule was removed: it only drops alerts whose evidence reaches into an earlier split, which is past data and allowed at `as_of`. |
 
-Counts below say which rule is applied. Load with `pl.read_parquet` in a script or notebook (these are not transaction rows; no time-guard issue, but they contain labels, so do not hand them to a tool).
+Counts below are for the full alert set. Load with `pl.read_parquet` in a script or notebook (these are not transaction rows; no time-guard issue, but they contain labels, so do not hand them to a tool).
 
 ## Results
 
@@ -61,14 +59,29 @@ On HI-Small the same ablation moves the miss rate only from 0.590 to 0.598 (no d
 
 **Fixed-window ablation (0.15 <= p0 <= 0.85), same eval rows:** HI-Small 67 alerts, 23 positives (recall 0.189) vs conformal 332 alerts, 49 positives (recall 0.402, precision 0.148); HI-Medium 590 alerts, 118 positives (recall 0.224) vs conformal 806 alerts, 198 positives (recall 0.376, precision 0.246).
 
-**Alert sets** (`data/alerts/<ds>/{train,val}.parquet`; train alerts use out-of-fold scores):
+**Alert sets** (`data/alerts/<ds>/{train,val}.parquet`; train alerts use out-of-fold scores; rebuilt 2026-10-23 under the decisions, no drop rule applied; thresholds and counts unchanged by the rebuild):
 
-| | alerts | positives | after span rule only | positives left | after both rules | positives left | attempts in views / with an alert |
-|---|---|---|---|---|---|---|---|
-| HI-Small train | 5,198 | 255 | 5,107 | 164 | 1,353 | 62 | 127 / 91 |
-| HI-Small val | 1,284 | 177 | 1,118 | 11 | 0 | 0 | 85 / 68 |
-| **HI-Medium train** | **10,962** | 1,448 | 10,379 | 865 | 4,033 | 626 | 623 / 496 |
-| **HI-Medium val** | **2,238** | 798 | 1,482 | 42 | 0 | 0 | 423 / 350 |
+| | alerts | positives | unique tx | flagged `spans_split` | alerts / positives if the span rule were applied (sensitivity) | attempts in views / with an alert |
+|---|---|---|---|---|---|---|
+| HI-Small train | 5,198 | 255 | 5,063 | 91 | 5,107 / 164 | 127 / 91 |
+| HI-Small val | 1,284 | 177 | 1,221 | 166 | 1,118 / 11 | 85 / 68 |
+| **HI-Medium train** | **10,962** | 1,448 | 10,535 | 583 | 10,379 / 865 | 623 / 496 |
+| **HI-Medium val** | **2,238** | 798 | 2,113 | 756 | 1,482 / 42 | 423 / 350 |
+
+**Per val part (decision 9; thresholds from `cal`, so `cal` is in-sample for the laundering target; `eval` is the clean check).** `fit` is the half of val on which the p0 model chose its early-stopping point and fitted the isotonic/Platt calibrator, so its numbers are optimistic. One row = one (transaction, bank view). "Empty set" = neither label in the prediction set (`t_clean < p0 < t_launder`); not an alert, **counted as an intake miss** (decision 5). Intake miss = share of laundering rows not alerted (decision 2; equal to the achieved laundering miss while `apply_scrc` is false); "by tx" counts a transaction as alerted if any bank view alerts it.
+
+| | part | rows | laundering rows | alerts | positives | target / achieved laundering miss | target / achieved clean miss | empty-set rows (of which laundering) | intake miss, rows | intake miss, by tx |
+|---|---|---|---|---|---|---|---|---|---|---|
+| HI-Small | fit | 189,966 | 218 | 648 | 88 | 0.60 / 0.596 | 0.02 / 0.018 | 2,875 (34) | 0.596 | 0.591 (193 tx) |
+| HI-Small | cal | 96,615 | 104 | 304 | 40 | 0.60 / 0.615 | 0.02 / 0.019 | 1,542 (15) | 0.615 | 0.652 (89 tx) |
+| HI-Small | **eval** | 93,240 | 122 | **332** | 49 | 0.60 / **0.598** | 0.02 / 0.024 | 1,946 (30) | **0.598** | 0.590 (105 tx) |
+| HI-Small | all val | 379,821 | 444 | 1,284 | 177 | 0.60 / 0.601 | 0.02 / 0.019 | 6,363 (79) | 0.601 | 0.605 (387 tx) |
+| HI-Medium | fit | 267,722 | 757 | 935 | 419 | 0.63 / 0.447 | 0.02 / 0.022 | 5,583 (141) | 0.447 | 0.452 (679 tx) |
+| HI-Medium | cal | 196,709 | 387 | 497 | 181 | 0.63 / 0.532 | 0.02 / 0.021 | 3,873 (86) | 0.532 | 0.533 (347 tx) |
+| HI-Medium | **eval** | 320,372 | 527 | **806** | 198 | 0.63 / **0.624** | 0.02 / 0.024 | 7,106 (87) | **0.624** | 0.627 (477 tx) |
+| HI-Medium | all val | 784,803 | 1,671 | **2,238** | 798 | 0.63 / 0.522 | 0.02 / 0.023 | 16,562 (314) | 0.522 | 0.526 (1,503 tx) |
+
+Read: the end-to-end intake misses 60% (HI-Small) and 62% (HI-Medium) of the laundering rows on the untouched `eval` part, and the empty-set rows hold 30 of the 73 missed laundering rows on HI-Small and 87 of the 330 on HI-Medium (41% and 26%). The HI-Medium laundering miss on `fit` and `cal` is below its 0.63 target and reaches it only on `eval` (with the same threshold the `fit` miss is 0.45), probably the same drift that makes time weighting necessary (not investigated further). For the same reason the HI-Medium 2,238 val alerts (798 positives) are mostly in `fit` and `cal`; `eval` alone has 806 alerts and 198 positives, which is what E18, fusion and G2 can use without re-fitting on rows the calibration saw (decision 9: cross-fit inside val).
 
 HI-Medium targets (plan.md 6.3): train about 20,000 (we have 10,962 at the alpha that satisfies the test target; alpha 0.55 gives 18,515 train alerts but about 5,900 projected test alerts), val at least 1,000 (**2,238, met**), test 2,500-4,000 with at least 375 positives (**projected 3,475 with 1,011 positives, met**; see below).
 
@@ -92,8 +105,8 @@ HI-Medium targets (plan.md 6.3): train about 20,000 (we have 10,962 at the alpha
 
 1. **The selective-risk bound and the alert budget conflict.** With 1 laundering row per ~950 transactions, a budget of a few thousand test alerts clears 99%+ of rows and misses about 60% of laundering **transactions** (tx-level recall 0.38-0.40 on val at the chosen alpha). `scrc_beta` is therefore not met (0.00079 achieved on HI-Small and 0.00103 on HI-Medium vs 0.0005; the base rates are 0.0013 and 0.0016, so the auto-cleared set holds laundering at 60-65% of the base rate). Applying it (`apply_scrc: true`) widens the alerts to `p0 >= 0.0018` (HI-Small) or `0.0015` (HI-Medium), about 10% of all rows. Decide whether the bound or the budget wins; the shipped default is the budget.
 2. **Attempt-level recall is far better than transaction-level**: 83% of HI-Medium val attempts (350 of 423) and 80% of HI-Small (68 of 85) have at least one alerted transaction (HI-Medium train: 496 of 623 = 80%). If the agent can follow an alert to the rest of its pattern, the useful recall is the attempt-level one. Tell T3.
-3. **The plan.md 5.2 step 3 drop rules remove almost everything on a short split.** The span rule keeps only 42 of 798 val positives on HI-Medium and 11 of 177 on HI-Small (long attempts straddle the val/test boundary; most val laundering is in a spanning attempt). The 72 h evidence-window rule, read literally, drops every val alert (val is 2-3 days long) and the first 72 h of test. We ship both flags and `keep`; counts are given with each rule separately. Options: (a) apply only the span rule to val, (b) shorten the evidence window, (c) define the window start against the dataset start instead of the split start (history before the split is legitimate evidence under the `as_of` guard). Needs a ruling before the alert sets are frozen.
-4. **The 1,000-alert external subset** is selected from test alerts stratified by label x typology x bank, so it needs test labels. `alerts.stratified_subset` is written (calls `require_final_run()` first, unit-tested on synthetic data) and is **not** run. Options: a TA-approved one-off locked build at G3, or stratify without labels (typology and label are unknown at selection time, so only bank and `p0` bucket).
+3. **Drop rules (resolved, decision 3 of `docs/t4_decisions_week2.md`).** The 72 h window rule is removed from the config, the code and the tests. The span rule is a flag column (`spans_split`) only: it keeps 42 of 798 HI-Medium val positives (11 of 177 on HI-Small), so report headline numbers on all alerts and the kept-only subset as a sensitivity row.
+4. **The 1,000-alert external subset (resolved, decision 1).** `alerts.stratified_subset` now defaults to the label-free `strata="bank_p0_decile"` (home bank x decile of p0 over the alerts passed in, seed 0, proportional allocation with at least one per non-empty stratum). It calls `require_final_run()` first, so it can only be built at G5 from test alerts; the earlier `strata="label_typology_bank"` rule is kept as an option for synthetic and val checks. Unit-tested on synthetic data under a monkeypatched flag (`tests/test_intake.py`). `prereg/subset_manifest.txt` records that the option exists.
 5. **alpha_launder is an alert-budget knob**, not a coverage promise: to reach thousands of alerts the target miss rate on laundering rows is 0.55-0.6, so the guarantee is "recall of at least 40-45%".
 6. Calibration data are small (`cal` part: 104 laundering rows on HI-Small, 387 on HI-Medium, a handful per bank), so thresholds are pooled over banks. Per-bank thresholds would need more positives than a 3-day val has.
 7. **Time weighting is not optional on HI-Medium**: equal weights miss the laundering target by 8 points (0.713 vs 0.63). The calibration window is short (under a day), so the half-life is 0.25 day, fixed before looking at HI-Medium `eval` as a fraction of the `cal` span; 0.1 is shown only for sensitivity (it over-shoots the other way).
