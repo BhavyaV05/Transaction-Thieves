@@ -275,10 +275,37 @@ Training hyper-parameters are fixed, not tuned on private data (SGD lr 0.5, posi
 
 Json (settings, per-seed rows, commit): `data/runs/federated_hi_small_{edge,client}.json` (gitignored). The runs used the code of commit `4c13ffe` (the json records the parent commit `f5fb9ae` because the code was uncommitted when they ran).
 
+## Week 7-9 additions
+
+**Multi-GNN one-bank on HI-Medium (week 9).** `python scripts/train_gnn.py --our-split --data hi_medium --mode one_bank --max-epochs 100 --budget-s 36000` on the 3070 Ti, no box on the epochs: all 30 views, 91 to 100 epochs each (bank 70 alone 8,634 s for 100 epochs), 22,000 s in total, `data/scores/hi_medium/p0_multi_gnn__one_bank.parquet` and `data/runs/p0_hi_medium_multi_gnn_one_bank.json`; 24 Platt and 6 isotonic calibrators. Bank 70 has no signal for Multi-GNN either (best val `fit` AP 0.002), as for GFP. Val `eval` (320,367 common rows, 527 laundering): **Brier 0.001330 vs GFP one-bank 0.001451** (paired difference -0.000121 [-0.000192, -0.000050], cluster bootstrap with hub cap 20), PR-AUC 0.284 vs 0.233, F1 0.369 vs 0.350. HI-Medium see-everything (GFP and Multi-GNN) stays BLOCKED-COMPUTE with the commands above (5070 Ti). Everything in one place: `docs/t1_baselines_val.md`.
+
+**Per-row DP-FedAvg predictions.** `scripts/train_federated.py --save-p0 [--tag _p0]` writes the calibrated p0 of every val row per setting and seed to `data/scores/<ds>/federated/` (p0 schema), so the baselines table can bootstrap them; `--tag` keeps a partial rerun from overwriting the full curve.
+
+## Layer-wise exchange (Ceydeli et al.), the AML-specific federated method (week 7, secondary)
+
+`ftm/baselines/layerwise.py` + `scripts/train_layerwise.py`, written from the paper (Ceydeli, Wang, Atasu, "Federated Layer-Wise Exchange for Cross-Client Money Laundering Pattern Detection", arXiv:2605.06433v2; no code was available and Tian et al.'s unlicensed code was not run). 30 clients = the 30 HI-Small bank views, train split only for training, val for scoring, same rows, calibrator and metrics as the DP-FedAvg numbers. Implemented as specified: client = bank owning its accounts, extended subgraph with the cross-client edges, a transaction is trained on by the client of its **sender** only, forward exchange of node representations before every layer (remote rows 0 without it), backward exchange of the partial adjoints to the owner (here the exchange is a gather of the owners' tensors, so autograd returns exactly the adjoints of section 4.2; forward-only gathers them detached), optimisation arms Fully Local / FedAvg / FedProx (mu 0.01) / Sync-SGD (one shared parameter set), 2-layer Multi-PNA edge classifier (PNA aggregators with the three scalers, reverse message passing, edge updates), 3 seeds. **Deviations** (also in the module docstring): full-batch message passing over each client's whole extended subgraph with the loss on a mini-batch of 8,192 labelled edges (the paper samples 2-hop neighbourhoods of up to 100 neighbours; no ego ids or port numbers, which are defined per sampled batch); LayerNorm instead of BatchNorm; hidden size 20, Adam lr 6e-3, 480 lock-step steps for every arm (FedAvg/FedProx: a round is 10 local steps, parameters averaged by labelled-edge count), positive weight 7 (IBM's PNA setting), the step with the best pooled val `fit` AP is used (one eval every 40 steps); the accounts of the 30,440 banks outside the 30 clients have no owner, so their representations are 0 in every mode; PNA degree histograms are computed on the pooled training graphs. Activations are recomputed in the backward pass (checkpointing) so that 30 clients fit in 8 GB; one run is 22 to 27 min.
+
+```
+python scripts/train_layerwise.py --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd fedavg:bwd fedprox:bwd sync_sgd:none fedavg:none fedprox:none sync_sgd:fwd local:none --seeds 0 1 2    # 24 runs, 10 h
+```
+
+Results (HI-Small val `eval`, 93,239 common rows, 122 laundering; Brier mean +- sd over 3 seeds; constant 0.001307, GFP one-bank 0.001167, Multi-GNN one-bank 0.001110; PR-AUC and F1 and every CI in `docs/t1_baselines_val.md`):
+
+| optimisation | no exchange | forward exchange | forward + backward exchange |
+|---|---|---|---|
+| Fully Local | 0.001279 +- 0.000012 | | |
+| FedAvg | 0.001169 +- 0.000007 | | 0.001162 +- 0.000005 |
+| FedProx | 0.001194 +- 0.000008 | | 0.001188 +- 0.000004 |
+| Sync-SGD | **0.001101 +- 0.000043** | 0.001109 +- 0.000018 | 0.001134 +- 0.000011 |
+
+Reading. Parameter synchronisation is what matters here: Sync-SGD (0.00110) is at the level of Multi-GNN one-bank (0.00111) and better than GFP one-bank (0.001167, paired difference -0.000066 [-0.000153, +0.000025], not significant), FedAvg and FedProx sit at GFP's level, Fully Local at the constant's. **The paper's headline gain from layer-wise exchange is not reproduced on this setup**: exchange moves FedAvg and FedProx by 6 to 7e-6 Brier (about one seed sd, the right sign) and does not help Sync-SGD (forward 0.001109, forward and backward 0.001134, both within the seed spread of no exchange). The likely reason is structural, not a verdict on the method: with 30 top banks as the only owners, a client's remote neighbours are mostly accounts of the 30,440 unowned banks (zero in every mode), so there is little cross-client signal to exchange; the paper's partition gives every account an owner. The seed spread of Sync-SGD (sd 4e-5) is as large as the differences between its exchange variants. Nothing was tuned on val beyond the step choice; the pilot (1,000 steps, one seed) gave 0.001113.
+
+- `layerwise.py`, `scripts/train_layerwise.py`: layer-wise exchange (above). Tests: `tests/test_layerwise.py`.
+
 ## Files
 
 - `gfp_gbt.py`: GFP wrapper, features, LightGBM fit, calibrators, metrics, `score_graph`, `p0_table`, `read_p0`.
 - `multi_gnn.py`, `multi_gnn_t1.patch`: launcher and compatibility patch for the IBM code (kept outside the repo).
 - `federated.py`, `scripts/train_federated.py`: DP-FedAvg (client-level and edge-level arms).
 - `fraudgt_t1.patch`: patch for the FraudGT checkout (reproduction only, section above).
-- Not done in this stage: MEGA-GNN, the AML-specific federated method.
+- Not done in this stage: MEGA-GNN (week 10).
