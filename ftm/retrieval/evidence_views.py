@@ -212,25 +212,32 @@ H6_VS = "scorer_pcst"
 H6_MARGIN = 0.15
 
 
-def h6_report(per_alert: pl.DataFrame, n_boot: int = 10_000, seed: int = 0) -> dict:
+def h6_report(per_alert: pl.DataFrame, n_boot: int = 10_000, seed: int = 0, k: int = K) -> dict:
     """H6 (tracks.md 3.8): does scorer + PCST trail find >= 15 points more real pattern edges (recall in the 40) than the
     top-40-by-amount baseline? Paired over the alerts that have pattern edges in the window, 95 % percentile CI from a
     bootstrap over alerts and, since several alerts of one attempt are not independent, over attempts (alerts with no attempt
-    count as their own cluster). Positive = scorer + PCST finds more."""
-    from ftm.eval import bootstrap as bs
-
+    count as their own cluster). Positive = scorer + PCST finds more. Reported for all such alerts and for the stratum where
+    the baseline's 1-hop pool has at least k edges, the only place where choosing among edges can matter."""
     has = per_alert.filter(pl.col("n_relevant") > 0)
     wide = has.with_columns((pl.col("hits") / pl.col("n_relevant")).alias("recall")).pivot(on="view", index=["alert_id", "attempt_id"], values="recall")
-    hits = has.pivot(on="view", index="alert_id", values="hits")
-    wide = wide.join(hits, on="alert_id", suffix="_hits")
+    wide = wide.join(has.pivot(on="view", index="alert_id", values="hits"), on="alert_id", suffix="_hits")
+    wide = wide.join(has.filter(pl.col("view") == "amount_1hop").select("alert_id", pl.col("n_sel").alias("pool_1hop")), on="alert_id")
+    return {"margin": H6_MARGIN, "n_boot": n_boot, "all": _h6_block(wide, n_boot, seed),
+            "pool_1hop_at_least_k": _h6_block(wide.filter(pl.col("pool_1hop") >= k), n_boot, seed)}
+
+
+def _h6_block(wide: pl.DataFrame, n_boot: int, seed: int) -> dict:
+    from ftm.eval import bootstrap as bs
+
+    out = {"alerts_with_pattern_edges": wide.height, "comparisons": {}}
+    if wide.height < 2:
+        return out
     att = [a if a is not None else f"alert:{i}" for i, a in zip(wide["alert_id"], wide["attempt_id"], strict=True)]
-    cl_attempt = bs.cluster_ids(att, [])
-    cl_alert = np.arange(wide.height)
-    out = {"alerts_with_pattern_edges": wide.height, "attempts": int(len(set(att))), "margin": H6_MARGIN, "n_boot": n_boot, "comparisons": {}}
+    out["attempts"] = int(len(set(att)))
+    cl_attempt, cl_alert = bs.cluster_ids(att, []), np.arange(wide.height)
     for other in (*H6_BASELINES, "scorer", "scorer_greedy", "long_prompt"):
         for kind, col in (("recall", other), ("pattern_edges", f"{other}_hits")):
-            a_col = H6_VS if kind == "recall" else f"{H6_VS}_hits"
-            d = (wide[a_col] - wide[col]).to_numpy()
+            d = (wide[H6_VS if kind == "recall" else f"{H6_VS}_hits"] - wide[col]).to_numpy()
             res = {"diff": float(d.mean())}
             for cname, cl in (("alerts", cl_alert), ("attempts", cl_attempt)):
                 b = bs.bootstrap_means(d[:, None], cl, n_boot=n_boot, seed=seed)[:, 0]

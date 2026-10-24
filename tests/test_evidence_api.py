@@ -105,9 +105,10 @@ def test_h6_report_paired_difference_and_margin():
     rows = []
     for a in range(30):  # 30 alerts with 4 pattern edges; scorer+pcst finds 3, the stub finds 1, in a few attempts
         for view, hits in (("scorer_pcst", 3), ("amount_1hop", 1), ("amount", 0), ("scorer", 3), ("scorer_greedy", 3), ("long_prompt", 0)):
-            rows.append({"alert_id": f"V{a}", "attempt_id": a // 3, "view": view, "hits": hits, "n_relevant": 4})
+            rows.append({"alert_id": f"V{a}", "attempt_id": a // 3, "view": view, "hits": hits, "n_relevant": 4, "n_sel": 40 if a < 10 else 12})
     rep = ev.h6_report(pl.DataFrame(rows), n_boot=200)
-    c = rep["comparisons"]["scorer_pcst_minus_amount_1hop_recall"]
-    assert rep["alerts_with_pattern_edges"] == 30 and rep["attempts"] == 10
+    c = rep["all"]["comparisons"]["scorer_pcst_minus_amount_1hop_recall"]
+    assert rep["all"]["alerts_with_pattern_edges"] == 30 and rep["all"]["attempts"] == 10
+    assert rep["pool_1hop_at_least_k"]["alerts_with_pattern_edges"] == 10
     assert c["diff"] == pytest.approx(0.5) and c["meets_margin"] and c["ci95_attempts"][0] > 0.15
-    assert rep["comparisons"]["scorer_pcst_minus_scorer_greedy_recall"]["diff"] == 0
+    assert rep["all"]["comparisons"]["scorer_pcst_minus_scorer_greedy_recall"]["diff"] == 0
