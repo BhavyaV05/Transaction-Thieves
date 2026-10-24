@@ -94,6 +94,64 @@ def graph_features(tx_id, ts, src, dst, amount, grp, batch: int = BATCH, threads
     return out
 
 
+# Layout of the snapml GFP output after the 5 echo columns, found with designed toy graphs (tests/test_baselines_gfp.py):
+#   0-13   pattern histograms, 2 bins (size 2, size 3+) each: fan-in, fan-out, degree-in, degree-out, scatter-gather,
+#          temporal cycle, length-constrained simple cycle
+#   14-65  four blocks of 13 vertex statistics: sender's outgoing edges, sender's incoming, receiver's outgoing,
+#          receiver's incoming; per block: distinct counterparties, edge count, edges per counterparty, then for the
+#          timestamp column and for the amount column: mean, sum, variance, skew, kurtosis
+_PATTERNS = [("fan_in", "24h"), ("fan_out", "24h"), ("degree_in", "24h"), ("degree_out", "24h"),
+             ("scatter_gather", "6h"), ("temporal_cycle", "24h"), ("simple_cycle", "24h")]  # fmt: skip
+_ROLES = ["sender_out", "sender_in", "receiver_out", "receiver_in"]
+_STATS = ["distinct_counterparties", "tx_count", "tx_per_counterparty"] + [
+    f"{c}_{s}" for c in ("time", "amount") for s in ("mean", "sum", "variance", "skew", "kurtosis")]  # fmt: skip
+_BASIC_LABELS = {"same_bank": "same_bank", "hour": "hour_of_day", "out": "home_bank_is_sender"}
+
+
+def gfp_label(i: int) -> str:
+    """Readable name of GFP output column `i` (0-based after the echo columns), e.g. `sender_out_amount_sum_24h`."""
+    if i < 14:
+        name, window = _PATTERNS[i // 2]
+        return f"{name}_size{'2' if i % 2 == 0 else '3plus'}_{window}"
+    b, j = divmod(i - 14, 13)
+    return f"{_ROLES[b]}_{_STATS[j]}_24h"
+
+
+def readable_names(names: list[str]) -> list[str]:
+    """`names` as returned by build_features (+ extra columns) -> human-readable names for explanations."""
+    out = []
+    for n in names:
+        if n.startswith("gfp_"):
+            out.append(gfp_label(int(n[4:])))
+        else:
+            out.append(_BASIC_LABELS.get(n, n))
+    return out
+
+
+def top_contributions(model, X, tx_ids, names: list[str], codes: dict, k: int = 5) -> pl.DataFrame:
+    """Top-k LightGBM `pred_contrib` (SHAP, log-odds of the raw model) per row: [{feature, value, contribution}].
+
+    A categorical column is reported as `payment_format=Wire` (value 1.0): the model reads the code as a number, the
+    code itself means nothing to a reader. Sorted by |contribution|; ties keep column order.
+    """
+    c = model.booster_.predict(X, pred_contrib=True)[:, :-1]
+    order = np.argsort(-np.abs(c), axis=1, kind="stable")[:, :k]
+    labels = readable_names(names)
+    inv = {col: {v: s for s, v in codes[col].items()} for col in CATS}
+    rows = []
+    for i in range(len(X)):
+        items = []
+        for j in order[i]:
+            lab, val = labels[j], float(X[i, j])
+            if lab in inv:
+                lab, val = f"{lab}={inv[lab].get(int(val), 'unseen')}", 1.0
+            items.append({"feature": lab, "value": val, "contribution": float(c[i, j])})
+        rows.append(items)
+    return pl.DataFrame({"tx_id": np.asarray(tx_ids, dtype="i8"), "top_features": rows},
+                        schema={"tx_id": pl.Int64, "top_features": pl.List(pl.Struct(
+                            {"feature": pl.Utf8, "value": pl.Float64, "contribution": pl.Float64}))})  # fmt: skip
+
+
 def category_codes(frame: pl.DataFrame) -> dict[str, dict[str, int]]:
     """String -> int codes for the three categorical columns, from the given (train/val) rows only."""
     cols = ("receiving_currency", "payment_currency", "payment_format")
@@ -236,7 +294,7 @@ def val_parts(timestamps: pl.Series, first, last) -> np.ndarray:
 
 
 def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 0, threads: int = 4,
-                grid=LGBM_GRID, n_folds: int = 3, extra_cols=None, neg_frac: float = 1.0, presorted: bool = False) -> dict:  # fmt: skip
+                grid=LGBM_GRID, n_folds: int = 3, extra_cols=None, neg_frac: float = 1.0, presorted: bool = False, explain_tx=None) -> dict:  # fmt: skip
     """Features -> LightGBM on train -> calibration on val 'fit' -> scores for every train/val row.
 
     Train rows get out-of-fold raw scores (`n_folds` contiguous time blocks, each scored by a model fit
@@ -244,6 +302,8 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
     same calibrator (fit on val 'fit' only) maps both to p0. Returns arrays aligned with `frame` sorted
     by (timestamp, tx_id) plus run metadata. `neg_frac` < 1 trains on all laundering rows and that share of
     clean train rows (HI-Medium see-everything); the isotonic step on val removes the resulting score bias.
+    `explain_tx` (tx ids): the result also holds `explain` (top-5 `pred_contrib` features of every such row, from the
+    model that scored it: the full model for val rows, the out-of-fold model for train rows) and `model`.
     """
     t0 = time.time()
     X, names, f = build_features(frame, codes, threads=threads, presorted=presorted)
@@ -272,26 +332,36 @@ def score_graph(frame: pl.DataFrame, codes: dict, parts_cut: tuple, seed: int = 
     raw[v0:] = predict_chunked(model, X[v0:])  # val rows are the contiguous tail of the time-sorted frame
     # out-of-fold train scores: contiguous time blocks of the (time-sorted) train rows
     blocks = np.array_split(idx, n_folds)
+    fold_models = []
     import lightgbm as lgb
 
     for b in blocks:
         rest = np.setdiff1d(use, b, assume_unique=True)
         if y[rest].sum() < 5:
             raw[b] = predict_chunked(model, X[b[0] : b[-1] + 1])  # ponytail: in-sample fallback for tiny banks
+            fold_models.append(model)
             continue
         m = lgb.LGBMClassifier(n_estimators=max(model.best_iteration_ or 50, 20), random_state=seed,
                                n_jobs=threads, verbose=-1, colsample_bytree=0.8, subsample=0.8,
                                subsample_freq=1, **params)  # fmt: skip
         m.fit(X[rest], y[rest])
         raw[b] = predict_chunked(m, X[b[0] : b[-1] + 1])
+        fold_models.append(m)
     cal, cal_name = fit_calibrator(raw[fit], y[fit], has_signal=has_signal(y[tr], raw[tr]))
     p0 = np.full(len(f), np.nan)
     ok = ~np.isnan(raw)
     p0[ok] = cal(raw[ok])
     meta |= {"params": params, "grid": log, "calibration": cal_name, "model_seconds": time.time() - t1,
              "status": "ok"}  # fmt: skip
-    return {"frame": f, "raw": raw, "p0": p0, "part": part, "meta": meta, "y": y,
-            "importances": dict(zip(names, model.feature_importances_.tolist(), strict=True))}  # fmt: skip
+    res = {"frame": f, "raw": raw, "p0": p0, "part": part, "meta": meta, "y": y,
+           "importances": dict(zip(names, model.feature_importances_.tolist(), strict=True))}  # fmt: skip
+    if explain_tx is not None:
+        tx = f["tx_id"].to_numpy()
+        want = np.isin(tx, np.asarray(explain_tx))
+        todo = [(np.flatnonzero(va & want), model)] + [(b[want[b]], m) for b, m in zip(blocks, fold_models, strict=True)]
+        res["explain"] = pl.concat([top_contributions(m, X[r], tx[r], names, codes) for r, m in todo if len(r)])
+        res["model"] = model
+    return res
 
 
 def p0_table(res: dict, mode: str, bank: int | None, cm: str, seed: int = 0) -> pl.DataFrame:
