@@ -137,7 +137,7 @@ Prints the four views of E8 for one train or val alert (aliased accounts, time-o
 2022-09-11 13:09 | A011a5a3 -> A01c7c26 | 2,589.13 Euro | ACH | bank 1601 -> bank 21514 (outgoing) <- ALERT
 ```
 
-The long prompt of the same alert holds only the newest 57 of the 12,860 edges (about 3,700 real tokens, the last 25 minutes of the bank's traffic) and none of the 4 pattern edges:
+The long prompt of the same alert holds only the newest 57 of the 12,860 edges (about 3,700 real tokens, the last half hour of the bank's traffic) and none of the 4 pattern edges:
 
 ```
 === long_prompt: 57 of 12860 candidate edges in the 72 h window, about 3971 tokens ===
