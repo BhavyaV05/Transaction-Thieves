@@ -77,7 +77,7 @@ def main() -> None:
     dcfg = io.load_config(a.data)
     pq = dcfg["parquet_dir"]
     p0 = pl.read_parquet(Path("data/scores") / a.data / "p0_one_bank.parquet").filter(pl.col("p0").is_not_null() & pl.col("p0").is_not_nan())
-    tx = io.scan_transactions(pq, split=["train", "val"], columns=["tx_id", "timestamp", "day"]).collect()
+    tx = io.scan_transactions(pq, split=["train", "val"], columns=["tx_id", "timestamp", "day", "from_bank", "to_bank"]).collect()
     p0 = p0.join(tx, on="tx_id")
     pat = io.scan_patterns(pq, split=["train", "val"]).select("tx_id", "attempt_id", "typology").collect()
     att = io.scan_attempts(pq, split=["train", "val"]).select("attempt_id", "spans_split").collect()
@@ -146,13 +146,14 @@ def main() -> None:
     adir = Path(dcfg["alerts_dir"])
     adir.mkdir(parents=True, exist_ok=True)
     cols = ["alert_id", "tx_id", "bank", "timestamp", "p0", "label", "attempt_id", "typology", "split", "val_part",
-            "spans_split"]  # fmt: skip
+            "spans_split", "direction", "counterparty_bank"]  # fmt: skip
     counts = {}
     for split in ("train", "val"):
         d = p0.filter((pl.col("split") == split) & (pl.col("p0") >= th["t_alert"])).join(pat, on="tx_id", how="left")
         d = d.sort(["timestamp", "tx_id", "bank"]).with_columns(
             (pl.lit(split[0].upper()) + pl.int_range(pl.len()).cast(pl.Utf8).str.zfill(6)).alias("alert_id"))  # fmt: skip
         d = al.add_span_flag(d, att)
+        d = al.add_direction(d)
         d.select(cols).write_parquet(adir / f"{split}.parquet")
         # attempt-level recall: attempts with >= 1 laundering tx in this split that have >= 1 alerted tx (any bank view)
         att_all = (pat.join(p0.filter(pl.col("split") == split).select("tx_id").unique(), on="tx_id")["attempt_id"].n_unique())

@@ -14,6 +14,7 @@ The scorer-only, scorer+PCST and long-prompt views (T1, weeks 7-9) should keep `
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import polars as pl
@@ -81,9 +82,46 @@ def format_trail(rows: pl.DataFrame, alert_tx_id: int | None = None, home_bank: 
     return "\n".join(lines)
 
 
+def direction_keys(from_bank: int, to_bank: int, home_bank: int) -> dict:
+    """`direction` ('out' when the home bank sent the money, else 'in') and `counterparty_bank` (the other bank; None
+    when both parties are at the home bank). Same rule as `ftm.banks.binding.alert_context` and the alert-set columns."""
+    cp = from_bank if from_bank != home_bank else (to_bank if to_bank != home_bank else None)
+    return {"direction": "out" if from_bank == home_bank else "in", "counterparty_bank": cp}
+
+
+@lru_cache(maxsize=8)
+def _top_features(alerts_dir: str) -> dict:
+    """{(tx_id, bank): [{feature, value, contribution}, ...]} from `top_features_{train,val}.parquet`
+    (scripts/top_features.py), rounded to 4 decimals to keep the prompt short."""
+    out = {}
+    for split in ("train", "val"):
+        f = Path(alerts_dir) / f"top_features_{split}.parquet"
+        if f.exists():
+            d = pl.read_parquet(f).filter(pl.col("top_features").is_not_null())  # time-guard: not transactions
+            out |= {(t, b): [{"feature": i["feature"], "value": round(i["value"], 4), "contribution": round(i["contribution"], 4)}
+                             for i in x] for t, b, x in zip(d["tx_id"], d["bank"], d["top_features"], strict=True)}  # fmt: skip
+    return out
+
+
 def alert_summary(alert_row: dict, aliases: pl.DataFrame) -> dict:
-    """Aliased fields of the alerted transaction for AlertContext.summary (no raw ids, no label)."""
+    """Aliased fields of the alerted transaction for AlertContext.summary (no raw ids, no label).
+
+    When `alert_row` carries `home_bank` (`top_k_by_amount_view` stamps it, so the usual call order works unchanged)
+    the summary also has `direction` and `counterparty_bank` (T2's planners), and `top_features` (T4's Sharma port)
+    if `scripts/top_features.py` has been run for the alert's dataset.
+    """
     amap = dict(zip(aliases["node_id"].to_list(), aliases["alias"].to_list(), strict=True))
+    out = _base_summary(alert_row, amap)
+    home = alert_row.get("home_bank")
+    if home is not None:
+        out |= direction_keys(alert_row["from_bank"], alert_row["to_bank"], home)
+        tf = _top_features(alert_row["alerts_dir"]).get((alert_row["tx_id"], home)) if alert_row.get("alerts_dir") else None
+        if tf:
+            out["top_features"] = tf
+    return out
+
+
+def _base_summary(alert_row: dict, amap: dict) -> dict:
     return {
         "sender": amap[alert_row["src_id"]],
         "receiver": amap[alert_row["dst_id"]],
@@ -107,9 +145,12 @@ def top_k_by_amount_view(
 ) -> tuple[pl.DataFrame, str]:
     """Full pipeline for one alert. `alert_row` needs tx_id, timestamp, src_id, dst_id (node ids, server side).
 
-    Returns (aliased rows, prompt text). The as_of is the alert timestamp.
+    Returns (aliased rows, prompt text). The as_of is the alert timestamp. Records `home_bank` and `alerts_dir` on
+    `alert_row` so that the `alert_summary(alert_row, ...)` called next knows the home bank.
     """
     as_of = alert_row["timestamp"]
+    alert_row["home_bank"] = int(bank)  # read by alert_summary (direction, counterparty_bank, top_features)
+    alert_row["alerts_dir"] = str(Path(views_dir).parent.parent / "alerts" / Path(views_dir).name)
     view = io.scan_view(views_dir, bank, as_of=as_of, columns=TRAIL_COLS)
     rows = select_top_k_by_amount(view, [alert_row["src_id"], alert_row["dst_id"]], as_of, k=k,
                                   window_hours=window_hours, alert_tx_id=alert_row["tx_id"])  # fmt: skip

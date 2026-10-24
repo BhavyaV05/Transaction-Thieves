@@ -21,6 +21,18 @@ def add_span_flag(alerts: pl.DataFrame, spans_split: pl.DataFrame) -> pl.DataFra
     return alerts.join(spans_split, on="attempt_id", how="left").with_columns(pl.col("spans_split").fill_null(False))
 
 
+def add_direction(alerts: pl.DataFrame) -> pl.DataFrame:
+    """Add `direction` ('out' when the home bank `bank` sent the money, else 'in') and `counterparty_bank` (the bank on
+    the other side; null when both parties are at the home bank). Same rule as `ftm.banks.binding.alert_context`.
+    alerts: needs bank, from_bank, to_bank (the two bank columns are dropped again)."""
+    home = pl.col("bank")
+    return alerts.with_columns(
+        pl.when(pl.col("from_bank") == home).then(pl.lit("out")).otherwise(pl.lit("in")).alias("direction"),
+        pl.when(pl.col("from_bank") != home).then(pl.col("from_bank"))
+        .when(pl.col("to_bank") != home).then(pl.col("to_bank")).alias("counterparty_bank"),
+    ).drop("from_bank", "to_bank")  # fmt: skip
+
+
 def project_test_count(per_day_rate: float, test_bulk_days: float) -> float:
     """PROJECTION (not a measurement): alerts per day observed on val x number of bulk test days.
 
