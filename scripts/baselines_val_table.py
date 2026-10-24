@@ -42,12 +42,13 @@ def registry(ds: str) -> dict[str, dict]:
     reg: dict[str, dict] = {"GFP one-bank": {"kind": "view", "files": [s / "p0_one_bank.parquet"], "mode": "one_bank", "model": "gfp_lgbm"}}
     if (s / "p0_see_everything.parquet").exists():
         reg["GFP see-everything"] = {"kind": "tx", "files": [s / "p0_see_everything.parquet"], "mode": "see_everything", "model": "gfp_lgbm"}
-    mg = s / "p0_multi_gnn.parquet"
-    if mg.exists():
+    for mg in (s / "p0_multi_gnn.parquet", s / "p0_multi_gnn__one_bank.parquet"):  # HI-Medium only has the one-bank file
+        if not mg.exists():
+            continue
         d = pl.read_parquet(mg, columns=["mode"])["mode"].unique().to_list()
-        if "one_bank" in d:
+        if "one_bank" in d and "Multi-GNN one-bank" not in reg:
             reg["Multi-GNN one-bank"] = {"kind": "view", "files": [mg], "mode": "one_bank", "model": "multi_gnn"}
-        if "see_everything" in d:
+        if "see_everything" in d and "Multi-GNN see-everything" not in reg:
             reg["Multi-GNN see-everything"] = {"kind": "tx", "files": [mg], "mode": "see_everything", "model": "multi_gnn"}
     fd = s / "federated"
     for name in ("dpfedavg_client_eps16", "dpfedavg_client_eps8", "dpfedavg_client_epsinf", "dpfedavg_edge_eps8", "dpfedavg_edge_epsinf"):
