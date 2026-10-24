@@ -104,6 +104,37 @@ def timeline_features(frame: pl.DataFrame, codes: dict | None = None, window: st
     return j.select("tx_id", *FEATURES2).sort("tx_id"), codes
 
 
+def chunked_timeline_features(scan: pl.LazyFrame, codes: dict, n_nodes: int, window: str = "24h"):
+    """Yield `(day, FEATURES2 frame of that day's rows)`: the same values as `timeline_features` over the whole frame, one day at
+    a time, for datasets that do not fit in memory (HI-Medium). `scan` has COLS + `day`, train/val rows only.
+
+    A day's 24 h windows reach back at most into the previous day, so the slab is {day - 1, day}; the prior counts (how often a
+    node appeared before) are carried across slabs in two dense counters over the node ids (`n_nodes`), which hold the days up to
+    day - 2. Equality with the whole-frame computation is tested (tests/test_retrieval_scorer.py).
+    """
+    days = sorted(scan.select(pl.col("day").unique()).collect()["day"].to_list())
+    out_cnt, in_cnt = np.zeros(n_nodes, np.int64), np.zeros(n_nodes, np.int64)
+    pending: dict[int, tuple[np.ndarray, np.ndarray]] = {}  # day -> (src, dst) not yet in the counters
+    for d in days:
+        for old in [x for x in pending if x <= d - 2]:
+            src, dst = pending.pop(old)
+            out_cnt += np.bincount(src, minlength=n_nodes)
+            in_cnt += np.bincount(dst, minlength=n_nodes)
+        slab = scan.filter(pl.col("day").is_in([d - 1, d])).collect()
+        feats, _ = timeline_features(slab, codes, window)
+        meta = slab.sort("tx_id").select("tx_id", "src_id", "dst_id", "day")
+        assert feats["tx_id"].to_list() == meta["tx_id"].to_list()
+        s, t = meta["src_id"].to_numpy(), meta["dst_id"].to_numpy()
+        feats = feats.with_columns(
+            pl.col("src_prior_out") + pl.Series(out_cnt[s]), pl.col("dst_prior_in") + pl.Series(in_cnt[t]),
+            pl.col("src_prior_in") + pl.Series(in_cnt[s]), pl.col("dst_prior_out") + pl.Series(out_cnt[t]),
+        )  # fmt: skip
+        today = (meta["day"] == d).to_numpy()
+        pending[d] = (s[today], t[today])
+        yield d, feats.filter(pl.Series(today))
+        del slab, feats
+
+
 def baseline(data: str = "hi_small", neg_frac: float = 0.05, seed: int = 0) -> dict:
     """Tiny MLP (one hidden layer of 32) on train, average precision and ROC AUC on val."""
     from sklearn.metrics import average_precision_score, roc_auc_score
@@ -192,11 +223,133 @@ def train_scorer(data: str = "hi_small", seed: int = 0, epochs: int = 30, neg_fr
             "val_eval_base_rate": float(y[ev].mean()), "n_train_used": int(len(keep)), "history": hist, "seed": seed, "features": FEATURES2}  # fmt: skip
 
 
+def train_scorer_streaming(data: str = "hi_medium", seed: int = 0, epochs: int = 120, neg_frac: float = 0.1, device: str = "cpu",
+                           threads: int = 6, keep_chunks: bool = False, suffix: str = "") -> dict:
+    """`train_scorer` for datasets that do not fit in memory (HI-Medium): features one day at a time (`chunked_timeline_features`,
+    equal to the whole-frame values), negatives subsampled while streaming (all attempt edges + `neg_frac` of the other train edges
+    are kept in memory, plus the val `fit` rows for the epoch choice), then every train+val edge is scored chunk by chunk.
+    Same model, loss, epoch rule and outputs as `train_scorer` (`suffix` is added to the output file names, for checks);
+    `peak_rss_mb` is the process high-water mark (ru_maxrss)."""
+    import resource
+    import shutil
+    import time
+    from pathlib import Path
+
+    import torch
+    from sklearn.metrics import average_precision_score, roc_auc_score
+
+    from ftm.baselines.gfp_gbt import val_parts
+
+    t0 = time.time()
+    rss = lambda: resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # noqa: E731  (MB on Linux)
+    torch.set_num_threads(threads)
+    cfg = io.load_config(data)
+    pq = cfg["parquet_dir"]
+    scan = io.scan_transactions(pq, split=["train", "val"], columns=COLS + ["split", "day"])
+    cats = ("receiving_currency", "payment_currency", "payment_format")
+    codes = {c: {v: i for i, v in enumerate(sorted(scan.select(pl.col(c).unique()).collect()[c].to_list()))} for c in cats}
+    mx = scan.select(pl.max_horizontal(pl.col("src_id").max(), pl.col("dst_id").max())).collect().item()
+    vt = scan.filter(pl.col("split") == "val").select(pl.col("timestamp").min().alias("a"), pl.col("timestamp").max().alias("b")).collect()
+    att = io.scan_patterns(pq, split=["train", "val"]).select("tx_id").collect()["tx_id"].to_numpy()
+    out = Path("data/retrieval") / data
+    chunks = out / f"chunks{suffix}"
+    chunks.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(seed)
+    n_tr = 0
+    sx = sxx = 0.0
+    keep_x, keep_y, fit_x, fit_y, stages = [], [], [], [], {}
+    for d, feats in chunked_timeline_features(scan, codes, int(mx) + 1):
+        m = scan.filter(pl.col("day") == d).select("tx_id", "split", "timestamp").collect().sort("tx_id")
+        assert m["tx_id"].to_list() == feats["tx_id"].to_list()
+        X = feats.select(FEATURES2).to_numpy().astype("f4")
+        X = np.sign(X) * np.log1p(np.abs(X))  # heavy tails
+        y = np.isin(m["tx_id"].to_numpy(), att).astype("i1")
+        sp = np.array(m["split"].to_list(), dtype="U5")
+        part = np.full(len(y), "", dtype="U4")
+        isv = sp == "val"
+        if isv.any():
+            part[isv] = val_parts(m["timestamp"].filter(pl.Series(isv)), vt["a"][0], vt["b"][0])
+        np.savez(chunks / f"day{d:02d}.npz", X=X, y=y, tx=m["tx_id"].to_numpy(), sp=sp, part=part)
+        tr = sp == "train"
+        n_tr += int(tr.sum())
+        sx = sx + X[tr].astype("f8").sum(0)
+        sxx = sxx + (X[tr].astype("f8") ** 2).sum(0)
+        k = tr & ((y == 1) | (rng.random(len(y)) < neg_frac))
+        keep_x.append(X[k])
+        keep_y.append(y[k])
+        f = part == "fit"
+        fit_x.append(X[f])
+        fit_y.append(y[f])
+        stages[f"features_day{d}"] = {"rows": len(y), "peak_rss_mb": rss(), "seconds": time.time() - t0}
+        del feats, X
+    mu = sx / n_tr
+    sd = np.sqrt(np.maximum(sxx / n_tr - mu**2, 0)) + 1e-6
+    norm = lambda a: ((a - mu) / sd).astype("f4")  # noqa: E731
+    xt, yt = torch.tensor(norm(np.vstack(keep_x))).to(device), torch.tensor(np.concatenate(keep_y), dtype=torch.float32).to(device)
+    xf, yf = norm(np.vstack(fit_x)), np.concatenate(fit_y)
+    del keep_x, fit_x
+    w = torch.where(yt == 1, 1.0, 1.0 / neg_frac).to(device)
+    w = w / w.mean()
+    torch.manual_seed(seed)
+    net = torch.nn.Sequential(torch.nn.Linear(xt.shape[1], 128), torch.nn.ReLU(), torch.nn.Linear(128, 128), torch.nn.ReLU(), torch.nn.Linear(128, 1)).to(device)
+    opt = torch.optim.Adam(net.parameters(), lr=2e-3)
+
+    def predict(Xn):
+        net.eval()
+        with torch.no_grad():
+            return torch.cat([net(torch.tensor(Xn[i : i + 500_000]).to(device)).squeeze(1).cpu() for i in range(0, len(Xn), 500_000)]).numpy()
+
+    stages["streamed_features"] = {"train_rows": n_tr, "kept_train": int(len(yt)), "kept_pos": int(yt.sum().item()), "val_fit_rows": int(len(yf)),
+                                   "peak_rss_mb": rss(), "seconds": time.time() - t0}  # fmt: skip
+    best, hist = (-1.0, None, -1), []
+    for ep in range(epochs):
+        net.train()
+        perm = torch.randperm(len(yt), device=device)
+        for i in range(0, len(perm), 4096):
+            b = perm[i : i + 4096]
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(net(xt[b]).squeeze(1), yt[b], weight=w[b])
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        ap = float(average_precision_score(yf, predict(xf)))
+        hist.append({"epoch": ep, "val_fit_ap": ap})
+        if ap > best[0]:
+            best = (ap, {k: t.clone() for k, t in net.state_dict().items()}, ep)
+    net.load_state_dict(best[1])
+    stages["trained"] = {"peak_rss_mb": rss(), "seconds": time.time() - t0}
+    del xt, yt, xf
+    ev_y, ev_s, frames = [], [], []
+    for f in sorted(chunks.glob("day*.npz")):  # score every train+val edge, one day at a time
+        z = np.load(f)
+        s_all = predict(norm(z["X"]))
+        frames.append(pl.DataFrame({"tx_id": z["tx"], "score": 1 / (1 + np.exp(-s_all.astype("f8"))), "split": z["sp"]}))
+        e = z["part"] == "eval"
+        ev_y.append(z["y"][e])
+        ev_s.append(s_all[e])
+    Path("models").mkdir(exist_ok=True)
+    torch.save({"state": best[1], "mu": mu, "sd": sd, "features": FEATURES2, "codes": codes, "best_epoch": best[2]}, f"models/edge_scorer_{data}{suffix}.pt")
+    pl.concat(frames).sort("tx_id").write_parquet(out / f"edge_scores{suffix}.parquet")
+    ev_y, ev_s = np.concatenate(ev_y), np.concatenate(ev_s)
+    stages["scored"] = {"peak_rss_mb": rss(), "seconds": time.time() - t0}
+    if not keep_chunks:
+        shutil.rmtree(chunks)
+    return {"data": data, "streaming": True, "best_epoch": best[2], "val_fit_ap": best[0], "val_eval_ap": float(average_precision_score(ev_y, ev_s)),
+            "val_eval_auc": float(roc_auc_score(ev_y, ev_s)), "val_eval_pos": int(ev_y.sum()), "val_eval_n": int(len(ev_y)),
+            "val_eval_base_rate": float(ev_y.mean()), "neg_frac": neg_frac, "seed": seed, "features": FEATURES2, "peak_rss_mb": rss(),
+            "seconds": time.time() - t0, "stages": stages, "history": hist}  # fmt: skip
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--train", action="store_true")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--epochs", type=int, default=120)
+    ap.add_argument("--streaming", action="store_true", help="day-by-day features and streamed negative subsampling (HI-Medium)")
+    ap.add_argument("--suffix", default="", help="output file name suffix (streaming only; use it for checks)")
     a = ap.parse_args()
-    print(json.dumps(train_scorer(a.data, epochs=a.epochs, device=a.device) if a.train else baseline(a.data), indent=1))
+    if a.train and a.streaming:
+        res = train_scorer_streaming(a.data, epochs=a.epochs, device=a.device, suffix=a.suffix)
+    else:
+        res = train_scorer(a.data, epochs=a.epochs, device=a.device) if a.train else baseline(a.data)
+    print(json.dumps(res, indent=1))

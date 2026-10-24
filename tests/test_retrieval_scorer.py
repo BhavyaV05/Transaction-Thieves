@@ -38,3 +38,16 @@ def test_window_aggregates_match_brute_force_and_ignore_the_future():
     a, b = d.filter(pl.col("tx_id") < 30), d2.sort("tx_id")
     for c in es.AGG:
         assert np.allclose(a[c].to_numpy(), b[c].to_numpy(), atol=1e-6), c
+
+
+def test_chunked_features_equal_the_whole_frame_computation():
+    f = _frame(400, seed=3).with_columns((pl.col("timestamp").dt.ordinal_day() - 244).alias("day"))  # days 1-3, ties on minutes
+    f = f.with_columns(pl.col("day").cast(pl.Int64))
+    assert f["day"].n_unique() >= 3
+    full, codes = es.timeline_features(f.drop("day"))
+    n_nodes = int(max(f["src_id"].max(), f["dst_id"].max())) + 1
+    parts = [x for _, x in es.chunked_timeline_features(f.lazy(), codes, n_nodes)]
+    got = pl.concat(parts).sort("tx_id")
+    assert got["tx_id"].to_list() == full["tx_id"].to_list()
+    for c in es.FEATURES2:
+        assert np.allclose(got[c].to_numpy(), full[c].to_numpy(), atol=1e-6), c

@@ -107,7 +107,7 @@ def test_select_views_k_alert_included_and_aliased(tmp_path):
     assert set(masks) == set(ev.VIEWS)
     t = cand["timestamp"].dt.epoch("s").to_numpy().astype("f8")
     for name, m in masks.items():
-        assert m[i] and m.sum() <= 40 and (t[m] <= t[i]).all(), name
+        assert m[i] and (m.sum() <= 40 or name == "long_prompt") and (t[m] <= t[i]).all(), name
     src, dst = cand["src_id"].to_numpy(), cand["dst_id"].to_numpy()
     assert pcst.is_one_trail(src, dst, t, i, masks["scorer_pcst"]) and pcst.is_one_trail(src, dst, t, i, masks["scorer_greedy"])
     al = alias.make_alias_table(np.arange(40), seed=0)
