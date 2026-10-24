@@ -4,7 +4,7 @@ Owner: T1 (Abhishek). Spec: tracks.md 3.3 item 7, 3.9 week 8. Train and val only
 
 ## What was run
 
-- **Switch.** `configs/data/<ds>_heldout.yaml` (`heldout_cycles: true`, alert sets in `data/alerts/<ds>_heldout/`) and `ftm.data.io(heldout_cycles=True)`: the cycle attempts' rows are removed from the **train** rows of every view; val is untouched, so cycle alerts can still be evaluated. `scripts/train_gfp.py --data <ds>_heldout` honours the config. Rows dropped: all train transactions of the attempts typed `cycle` in the pattern file (HI-Small 24 attempts in total, 12 train alerts of 255 positives; HI-Medium 161 val and ~120 train attempts, 1,448 → 1,152 train positives).
+- **Switch.** `configs/data/<ds>_heldout.yaml` (`heldout_cycles: true`, alert sets in `data/alerts/<ds>_heldout/`) and `ftm.data.io(heldout_cycles=True)`: the cycle attempts' rows are removed from the **train** rows of every view; val is untouched, so cycle alerts can still be evaluated. `scripts/train_gfp.py --data <ds>_heldout` honours the config. Rows dropped: all train transactions of the attempts typed `cycle` in the pattern file (HI-Small 36 attempts, 122 transactions of the 1,312 train pattern transactions; HI-Medium 202 attempts, 958 of 8,744).
 - **GFP one-bank** on all 30 views for both datasets (same settings, seed 0, `neg_frac` 0.3 on HI-Medium); **see-everything for HI-Small** (`--threads 6`). Scores `data/scores/<ds>_heldout/`.
 - **Conformal intake** with the same alpha_launder as the full run (0.60 / 0.63; `configs/intake/conformal.yaml`), thresholds recomputed on the held-out model's val `cal` part: `data/alerts/<ds>_heldout/{train,val}.parquet` (same schema, with `direction`, `counterparty_bank`; `top_features` not built for these sets).
 - **T2's held-out back-test** (`scripts/backtest.py --data <ds>_heldout --split train --heldout-cycles --eps 0.25 0.5 1 2`, 110 expert programs, 440 hypotheses, then `--assemble`) and `ftm.backtest.heldout.transfer_report` on val, via `scripts/heldout_report.py`. Output `data/runs/heldout_<ds>.json`.
@@ -19,7 +19,7 @@ Owner: T1 (Abhishek). Spec: tracks.md 3.3 item 7, 3.9 week 8. Train and val only
 | cycle: mean p0 | 0.342 | 0.392 | 0.407 | 0.369 |
 | cycle: share of rows alerted | 0.833 | 0.833 | 0.657 | 0.629 |
 | cycle: AUC against clean rows | 0.9974 | 0.9985 | 0.9832 | 0.9846 |
-| non-cycle laundering rows, mean share alerted | 0.62 | 0.60 | 0.72 | 0.71 |
+| non-cycle typed laundering rows, share alerted (71 / 232 rows) | 0.59 | 0.58 | 0.74 | 0.71 |
 | Brier one-bank (val eval rows) | 0.001167 | 0.001152 | 0.001451 | 0.001474 |
 | PR-AUC one-bank | 0.202 | 0.207 | 0.233 | 0.219 |
 | Brier see-everything / gap one-bank minus see | 0.000906 / +0.000261 | 0.000920 / +0.000232 | n/a (blocked) | n/a |
