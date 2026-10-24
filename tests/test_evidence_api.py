@@ -101,14 +101,17 @@ def test_view_resolves_alert_context_and_refuses_a_wrong_time(tmp_path, monkeypa
         ev.view(ok, "nope", data="toy")
 
 
-def test_h6_report_paired_difference_and_margin():
+def test_h6_report_shares_with_both_denominators():
     rows = []
-    for a in range(30):  # 30 alerts with 4 pattern edges; scorer+pcst finds 3, the stub finds 1, in a few attempts
-        for view, hits in (("scorer_pcst", 3), ("amount_1hop", 1), ("amount", 0), ("scorer", 3), ("scorer_greedy", 3), ("long_prompt", 0)):
-            rows.append({"alert_id": f"V{a}", "attempt_id": a // 3, "view": view, "hits": hits, "n_relevant": 4, "n_sel": 40 if a < 10 else 12})
+    for a in range(30):  # 4 pattern edges per alert; the trail returns 10 edges with 3 of them pattern edges, the plain top-40 finds 0
+        for view, hits, n in (("scorer_pcst", 3, 10), ("amount_1hop", 1, 40 if a < 10 else 12), ("amount", 0, 40), ("scorer", 3, 40),
+                              ("scorer_greedy", 3, 10), ("long_prompt", 0, 60)):  # fmt: skip
+            rows.append({"alert_id": f"V{a}", "attempt_id": a // 3, "view": view, "hits": hits, "n_relevant": 4, "n_sel": n})
     rep = ev.h6_report(pl.DataFrame(rows), n_boot=200)
-    c = rep["all"]["comparisons"]["scorer_pcst_minus_amount_1hop_recall"]
-    assert rep["all"]["alerts_with_pattern_edges"] == 30 and rep["all"]["attempts"] == 10
-    assert rep["pool_1hop_at_least_k"]["alerts_with_pattern_edges"] == 10
-    assert c["diff"] == pytest.approx(0.5) and c["meets_margin"] and c["ci95_attempts"][0] > 0.15
-    assert rep["all"]["comparisons"]["scorer_pcst_minus_scorer_greedy_recall"]["diff"] == 0
+    s = rep["share"]["alerts_with_pattern_edges"]
+    assert s["alerts"] == 30 and s["attempts"] == 10
+    assert s["denominator_k"]["diff"] == pytest.approx(3 / 40) and not s["denominator_k"]["lower_bound_ge_margin_attempts"]
+    assert s["denominator_selected"]["diff"] == pytest.approx(0.3) and s["denominator_selected"]["lower_bound_ge_margin_attempts"]
+    c = rep["recall_secondary"]["all"]["comparisons"]["scorer_pcst_minus_amount_1hop_recall"]
+    assert c["diff"] == pytest.approx(0.5) and rep["recall_secondary"]["pool_1hop_at_least_k"]["alerts_with_pattern_edges"] == 10
+    assert rep["recall_secondary"]["all"]["comparisons"]["scorer_pcst_minus_scorer_greedy_recall"]["diff"] == 0

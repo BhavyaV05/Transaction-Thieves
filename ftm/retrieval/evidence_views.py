@@ -41,11 +41,11 @@ NAMES = ("amount", "scorer", "scorer_pcst", "long_prompt", "amount_1hop", "score
 # "Everything in a long prompt": all candidate edges of the 72 h window, serialised like the other views, newest kept when they
 # do not fit. The harness prompt cap is `Limits.max_tokens` = 6,000 (configs/llm/default.yaml; the server has an 8,192 context).
 # The instructions, the alert, the question menu and the answer history of T3's planner prompt take about 2,000 of those, so
-# the evidence gets 4,000 tokens. Tokens are estimated at 1.7 characters per token (aliases and amounts tokenise badly; checked
-# against the Qwen3 tokenizer in docs/t1_planner_view.md), the same rule T3's trim loop uses.
+# the evidence gets 4,000 tokens. Tokens are estimated at 1.5 characters per token: the Qwen3 tokenizer gives 1.54 to 1.62 on these lines (aliases and
+# amounts tokenise badly; docs/t1_planner_view.md), so the estimate errs on the safe side by 3 to 8 percent.
 HARNESS_PROMPT_TOKENS = 6000
 PROMPT_RESERVE_TOKENS = 2000
-CHARS_PER_TOKEN = 1.7
+CHARS_PER_TOKEN = 1.5
 EVIDENCE_TOKENS = HARNESS_PROMPT_TOKENS - PROMPT_RESERVE_TOKENS
 
 
@@ -213,17 +213,50 @@ H6_MARGIN = 0.15
 
 
 def h6_report(per_alert: pl.DataFrame, n_boot: int = 10_000, seed: int = 0, k: int = K) -> dict:
-    """H6 (tracks.md 3.8): does scorer + PCST trail find >= 15 points more real pattern edges (recall in the 40) than the
-    top-40-by-amount baseline? Paired over the alerts that have pattern edges in the window, 95 % percentile CI from a
-    bootstrap over alerts and, since several alerts of one attempt are not independent, over attempts (alerts with no attempt
-    count as their own cluster). Positive = scorer + PCST finds more. Reported for all such alerts and for the stratum where
-    the baseline's 1-hop pool has at least k edges, the only place where choosing among edges can matter."""
+    """H6 as pre-registered (`prereg/hypotheses.yaml`): `pattern_edge_share(scorer_pcst) - pattern_edge_share(top40_by_amount)` with the
+    rejection rule "share-difference CI lower bound >= 0.15 AND Brier CI upper bound < 0". The Brier half needs planner runs with
+    each view (T3's E8) and is not computed here.
+
+    `pattern_edge_share` = pattern edges in the view / edges counted. "Among the 40" is read two ways and both are reported
+    (`denominator`): **k** (40, so a view that returns 15 edges is not rewarded for being short; the reading used for the
+    verdict) and **selected** (the number of edges the view returned). The baseline is `amount`, the plain top-40 by amount
+    over the window (not the 1-hop stub, which is a secondary comparison). Two populations: the alerts with at least one
+    pattern edge in the window (the only ones where a share can be above 0) and all alerts. Paired, 95 % percentile CI from
+    `n_boot` bootstrap resamples over alerts and over attempts (alerts with no attempt are their own cluster).
+
+    Secondary context (`recall_secondary`): recall of the pattern edges in the window, scorer + PCST against the stub, the
+    scorer alone, the greedy trail and the long prompt, on the alerts with pattern edges, and the same in the stratum where the
+    stub's 1-hop pool has at least k edges."""
+    from ftm.eval import bootstrap as bs
+
+    def paired(att, d):
+        cl = {"alerts": np.arange(len(d)), "attempts": bs.cluster_ids(att, [])}
+        out = {"diff": float(d.mean())}
+        for cname, c in cl.items():
+            b = bs.bootstrap_means(d[:, None], c, n_boot=n_boot, seed=seed)[:, 0]
+            out[f"ci95_{cname}"] = [float(np.quantile(b, 0.025)), float(np.quantile(b, 0.975))]
+        return out
+
+    hits = per_alert.pivot(on="view", index=["alert_id", "attempt_id", "n_relevant"], values="hits")
+    nsel = per_alert.pivot(on="view", index="alert_id", values="n_sel").rename({v: f"{v}_n" for v in VIEWS})
+    wide = hits.join(nsel, on="alert_id")
+    out = {"margin": H6_MARGIN, "n_boot": n_boot, "k": k, "baseline": "amount (plain top-40 by amount)", "share": {}}
+    for pop, w in (("alerts_with_pattern_edges", wide.filter(pl.col("n_relevant") > 0)), ("all_alerts", wide)):
+        att = [a if a is not None else f"alert:{i}" for i, a in zip(w["alert_id"], w["attempt_id"], strict=True)]
+        out["share"][pop] = {"alerts": w.height, "attempts": len(set(att))}
+        for den in ("k", "selected"):
+            def share(v, w=w, den=den):
+                return (w[v] / (k if den == "k" else w[f"{v}_n"])).to_numpy()
+            r = paired(att, share(H6_VS) - share("amount"))
+            r |= {"share_scorer_pcst": float(share(H6_VS).mean()), "share_amount": float(share("amount").mean())}
+            r["lower_bound_ge_margin_attempts"] = bool(r["ci95_attempts"][0] >= H6_MARGIN)
+            out["share"][pop][f"denominator_{den}"] = r
     has = per_alert.filter(pl.col("n_relevant") > 0)
-    wide = has.with_columns((pl.col("hits") / pl.col("n_relevant")).alias("recall")).pivot(on="view", index=["alert_id", "attempt_id"], values="recall")
-    wide = wide.join(has.pivot(on="view", index="alert_id", values="hits"), on="alert_id", suffix="_hits")
-    wide = wide.join(has.filter(pl.col("view") == "amount_1hop").select("alert_id", pl.col("n_sel").alias("pool_1hop")), on="alert_id")
-    return {"margin": H6_MARGIN, "n_boot": n_boot, "all": _h6_block(wide, n_boot, seed),
-            "pool_1hop_at_least_k": _h6_block(wide.filter(pl.col("pool_1hop") >= k), n_boot, seed)}
+    rec = has.with_columns((pl.col("hits") / pl.col("n_relevant")).alias("recall")).pivot(on="view", index=["alert_id", "attempt_id"], values="recall")
+    rec = rec.join(has.pivot(on="view", index="alert_id", values="hits"), on="alert_id", suffix="_hits")
+    rec = rec.join(has.filter(pl.col("view") == "amount_1hop").select("alert_id", pl.col("n_sel").alias("pool_1hop")), on="alert_id")
+    out["recall_secondary"] = {"all": _h6_block(rec, n_boot, seed), "pool_1hop_at_least_k": _h6_block(rec.filter(pl.col("pool_1hop") >= k), n_boot, seed)}
+    return out
 
 
 def _h6_block(wide: pl.DataFrame, n_boot: int, seed: int) -> dict:
