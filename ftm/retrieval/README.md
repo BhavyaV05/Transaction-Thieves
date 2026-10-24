@@ -114,9 +114,48 @@ HI-Small (`cal`+`eval`, 52 alerts with pattern edges): recall 0.006 / 0.621 / 0.
 
 **Reading.** (1) The null of H6 cannot be rejected on the share half: with denominator 40 the difference is 0.06 on both datasets, and **0.15 is out of reach by construction on this data**: an alert has only 2.8 to 3.7 pattern edges in its window (HI-Medium 2.77, HI-Small 3.65), so even a perfect retrieval has a share of at most 0.07 to 0.09 among 40 edges. With the selected-edges denominator the point estimate is 0.16 on both datasets, but the lower bounds (0.05, 0.12) stay under 0.15. (2) The Brier half is **pending**: it needs planner runs with each view on the same val alerts (T3's E8: the same planner and fusion with `view(alert, "scorer_pcst")` and with `"amount"` as the evidence text, paired per alert, the CI of the Brier difference needs its upper bound below 0). (3) Secondary context, recall of the pattern edges in the window on the alerts that have any (`h6_<ds>.json`, `recall_secondary`): scorer + PCST minus the plain top-40 by amount +64.5 points on HI-Small, +83.7 on HI-Medium; minus the week-2 stub (top-40 by amount, 1 hop) only +3.0 [0.0, 6.9] and +1.2 [0.0, 3.1]: the time-respecting 1-hop neighbourhood already holds almost every reachable pattern edge and the scorer adds 1 to 3 points; minus scorer only +6.1 [-9.9, 22.8] and +39.7 [31.2, 47.8]; minus the greedy trail exactly 0 on both (PCST adds nothing). Decision memo: `docs/t1_planner_view.md`.
 
+## Retrieval demo (G4, week 9)
+
+```
+python scripts/retrieval_demo.py --data hi_medium --alert V000993 [--view scorer_pcst] [--with-labels] [--full]
+```
+
+Prints the four views of E8 for one train or val alert (aliased accounts, time-ordered, nothing after the alert time; the long prompt shows its first and last three lines unless `--full`). `--with-labels` (off by default) also scores each view against the pattern file: the pattern edges of the alert's attempt inside the window, how many the view holds, and the one-time-respecting-trail check; labels are never printed next to an edge. Three HI-Medium val alerts (copied from the script; accounts are the seed-0 aliases, banks are public ids):
+
+**V000993**: an attempt with 4 pattern edges in the window of 12,860 candidate edges. The top-40 by amount holds none of them (40 edges, about 2,900 tokens: the bank's largest payments); the scorer alone holds 3 of 4 but not as one trail; the scorer + PCST trail holds all 4 in 9 edges (about 590 tokens): one account paying itself and one counterparty at each step, ending at the alerted payment.
+
+```
+=== scorer_pcst: 9 of 12860 candidate edges in the 72 h window, about 585 tokens ===
+2022-09-08 14:24 | A011a5a3 -> A011a5a3 | 15,404.69 US Dollar | ACH | bank 1601 -> bank 1601
+2022-09-08 14:24 | A011a5a3 -> A01ca922 | 13,146.36 Euro | ACH | bank 1601 -> bank 20538 (outgoing)
+2022-09-09 08:31 | A011a5a3 -> A011a5a3 | 16,526.98 US Dollar | ACH | bank 1601 -> bank 1601
+2022-09-09 08:31 | A011a5a3 -> A01e6d48 | 14,104.12 Euro | ACH | bank 1601 -> bank 4424 (outgoing)
+2022-09-09 15:57 | A011a5a3 -> A0155bf7 | 14,467.94 US Dollar | ACH | bank 1601 -> bank 16809 (outgoing)
+2022-09-10 12:10 | A011a5a3 -> A011a5a3 | 1,311.86 US Dollar | ACH | bank 1601 -> bank 1601
+2022-09-10 12:10 | A011a5a3 -> A00bb4a0 | 8,786.34 Yuan | ACH | bank 1601 -> bank 25 (outgoing)
+2022-09-11 13:09 | A011a5a3 -> A011a5a3 | 3,033.90 US Dollar | ACH | bank 1601 -> bank 1601
+2022-09-11 13:09 | A011a5a3 -> A01c7c26 | 2,589.13 Euro | ACH | bank 1601 -> bank 21514 (outgoing) <- ALERT
+```
+
+The long prompt of the same alert holds only the newest 57 of the 12,860 edges (about 3,700 real tokens, the last 25 minutes of the bank's traffic) and none of the 4 pattern edges:
+
+```
+=== long_prompt: 57 of 12860 candidate edges in the 72 h window, about 3971 tokens ===
+2022-09-11 12:46 | A001111e -> A015fe37 | 927.00 US Dollar | Cheque | bank 292109 -> bank 1601 (incoming)
+2022-09-11 12:47 | A005e16a -> A0199f15 | 305.18 US Dollar | Credit Card | bank 1601 -> bank 11 (outgoing)
+2022-09-11 12:47 | A01f2e79 -> A01f378e | 257.30 US Dollar | Credit Card | bank 1601 -> bank 7770 (outgoing)
+... (51 more edges, the newest 57 of 12860 fit the cap) ...
+2022-09-11 13:09 | A01eb61c -> A01be450 | 67.12 US Dollar | Cheque | bank 114976 -> bank 1601 (incoming)
+2022-09-11 13:09 | A0122be2 -> A0122be2 | 56.72 US Dollar | ACH | bank 1601 -> bank 1601
+2022-09-11 13:09 | A0122be2 -> A0160322 | 48.41 Euro | Wire | bank 1601 -> bank 142848 (outgoing)
+```
+
+**V000940**: 3 pattern edges among 31,550 candidates; the top-40 by amount and the scorer alone hold none of them, scorer + PCST holds all 3 inside a 40-edge trail (about 2,700 tokens). **V000935**: a false alert with no pattern edge; the trail is 2 edges (about 130 tokens) against 40 large unrelated payments (about 2,800 tokens): "nothing connected to this payment in the window" is also information. Rerun the command for the full output.
+
 ## Files
 
 - `edge_scorer.py`: features (`edge_features`, `timeline_features`), `train_scorer` (M3), a tiny sklearn baseline.
 - `pcst.py`: `reachable_to_alert`, `greedy_trail`, `pcst_edges`, `select_pcst_trail`, `is_one_trail`, `is_connected`, `check_binding`. Pure numpy; `pcst_fast` is imported inside the function.
-- `evidence_views.py`: `candidates` (time-guarded read), `select_views`, `format_trail`, `evaluate`.
+- `evidence_views.py`: `view` (the stable API), `candidates` (time-guarded read), `select_views`, `long_prompt_mask`, `line_chars`, `format_trail`, `evaluate`, `h6_report`.
+- `views.py`: T3's week-2 stub; T1 owns it from week 4 and added `direction_keys` and the `alert_summary` extras (`direction`, `counterparty_bank`, `top_features`).
 - `pcst_fast_binding.patch`: the one-line fix for the pcst_fast wheel.
