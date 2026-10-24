@@ -109,11 +109,13 @@ def make_model(deg_in: np.ndarray, deg_out: np.ndarray, hidden: int = HIDDEN, la
             self.norm = nn.LayerNorm(hidden)
             self.emlp = nn.Sequential(nn.Linear(3 * hidden, hidden), nn.ReLU(), nn.Linear(hidden, hidden))
 
-        def forward(self, h, e, src, dst):
+        def nodes(self, h, e, src, dst):
             ei = torch.stack([src, dst])
             out = self.fwd(h, ei, e) + self.rev(h, ei.flip(0), e)
-            h = (h + torch.relu(self.norm(out))) / 2
-            return h, e + self.emlp(torch.cat([h[src], h[dst], e], -1)) / 2
+            return (h + torch.relu(self.norm(out))) / 2
+
+        def edges(self, h, e, src, dst):  # needs the layer's new representation of BOTH endpoints, remote ones included
+            return e + self.emlp(torch.cat([h[src], h[dst], e], -1)) / 2
 
     class Net(nn.Module):
         def __init__(self):
@@ -153,15 +155,16 @@ def forward(nets, graphs_t, plan_t, mode: str, device, edge_idx=None):
 
     hs = [nets[c].node0.expand(len(g["owned"]), -1).contiguous() for c, g in enumerate(graphs_t)]
     es = [nets[c].edge_emb(g["x"]) for c, g in enumerate(graphs_t)]
+    ck = checkpoint if torch.is_grad_enabled() else None  # recompute in the backward pass: all clients' activations do not fit in 8 GB
+
+    def run(fn, *args):
+        return ck(fn, *args, use_reentrant=False) if ck else fn(*args)
+
+    hs = _exchange(hs, plan_t, mode, device)  # layer 0 representations of the remote nodes
     for layer in range(LAYERS):
-        hs = _exchange(hs, plan_t, mode, device)
-        for c, g in enumerate(graphs_t):
-            args = (hs[c], es[c], g["src"], g["dst"])
-            if torch.is_grad_enabled():  # recompute the layer in the backward pass: all clients' activations do not fit in 8 GB
-                hs[c], es[c] = checkpoint(nets[c].layers[layer], *args, use_reentrant=False)
-            else:
-                hs[c], es[c] = nets[c].layers[layer](*args)
-    hs = _exchange(hs, plan_t, mode, device)  # the read-out needs the final representation of a remote receiver
+        hs = [run(nets[c].layers[layer].nodes, hs[c], es[c], g["src"], g["dst"]) for c, g in enumerate(graphs_t)]
+        hs = _exchange(hs, plan_t, mode, device)  # the layer's output of every boundary node, before the edge update and the next layer
+        es = [run(nets[c].layers[layer].edges, hs[c], es[c], g["src"], g["dst"]) for c, g in enumerate(graphs_t)]
     out = []
     for c, g in enumerate(graphs_t):
         idx = edge_idx[c] if edge_idx is not None else torch.arange(len(g["src"]), device=device)
