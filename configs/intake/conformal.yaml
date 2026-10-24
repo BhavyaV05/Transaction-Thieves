@@ -1,5 +1,5 @@
 # C2 conformal intake (T1). Read by scripts/make_alerts.py.
-alpha_launder: {hi_small: 0.60, hi_medium: 0.63}  # target miss rate among laundering rows (share NOT alerted); chosen from the sweep in data/runs/alerts_<ds>.json
+alpha_launder: {hi_small: 0.60, hi_medium: 0.63, hi_small_heldout: 0.60, hi_medium_heldout: 0.63}  # target miss rate among laundering rows (share NOT alerted); chosen from the sweep in data/runs/alerts_<ds>.json
 alpha_clean: 0.02         # target miss rate among clean rows (clean label dropped from the set)
 half_life_days: 0.25        # time weighting of calibration rows; the cal part spans < 1 day, so the half-life is a fraction of a day (None = equal weights)
 scrc_beta: 0.0005         # max laundering share among auto-cleared transactions (selective risk bound)
@@ -8,5 +8,5 @@ apply_scrc: false         # true: also alert everything below the certified clea
 fixed_window: [0.15, 0.85]  # ablation
 # No 72 h evidence-window drop rule (decision 3): history before the split is legitimate evidence. The span rule is a flag column (`spans_split`) only.
 seed: 0
-bulk_days: {hi_small: 10, hi_medium: 16}   # days that hold 99.9% of rows (AMLworld paper table 4); test = bulk_days - last val day
+bulk_days: {hi_small: 10, hi_medium: 16, hi_small_heldout: 10, hi_medium_heldout: 16}   # days that hold 99.9% of rows (AMLworld paper table 4); test = bulk_days - last val day
 targets: {train: 20000, val_min: 1000, test: [2500, 4000], test_pos_min: 375}
