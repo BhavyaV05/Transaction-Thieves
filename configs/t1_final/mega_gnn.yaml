@@ -2,17 +2,265 @@
 model: MEGA-GenAgg (GIN, GenAgg node aggregation, GIN parallel-edge aggregation, edge updates, reverse MP, ego ids, no ports); hcagri/MEGA-GNN
   commit ef60a71
 final_entry:
-  status: to_build
-  command: python scripts/train_gnn.py --final --model mega_gnn --data <ds> --mode <one_bank|see_everything>
-  note: proposed command (run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN); the test-time entry point is not written yet,
-    see docs/t1_final_run.md
+  status: ready
+  commands:
+  - python scripts/train_gnn.py --final --model mega_gnn --data <ds> --mode one_bank
+  - python scripts/train_gnn.py --final --model mega_gnn --data <ds> --mode see_everything
+  note: run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN; each `--final` refuses to run without it and checks that the val-time
+    numbers are reproduced (docs/t1_final_run.md)
 hi_small:
   one_bank:
-    status: not_run
-    val_command: python scripts/train_gnn.py --our-split --model mega_gnn --data hi_small --mode one_bank --max-epochs 100 --budget-s 28800
+    status: val_done
+    seed: 1
+    commit: f40e51a
+    batch_size: 2048
+    neighbours:
+    - 100
+    - 100
+    val_cut:
+    - '2022-09-07 00:00:00'
+    - '2022-09-08 23:59:00'
+    skipped: {}
+    models:
+      '70':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 25
+        best_val_fit_ap: 0.002084756281260869
+        calibration: platt
+        train_edges: 271928
+        train_pos: 390
+      '10':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 19
+        best_val_fit_ap: 0.49264753550924684
+        calibration: platt
+        train_edges: 70319
+        train_pos: 52
+      '12':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 45
+        best_val_fit_ap: 0.9051414768806073
+        calibration: platt
+        train_edges: 69805
+        train_pos: 78
+      '1':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 89
+        best_val_fit_ap: 0.6308986137741612
+        calibration: platt
+        train_edges: 52520
+        train_pos: 37
+      '15':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 19
+        best_val_fit_ap: 0.02452791461412151
+        calibration: platt
+        train_edges: 48847
+        train_pos: 34
+      '220':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 52
+        best_val_fit_ap: 0.6017639658956366
+        calibration: platt
+        train_edges: 46712
+        train_pos: 16
+      '20':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 68
+        best_val_fit_ap: 0.6633614305091649
+        calibration: platt
+        train_edges: 35769
+        train_pos: 44
+      '3':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 2
+        best_val_fit_ap: 0.7435897435897436
+        calibration: platt
+        train_edges: 35066
+        train_pos: 13
+      '7':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 1
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 30798
+        train_pos: 14
+      '211':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 61
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 28870
+        train_pos: 38
+      '28':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 13
+        best_val_fit_ap: 0.7502081598667777
+        calibration: platt
+        train_edges: 28160
+        train_pos: 16
+      '1665':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 45
+        best_val_fit_ap: 0.53125
+        calibration: platt
+        train_edges: 27858
+        train_pos: 21
+      '116':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 25
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 27930
+        train_pos: 27
+      '11':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 7
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 24945
+        train_pos: 33
+      '22':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 68
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 24669
+        train_pos: 24
+      '1292':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 94
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 23683
+        train_pos: 12
+      '118':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 11
+        best_val_fit_ap: 0.5742753623188406
+        calibration: platt
+        train_edges: 23429
+        train_pos: 17
+      '23':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 88
+        best_val_fit_ap: 0.8401826484018264
+        calibration: platt
+        train_edges: 23145
+        train_pos: 25
+      '14':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 20
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 22081
+        train_pos: 11
+      '1362':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 2
+        best_val_fit_ap: 0.3894795563431121
+        calibration: platt
+        train_edges: 21972
+        train_pos: 24
+      '6':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 4
+        best_val_fit_ap: 0.5238095238095238
+        calibration: platt
+        train_edges: 21984
+        train_pos: 5
+      '4':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 4
+        best_val_fit_ap: 0.5178758882428941
+        calibration: platt
+        train_edges: 21170
+        train_pos: 19
+      '214':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 86
+        best_val_fit_ap: 0.8214285714285714
+        calibration: platt
+        train_edges: 20351
+        train_pos: 16
+      '1420':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 10
+        best_val_fit_ap: 0.5238095238095238
+        calibration: platt
+        train_edges: 19675
+        train_pos: 27
+      '213':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 12
+        best_val_fit_ap: 0.6671144947007016
+        calibration: platt
+        train_edges: 19623
+        train_pos: 23
+      '410':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 8
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 19440
+        train_pos: 21
+      '19':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 0
+        best_val_fit_ap: 0.0
+        calibration: 'skipped: no val-fit positives'
+        train_edges: 18446
+        train_pos: 10
+      '119':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 3
+        best_val_fit_ap: 1.0
+        calibration: platt
+        train_edges: 18377
+        train_pos: 56
+      '1674':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 0
+        best_val_fit_ap: 0.0
+        calibration: 'skipped: no val-fit positives'
+        train_edges: 18152
+        train_pos: 15
+      '1588':
+        epochs_run: 100
+        best_epoch_by_val_fit_ap: 21
+        best_val_fit_ap: 0.6669920815706692
+        calibration: platt
+        train_edges: 18062
+        train_pos: 15
+    val_command: python scripts/train_gnn.py --our-split --model mega_gnn --data hi_small --mode one_bank --max-epochs 100
+    inputs:
+    - data/parquet/hi_small/transactions.parquet
+    - data/views/hi_small
+    - data/scores/hi_small/p0_mega_gnn__one_bank.parquet
   see_everything:
-    status: not_run
-    val_command: python scripts/train_gnn.py --our-split --model mega_gnn --data hi_small --mode see_everything --max-epochs 100 --budget-s 28800
+    status: val_done
+    seed: 1
+    commit: 9eb7180
+    batch_size: 2048
+    neighbours:
+    - 100
+    - 100
+    val_cut:
+    - '2022-09-07 00:00:00'
+    - '2022-09-08 23:59:00'
+    skipped: {}
+    models:
+      epochs_run: 18
+      best_epoch_by_val_fit_ap: 14
+      best_val_fit_ap: 0.5852811240172358
+      calibration: isotonic
+      train_edges: 3248921
+      train_pos: 2530
+    val_command: python scripts/train_gnn.py --our-split --model mega_gnn --data hi_small --mode see_everything --max-epochs 100
+    inputs:
+    - data/parquet/hi_small/transactions.parquet
+    - data/views/hi_small
+    - data/scores/hi_small/p0_mega_gnn__see_everything.parquet
 hi_medium:
   one_bank:
     status: not_run

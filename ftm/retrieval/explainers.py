@@ -88,7 +88,7 @@ class BankModel:
     port of an edge depends on earlier edges only) and cached in `data/retrieval/<ds>/explain_cache/bank<b>.npz`.
     """
 
-    def __init__(self, ds: str, bank: int, device: str = "cpu", clone: Path = CLONE, cache: bool = True):
+    def __init__(self, ds: str, bank: int, device: str = "cpu", clone: Path = CLONE, cache: bool = True, final: bool = False):
         import json
 
         import torch
@@ -96,7 +96,7 @@ class BankModel:
 
         from ftm.data import io
 
-        self.ds, self.bank, self.torch = ds, bank, torch
+        self.ds, self.bank, self.torch, self.final = ds, bank, torch, final
         self.dev = torch.device(device)
         clone = Path(clone).expanduser().resolve()
         if str(clone) not in sys.path:
@@ -119,14 +119,14 @@ class BankModel:
 
         from ftm.baselines import multi_gnn
 
-        f = Path("data/retrieval") / self.ds / "explain_cache" / f"bank{self.bank}.npz"
+        f = Path("data/retrieval") / self.ds / "explain_cache" / f"bank{self.bank}{'_final' if self.final else ''}.npz"
         if cache and f.exists():
             z = np.load(f)
             self.tx, self.src, self.dst, self.ea, self.ea_rev, self.t, self.t0_us = (z[k] for k in ("tx", "src", "dst", "ea", "ea_rev", "t", "t0_us"))
             self.t0_us = int(self.t0_us)
             return
         cfg = io.load_config(self.ds)
-        frame = io.scan_view(cfg["views_dir"], self.bank, split=["train", "val"], columns=multi_gnn.EDGE_COLS).collect().sort(["timestamp", "tx_id"])
+        frame = io.scan_view(cfg["views_dir"], self.bank, split=["train", "val", "test"] if self.final else ["train", "val"], columns=multi_gnn.EDGE_COLS).collect().sort(["timestamp", "tx_id"])
         ntr = int((frame["split"] == "train").sum())
         ei, ea, y, txid, n_nodes, _ = multi_gnn.edge_arrays(frame)
         ns = _args()
@@ -305,13 +305,13 @@ def _Wrap(model):  # noqa: N802
 
 
 @functools.lru_cache(maxsize=2)
-def _bank_model(ds: str, bank: int, device: str) -> BankModel:
-    return BankModel(ds, bank, device)
+def _bank_model(ds: str, bank: int, device: str, final: bool = False) -> BankModel:
+    return BankModel(ds, bank, device, final=final)
 
 
-def live_scores(ds: str, method: str, bank: int, tx_id: int, as_of, cand_tx, device: str = "cpu") -> np.ndarray:
+def live_scores(ds: str, method: str, bank: int, tx_id: int, as_of, cand_tx, device: str = "cpu", final: bool = False) -> np.ndarray:
     """Explainer score of every candidate edge of one alert, computed now (the cache of `scripts/run_explainers.py` is bypassed)."""
-    bm = _bank_model(ds, bank, device)
+    bm = _bank_model(ds, bank, device, final)
     if method == "pgexplainer" and not hasattr(bm, "pg"):
         bm.pg_load(pg_path(ds, bank))
     return bm.scores(method, cand_tx, tx_id, as_of, seed=tx_id % 2**31)[0]

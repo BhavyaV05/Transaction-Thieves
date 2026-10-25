@@ -185,8 +185,13 @@ def to_device(graphs: list[ClientGraph], plan: list[dict], device):
 
 def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync: str, exchange: str, steps: int = 400, local_steps: int = 10,
         parts: dict[int, np.ndarray], batch: int = 8192, lr: float = 2e-3, pos_weight: float = 7.0, mu: float = 0.01, eval_every: int = 40,
-        seed: int = 0, device: str = "cuda", log=print) -> dict:  # fmt: skip
+        seed: int = 0, device: str = "cuda", log=print, fixed_step: int | None = None, frames_test: dict | None = None,
+        x_edge_test: dict | None = None) -> dict:  # fmt: skip
     """One training run. Returns per client the raw P(laundering) of its val rows at the step with the best pooled val `fit` AP.
+
+    Final run (week 14): `fixed_step` (the step chosen on val, no selection and no training beyond it) and `frames_test` / `x_edge_test` (the same
+    views with the TEST rows appended; features from `x_edge_test`): at that step the val rows are scored on the train+val graph as before and the
+    test rows on the train+val+test graph with the same network; the result also holds `raw_test` and `test_idx_tx`.
 
     `frames`: bank -> its view rows (train and val), sorted by (timestamp, tx_id), with split, is_laundering, from_bank ...;
     `x_edge`: bank -> edge features of those rows; `parts`: bank -> val_part ('fit'/'cal'/'eval') of its val rows, in row order. Training uses train rows only; scoring uses the train+val graph (as the paper)."""
@@ -207,9 +212,13 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
         node_bank.update(zip(f["dst_id"].to_list(), f["to_bank"].to_list(), strict=True))
     g_tr = [ClientGraph(b, frames[b], node_bank, x_edge[b], client_of_bank, True) for b in banks]
     g_ev = [ClientGraph(b, frames[b], node_bank, x_edge[b], client_of_bank, False) for b in banks]
+    g_te = None
+    if frames_test is not None:  # train+val+test graph: only the test rows are scored on it
+        g_te = [ClientGraph(b, frames_test[b], node_bank, x_edge_test[b], client_of_bank, False) for b in banks]
     plan_tr, plan_ev = build_plan(g_tr), build_plan(g_ev)
     gt_tr, pt_tr = to_device(g_tr, plan_tr, device)
     gt_ev, pt_ev = to_device(g_ev, plan_ev, device)
+    gt_te, pt_te = to_device(g_te, build_plan(g_te), device) if g_te is not None else (None, None)
     deg_in, deg_out = degree_histograms(g_tr)
     base = make_model(deg_in, deg_out).to(device)
     shared = sync == "sync_sgd"
@@ -222,13 +231,15 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
     ytr = [torch.as_tensor(g.y, device=device) for g in g_tr]
     val_idx = [np.flatnonzero(g.split == "val") for g in g_ev]
     val_t = [torch.as_tensor(i, device=device) for i in val_idx]
+    test_idx = [np.flatnonzero(g.split == "test") for g in g_te] if g_te is not None else None
+    raw_test = None
     part = np.concatenate([parts[b] for b in banks])
     best = (-1.0, None, -1)
     hist = []
     glob = {k: p.detach().clone() for k, p in base.named_parameters()}
 
     def evaluate(step):
-        nonlocal best
+        nonlocal best, raw_test
         for n in uniq:
             n.eval()
         with torch.no_grad():
@@ -239,8 +250,12 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
         ap = float(average_precision_score(yv[fit], np.concatenate(raw)[fit])) if yv[fit].sum() else 0.0
         hist.append({"step": step, "val_fit_ap": ap})
         log(f"  step {step}: val fit AP {ap:.4f}")
-        if ap > best[0]:
+        if ap > best[0] or fixed_step is not None:
             best = (ap, raw, step)
+            if g_te is not None:  # same network, test rows on the graph that also holds the test edges
+                with torch.no_grad():
+                    lt = forward(nets, gt_te, pt_te, exchange, device, [torch.as_tensor(i, device=device) for i in test_idx])
+                raw_test = [torch.sigmoid(x).cpu().numpy().astype("f8") for x in lt]
         for n in uniq:
             n.train()
 
@@ -273,10 +288,16 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
                 for c in range(len(banks)):
                     for k, p in pars[c].items():
                         p.copy_(glob[k])
+        if fixed_step is not None:
+            if step == fixed_step:
+                evaluate(step)  # the step is fixed from val: no selection, no further training
+                break
+            continue
         if step % eval_every == 0 or step == steps:
             if sync in ("fedavg", "fedprox") and step % local_steps != 0:
                 continue  # evaluate the aggregated model only
             evaluate(step)
-    return {"raw": best[1], "best_step": best[2], "best_val_fit_ap": best[0], "history": hist, "sync": sync, "exchange": exchange,
+    return {"raw": best[1], "raw_test": raw_test, "test_idx_tx": [g_te[c].tx_id[test_idx[c]] for c in range(len(banks))] if g_te is not None else None,
+            "best_step": best[2], "best_val_fit_ap": best[0], "history": hist, "sync": sync, "exchange": exchange,
             "steps": steps, "local_steps": local_steps, "batch": batch, "lr": lr, "pos_weight": pos_weight, "seed": seed,
             "n_clients": len(banks), "val_rows": [len(i) for i in val_idx], "val_idx_tx": [g_ev[c].tx_id[val_idx[c]] for c in range(len(banks))]}  # fmt: skip

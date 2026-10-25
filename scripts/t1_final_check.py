@@ -24,7 +24,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIGS = ROOT / "configs" / "t1_final"
-REQUIRED = ("gfp", "multi_gnn", "mega_gnn", "federated", "layerwise", "retrieval", "intake", "subset_rule")
+REQUIRED = ("gfp", "multi_gnn", "mega_gnn", "fraudgt", "federated", "layerwise", "retrieval", "intake", "subset_rule")
 
 
 def walk(node, key=""):
@@ -95,7 +95,7 @@ def check(names=None, artefacts: bool = True, run_help: bool = True) -> tuple[li
         for key, val in walk(cfg):
             if not isinstance(val, str):
                 continue
-            if key in ("val_command", "val_commands"):
+            if key in ("val_command", "val_commands", "commands"):
                 target, flags = parse_command(val)
                 if target is None:
                     problems.append(f"{name}: {key} is not a python command: {val[:60]}")
@@ -107,7 +107,7 @@ def check(names=None, artefacts: bool = True, run_help: bool = True) -> tuple[li
                 if not (ROOT / val).exists():
                     problems.append(f"{name}: artefact {val} does not exist")
         for path, entry in _finals(cfg, name):
-            final.append(f"{path:<44} {entry.get('status', '?'):<9} {entry.get('command') or entry.get('note', '')}")
+            final.append(f"{path:<30} {entry.get('status', '?'):<9} " + ("  |  ".join(entry.get("commands", [])) or entry.get("note", "")))
     return problems, final
 
 

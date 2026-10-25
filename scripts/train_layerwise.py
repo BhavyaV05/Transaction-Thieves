@@ -37,7 +37,9 @@ def commit() -> str:
     return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
 
 
-def load(ds: str, banks: list[int] | None, min_train_pos: int):
+def load(ds: str, banks: list[int] | None, min_train_pos: int, final: bool = False):
+    """`final=True` (week 14, needs FTM_FINAL_RUN=1) returns two more items: the views with the TEST rows appended and their edge features
+    (category codes and the time origin come from the train/val rows, so the train/val rows have the same features as in the val run)."""
     cfg = io.load_config(ds)
     order = io.read_banks(cfg["views_dir"]).sort("rank")["bank"].to_list()
     v = io.scan_transactions(cfg["parquet_dir"], split="val", columns=["timestamp"]).select(
@@ -58,7 +60,57 @@ def load(ds: str, banks: list[int] | None, min_train_pos: int):
     for b, f in frames.items():
         val = f.filter(pl.col("split") == "val")
         parts[b] = g.val_parts(val["timestamp"], *cut)
-    return frames, x, parts, skipped, cut
+    if not final:
+        return frames, x, parts, skipped, cut
+    frames_te = {b: io.scan_view(cfg["views_dir"], b, split=["train", "val", "test"], columns=COLS).collect().sort(["timestamp", "tx_id"]) for b in frames}
+    x_te = {b: np.hstack([fed.tx_features(f, codes), ((f["timestamp"] - t0).dt.total_seconds().to_numpy() / (10 * 86400.0)).astype("f4")[:, None]]).astype("f4")
+            for b, f in frames_te.items()}  # fmt: skip
+    return frames, x, parts, skipped, cut, frames_te, x_te
+
+
+def final_run(a) -> None:
+    """Week 14: rerun each arm at the step chosen on val (`best_step` of `data/runs/layerwise_<ds>.json`, no selection) and score the TEST rows.
+    Needs FTM_FINAL_RUN=1 (scripts/run_final.py). The val rows of the same run give the Platt calibrator (pooled val `fit` rows); their raw
+    scores are compared with the stored val run (GPU scatter is not bit-deterministic: the rank correlation must be above 0.95). Writes
+    data/scores/<ds>/final/ceydeli_<sync>_<ex>_seed<k>.parquet (test rows) and data/runs/final_layerwise_<ds>.json."""
+    from scipy.stats import spearmanr
+
+    from ftm import guards
+
+    guards.require_final_run("the test split of the layer-wise exchange")
+    frames, x, parts, skipped, cut, frames_te, x_te = load(a.data, a.banks, a.min_train_pos, final=True)
+    val_rows = json.loads(Path(a.out or f"data/runs/layerwise_{a.data}.json").read_text())["rows"]
+    out = Path("data/scores") / a.data / "final"
+    out.mkdir(parents=True, exist_ok=True)
+    recs = []
+    for arm in a.arms:
+        sync, ex = arm.split(":")
+        for seed in a.seeds:
+            ref = next(r for r in val_rows if r["arm"] == arm and r["seed"] == seed and r["steps"] == a.steps)
+            res = lw.run(frames, x, sync=sync, exchange=ex, steps=a.steps, local_steps=a.local_steps, parts=parts, batch=a.batch, lr=a.lr, seed=seed, device=a.device,
+                         log=lambda s: print(s, flush=True), fixed_step=ref["best_step"], frames_test=frames_te, x_edge_test=x_te)  # fmt: skip
+            banks = list(frames)
+            y = np.concatenate([frames[b].filter(pl.col("split") == "val")["is_laundering"].cast(pl.Float32).to_numpy() for b in banks])
+            part, raw = np.concatenate([parts[b] for b in banks]), np.concatenate(res["raw"])
+            fit = part == "fit"
+            cal, _ = g.fit_calibrator(raw[fit], y[fit], has_signal=False)
+            tx_te = np.concatenate(res["test_idx_tx"])
+            te = {b: frames_te[b].filter(pl.col("split") == "test") for b in banks}
+            lab = np.concatenate([te[b]["is_laundering"].to_numpy() for b in banks]).astype(bool)
+            assert np.array_equal(tx_te, np.concatenate([te[b]["tx_id"].to_numpy() for b in banks]))
+            raw_te = np.concatenate(res["raw_test"])
+            pl.DataFrame({"tx_id": tx_te, "bank": np.concatenate([[b] * len(te[b]) for b in banks]), "mode": "one_bank", "model": f"ceydeli_{sync}_{ex}", "split": "test",
+                          "val_part": None, "p0": cal(raw_te), "score_raw": raw_te, "label": lab, "seed": seed, "commit": commit()},
+                         schema_overrides={"val_part": pl.Utf8}).write_parquet(out / f"{sync}_{ex}_seed{seed}.parquet")  # fmt: skip
+            old = pl.read_parquet(Path("data/scores") / a.data / "ceydeli" / f"{sync}_{ex}_seed{seed}.parquet").sort(["tx_id", "bank"])  # time-guard: not transactions
+            nv = pl.DataFrame({"tx_id": np.concatenate(res["val_idx_tx"]), "bank": np.concatenate([[b] * len(t) for b, t in zip(banks, res["val_idx_tx"], strict=True)]), "raw": raw}).sort(["tx_id", "bank"])
+            rho = float(spearmanr(old["score_raw"].to_numpy(), nv["raw"].to_numpy())[0])
+            recs.append({"arm": arm, "seed": seed, "step": ref["best_step"], "val_spearman_vs_stored": rho, "val_max_abs_diff_vs_stored": float(np.max(np.abs(old["score_raw"].to_numpy() - nv["raw"].to_numpy()))),
+                         "test_rows": int(len(tx_te))})  # fmt: skip
+            print("final", recs[-1], flush=True)
+    Path(f"data/runs/final_layerwise_{a.data}.json").write_text(json.dumps({"commit": commit(), "records": recs}, indent=1))
+    if any(r["val_spearman_vs_stored"] < 0.95 for r in recs):
+        raise SystemExit("the rerun does not reproduce the stored val scores (rank correlation < 0.95): do not use these test scores")
 
 
 def main() -> None:
@@ -74,7 +126,10 @@ def main() -> None:
     ap.add_argument("--min-train-pos", type=int, default=5)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--final", action="store_true", help="week 14: rerun the arms at their val-chosen step and score the TEST rows (needs FTM_FINAL_RUN=1)")
     a = ap.parse_args()
+    if a.final:
+        return final_run(a)
     t0 = time.time()
     frames, x, parts, skipped, cut = load(a.data, a.banks, a.min_train_pos)
     print(f"{len(frames)} clients, skipped {skipped}, loaded in {time.time() - t0:.0f}s", flush=True)

@@ -97,7 +97,10 @@ val_commands:
 - python -m ftm.retrieval.evidence_views --data hi_small --parts cal eval --explainers gnnexplainer pgexplainer
 - python -m ftm.retrieval.evidence_views --data hi_medium --parts cal eval --explainers gnnexplainer pgexplainer
 final_entry:
-  status: to_build
-  command: python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer
-  note: proposed command (run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN); the test-time entry point is not written yet,
-    see docs/t1_final_run.md
+  status: ready
+  commands:
+  - python -m ftm.retrieval.edge_scorer --data <ds> --final
+  - python scripts/run_explainers.py --data <ds> --final
+  - python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer
+  note: run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN; each `--final` refuses to run without it and checks that the val-time
+    numbers are reproduced (docs/t1_final_run.md)

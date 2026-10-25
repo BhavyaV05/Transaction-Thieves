@@ -51,10 +51,15 @@ CHARS_PER_TOKEN = 1.5
 EVIDENCE_TOKENS = HARNESS_PROMPT_TOKENS - PROMPT_RESERVE_TOKENS
 
 
-def candidates(cfg: dict, bank: int, as_of, window_hours: float = WINDOW_HOURS) -> pl.DataFrame:
-    """View(bank) edges in [as_of - window, as_of], time-sorted. Reads only train/val rows with timestamp <= as_of."""
+def splits_for(final: bool) -> list[str]:
+    """Splits the evidence may come from: train and val; the final run (week 14, TEST alerts) adds test (locked: FTM_FINAL_RUN=1)."""
+    return ["train", "val", "test"] if final else ["train", "val"]
+
+
+def candidates(cfg: dict, bank: int, as_of, window_hours: float = WINDOW_HOURS, final: bool = False) -> pl.DataFrame:
+    """View(bank) edges in [as_of - window, as_of], time-sorted. Reads only train/val rows (test too when `final`) with timestamp <= as_of."""
     as_of = datetime.fromisoformat(as_of) if isinstance(as_of, str) else as_of
-    lf = io.scan_view(cfg["views_dir"], bank, split=["train", "val"], as_of=as_of, columns=COLS)
+    lf = io.scan_view(cfg["views_dir"], bank, split=splits_for(final), as_of=as_of, columns=COLS)
     return lf.filter(pl.col("timestamp") >= as_of - timedelta(hours=window_hours)).sort(["timestamp", "tx_id"]).collect()
 
 
@@ -158,17 +163,23 @@ class EvidenceView:
 
 
 @lru_cache(maxsize=4)
-def _scores(ds: str) -> pl.DataFrame:
+def _scores(ds: str, final: bool = False) -> pl.DataFrame:
     f = Path("data/retrieval") / ds / "edge_scores.parquet"
     if not f.exists():
         raise FileNotFoundError(f"{f}: train the edge scorer first (python -m ftm.retrieval.edge_scorer --data {ds} --train)")
-    return pl.read_parquet(f, columns=["tx_id", "score"])  # time-guard: not transactions
+    out = pl.read_parquet(f, columns=["tx_id", "score"])  # time-guard: not transactions
+    if final:  # the test edges, scored by `edge_scorer --final`
+        t = Path("data/retrieval") / ds / "final" / "edge_scores_test.parquet"
+        if not t.exists():
+            raise FileNotFoundError(f"{t}: run `python -m ftm.retrieval.edge_scorer --data {ds} --final` first")
+        out = pl.concat([out, pl.read_parquet(t, columns=["tx_id", "score"])])  # time-guard: not transactions
+    return out
 
 
 @lru_cache(maxsize=8)
-def _explainer_cache(ds: str, method: str) -> dict:
+def _explainer_cache(ds: str, method: str, final: bool = False) -> dict:
     """{(bank, alerted tx_id): {candidate tx_id: score}} written by `scripts/run_explainers.py` (empty when nothing is cached)."""
-    d = Path("data/retrieval") / ds / "explainers" / method
+    d = Path("data/retrieval") / ds / ("explainers_final" if final else "explainers") / method
     fs = sorted(d.glob("bank*.parquet"))
     out: dict = {}
     for f in fs:
@@ -177,20 +188,22 @@ def _explainer_cache(ds: str, method: str) -> dict:
     return out
 
 
-def explainer_scores(ds: str, method: str, bank: int, tx_id: int, as_of, cand: pl.DataFrame) -> np.ndarray:
+def explainer_scores(ds: str, method: str, bank: int, tx_id: int, as_of, cand: pl.DataFrame, final: bool = False) -> np.ndarray:
     """Score per candidate edge of the alert under an explainer view: the cached one if `run_explainers.py` explained this alert, else
     computed now (needs the Multi-GNN clone, the bank's checkpoint and, for PGExplainer, its trained weights)."""
-    hit = _explainer_cache(ds, method).get((bank, tx_id))
+    hit = _explainer_cache(ds, method, final).get((bank, tx_id))
     if hit is not None:
         return np.array([hit.get(int(t), 0.0) for t in cand["tx_id"].to_numpy()])
-    return explainers.live_scores(ds, method, bank, tx_id, as_of, cand["tx_id"].to_numpy())
+    return explainers.live_scores(ds, method, bank, tx_id, as_of, cand["tx_id"].to_numpy(), final=final)
 
 
 @lru_cache(maxsize=4)
-def _alert_rows(ds: str) -> dict:
+def _alert_rows(ds: str, final: bool = False) -> dict:
     cfg = io.load_config(ds)
+    if final:
+        guards.require_final_run("the test alert set")
     al = pl.concat([pl.read_parquet(Path(cfg["alerts_dir"]) / f"{s}.parquet", columns=["alert_id", "tx_id", "bank", "timestamp"])  # time-guard: not transactions
-                    for s in ("train", "val")])  # fmt: skip
+                    for s in (("train", "val", "test") if final else ("train", "val"))])  # fmt: skip
     return {r["alert_id"]: r for r in al.iter_rows(named=True)}
 
 
@@ -199,13 +212,19 @@ def _aliases(parquet_dir: str, seed: int) -> pl.DataFrame:
     return alias.read_aliases(parquet_dir, seed)
 
 
-def resolve_alert(alert, ds: str) -> tuple[int, int, datetime]:
+def is_final_alert(alert) -> bool:
+    """Test alerts have ids `F000123` (`ftm.intake.alerts.test_alert_ids`); only they are read from the test split."""
+    aid = alert if isinstance(alert, str) else (alert.get("alert_id") if isinstance(alert, dict) else getattr(alert, "alert_id", None))
+    return isinstance(aid, str) and aid.startswith("F")
+
+
+def resolve_alert(alert, ds: str, final: bool = False) -> tuple[int, int, datetime]:
     """(tx_id, home bank, as_of) of an alert given as an `AlertContext`, an alert id, or a dict with `tx_id`, `bank`, `timestamp`.
     Alert ids are looked up in `data/alerts/<ds>/{train,val}.parquet`, which is the source of truth for the alert time."""
     if isinstance(alert, dict) and {"tx_id", "bank", "timestamp"} <= alert.keys():
         return int(alert["tx_id"]), int(alert["bank"]), alert["timestamp"]
     aid = alert if isinstance(alert, str) else (alert["alert_id"] if isinstance(alert, dict) else alert.alert_id)
-    row = _alert_rows(ds).get(aid)
+    row = _alert_rows(ds, final).get(aid)
     if row is None:
         raise KeyError(f"alert {aid!r} is not in the {ds} train/val alert sets")
     as_of = getattr(alert, "as_of", None)
@@ -230,14 +249,15 @@ def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small"
     if name not in NAMES:
         raise ValueError(f"unknown view {name!r}; choose one of {NAMES}")
     cfg = io.load_config(data)
-    tx_id, bank, as_of = resolve_alert(alert, data)
-    cand = candidates(cfg, bank, as_of)
+    final = is_final_alert(alert)  # a test alert (week 14): its evidence may also come from test days up to its time
+    tx_id, bank, as_of = resolve_alert(alert, data, final)
+    cand = candidates(cfg, bank, as_of, final=final)
     hit = np.flatnonzero(cand["tx_id"].to_numpy() == tx_id)
     if not len(hit):
         raise ValueError(f"alerted transaction {tx_id} is not in view({bank}) up to {as_of}")
     i = int(hit[0])
-    pr = prizes(cand, _scores(data)) if name.startswith("scorer") else prizes(cand, None)
-    explain = {name: explainer_scores(data, name, bank, tx_id, as_of, cand)} if name in EXPLAINER_VIEWS else None
+    pr = prizes(cand, _scores(data, final)) if name.startswith("scorer") else prizes(cand, None)
+    explain = {name: explainer_scores(data, name, bank, tx_id, as_of, cand, final)} if name in EXPLAINER_VIEWS else None
     mask = select_views(cand, i, pr, k, home_bank=bank, max_tokens=max_evidence_tokens, only=(name,), explain=explain)[name]
     sel = cand.filter(pl.Series(mask)).sort(["timestamp", "tx_id"])
     guards.assert_not_future(sel["timestamp"].max(), as_of)
@@ -323,25 +343,33 @@ def _h6_block(wide: pl.DataFrame, n_boot: int, seed: int) -> dict:
 
 
 def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: str = "scorer", k: int = K, limit: int | None = None,
-             explainer_views: tuple[str, ...] = ()) -> dict:  # fmt: skip
+             explainer_views: tuple[str, ...] = (), final: bool = False) -> dict:  # fmt: skip
     """Pattern-edge recall among the K and trail checks over the val alerts of `parts` (data/alerts/<ds>/val.parquet).
 
     `explainer_views` (names from `EXPLAINER_VIEWS`) adds the explainer comparisons; their scores come from the cache of
-    `scripts/run_explainers.py` and are computed live for an alert that is not in it (slow: seconds per alert)."""
+    `scripts/run_explainers.py` and are computed live for an alert that is not in it (slow: seconds per alert).
+
+    `final=True` (week 14): the alerts are the TEST alert set (`data/alerts/<ds>/test.parquet`, bulk and tail together, a `test_tail` column
+    separates them), the evidence may come from train, val and test edges up to each alert's time, the scorer's test scores come from
+    `edge_scorer --final`, and the pattern labels of the test split score the views. Locked: needs FTM_FINAL_RUN=1."""
     cfg = io.load_config(ds)
     pq = cfg["parquet_dir"]
-    al = pl.read_parquet(Path(cfg["alerts_dir"]) / "val.parquet").filter(pl.col("val_part").is_in(list(parts)))  # time-guard: not transactions
+    if final:
+        guards.require_final_run("the evidence-view evaluation on test alerts")
+        al = pl.read_parquet(Path(cfg["alerts_dir"]) / "test.parquet")  # time-guard: not transactions
+    else:
+        al = pl.read_parquet(Path(cfg["alerts_dir"]) / "val.parquet").filter(pl.col("val_part").is_in(list(parts)))  # time-guard: not transactions
     if limit:
         al = al.head(limit)
-    scores = pl.read_parquet(Path("data/retrieval") / ds / "edge_scores.parquet") if prize_source == "scorer" else None  # time-guard: not transactions
-    pat = io.scan_patterns(pq, split=["train", "val"]).select("tx_id", "attempt_id").collect()
+    scores = _scores(ds, final) if prize_source == "scorer" else None
+    pat = io.scan_patterns(pq, split=splits_for(final)).select("tx_id", "attempt_id").collect()
     by_att = {a: set(g["tx_id"].to_list()) for (a,), g in pat.group_by("attempt_id")}
     rows, t0 = [], time.time()
     for r in al.iter_rows(named=True):
-        cand = candidates(cfg, r["bank"], r["timestamp"])
+        cand = candidates(cfg, r["bank"], r["timestamp"], final=final)
         i = int(np.flatnonzero(cand["tx_id"].to_numpy() == r["tx_id"])[0])
         pr = prizes(cand, scores)
-        explain = {n: explainer_scores(ds, n, int(r["bank"]), int(r["tx_id"]), r["timestamp"], cand) for n in explainer_views} or None
+        explain = {n: explainer_scores(ds, n, int(r["bank"]), int(r["tx_id"]), r["timestamp"], cand, final) for n in explainer_views} or None
         masks = select_views(cand, i, pr, k, edge_cost, home_bank=int(r["bank"]), explain=explain)
         tx, src, dst = cand["tx_id"].to_numpy(), cand["src_id"].to_numpy(), cand["dst_id"].to_numpy()
         t = cand["timestamp"].dt.epoch("s").to_numpy().astype("f8")
@@ -383,11 +411,12 @@ if __name__ == "__main__":
     ap.add_argument("--edge-cost", type=float, default=0.05)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--explainers", nargs="*", choices=EXPLAINER_VIEWS, default=[], help="add gnnexplainer / pgexplainer (cache of scripts/run_explainers.py)")
+    ap.add_argument("--final", action="store_true", help="week 14: the TEST alert set (needs FTM_FINAL_RUN=1, edge_scorer --final and the final explainer cache)")
     a = ap.parse_args()
-    res = evaluate(a.data, tuple(a.parts), a.edge_cost, a.prize, limit=a.limit, explainer_views=tuple(a.explainers))
+    res = evaluate(a.data, tuple(a.parts), a.edge_cost, a.prize, limit=a.limit, explainer_views=tuple(a.explainers), final=a.final)
     df = res.pop("_per_alert")
     res["h6"] = h6_report(df)
-    tag = f"{a.data}_{a.prize}_{'_'.join(a.parts)}" + ("_explainers" if a.explainers else "")
+    tag = f"{a.data}_{a.prize}_{'_'.join(a.parts)}" + ("_explainers" if a.explainers else "") + ("_FINAL" if a.final else "")
     Path("data/runs").mkdir(exist_ok=True)
     df.write_parquet(f"data/runs/evidence_views_{tag}.parquet")
     Path(f"data/runs/evidence_views_{tag}.json").write_text(json.dumps(res, indent=1))

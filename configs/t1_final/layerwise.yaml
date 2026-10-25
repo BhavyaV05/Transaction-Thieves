@@ -19,7 +19,8 @@ hi_medium:
   status: blocked_compute
   reason: full-batch message passing needs the neighbour-sampled variant or a larger GPU
 final_entry:
-  status: to_build
-  command: python scripts/train_layerwise.py --final --data hi_small --arms sync_sgd:bwd --seeds 0 1 2
-  note: proposed command (run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN); the test-time entry point is not written yet,
-    see docs/t1_final_run.md
+  status: ready
+  commands:
+  - python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
+  note: run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN; each `--final` refuses to run without it and checks that the val-time
+    numbers are reproduced (docs/t1_final_run.md)

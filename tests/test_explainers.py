@@ -42,7 +42,7 @@ def test_view_k_alert_time_and_no_labels(tmp_path, monkeypatch, name):
     cache = {}
     if name != "ppr":  # explainer scores: a cached mask over candidate edges (random) plus one tx the window never contains
         cache = {(HOME, n): {int(t): float(rng.random()) for t in df["tx_id"].to_list()} | {10**9: 5.0}}
-        monkeypatch.setattr(ev, "_explainer_cache", lambda ds, method: cache)
+        monkeypatch.setattr(ev, "_explainer_cache", lambda ds, method, final=False: cache)
     v = ev.view("V000001", name, k=40, data="toy")
     lines = v.text.split("\n")
     assert len(lines) == len(v.tx_ids) <= 40
@@ -156,3 +156,34 @@ def test_gnnexplainer_mask_on_a_random_model():
     pm = bm.pgexplainer(sub)
     assert pm.shape == mask.shape and np.isfinite(pm).all()
     assert Path(str(ex.pg_path("toy", 1))).parts[-2:] == ("pgexplainer", "toy_bank1.pt")
+
+
+def test_final_alerts_read_test_edges_and_the_val_view_never_does(tmp_path, monkeypatch):
+    """Week 14: a test alert (id F...) may use train, val and test edges up to its time and the test scores of the edge scorer; it needs
+    FTM_FINAL_RUN=1. A val alert never sees a test edge."""
+    from ftm import guards
+
+    df = _toy(tmp_path, monkeypatch)
+    n = df.height - 1
+    test_ids = set(range(n - 100, n + 1))  # the last 100 rows and the alert are test rows
+    df = df.with_columns(pl.when(pl.col("tx_id").is_in(list(test_ids))).then(pl.lit("test")).otherwise(pl.lit("val")).alias("split"))
+    df.write_parquet(tmp_path / "views" / f"bank={HOME}.parquet")
+    pl.DataFrame({"alert_id": ["F000001"], "tx_id": [n], "bank": [HOME], "timestamp": [T0]}).write_parquet(tmp_path / "alerts" / "test.parquet")
+    old = pl.read_parquet(tmp_path / "data" / "retrieval" / "toy" / "edge_scores.parquet")
+    old.filter(~pl.col("tx_id").is_in(list(test_ids))).write_parquet(tmp_path / "data" / "retrieval" / "toy" / "edge_scores.parquet")
+    (tmp_path / "data" / "retrieval" / "toy" / "final").mkdir()
+    old.filter(pl.col("tx_id").is_in(list(test_ids))).write_parquet(tmp_path / "data" / "retrieval" / "toy" / "final" / "edge_scores_test.parquet")
+    for f in (ev._scores, ev._alert_rows, ev._aliases, ev._explainer_cache):
+        f.cache_clear()
+    monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
+    with pytest.raises(guards.TestSplitLocked):
+        ev.view("F000001", "scorer", data="toy")
+    monkeypatch.setenv("FTM_FINAL_RUN", "1")
+    v = ev.view("F000001", "scorer", data="toy")
+    assert v.tx_ids[-1] == n and len(v.tx_ids) <= 40 and any(t in test_ids for t in v.tx_ids[:-1])  # test edges are usable evidence
+    assert ev.view("F000001", "amount_1hop", data="toy").tx_ids[-1] == n
+    # a val alert (here: an earlier val row) never reads a test edge, even with the final run on
+    pl.DataFrame({"alert_id": ["V000002"], "tx_id": [5], "bank": [HOME], "timestamp": [df["timestamp"][5]]}).write_parquet(tmp_path / "alerts" / "val.parquet")
+    ev._alert_rows.cache_clear()
+    w = ev.view("V000002", "amount", data="toy")
+    assert not (set(w.tx_ids) & test_ids) and max(w.tx_ids) <= 5 + 300

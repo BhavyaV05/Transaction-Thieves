@@ -3,10 +3,12 @@ model: GFP + LightGBM (snapml GraphFeaturePreprocessor)
 split: train days / val days of configs/data/<ds>.yaml, test locked
 features: GFP paper settings, 55-56 features (ftm/baselines/README.md)
 final_entry:
-  status: to_build
-  command: python scripts/train_gfp.py --data <ds> --mode <one_bank|see_everything> --final
-  note: proposed command (run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN); the test-time entry point is not written yet,
-    see docs/t1_final_run.md
+  status: ready
+  commands:
+  - python scripts/train_gfp.py --data <ds> --mode one_bank --final
+  - python scripts/train_gfp.py --data <ds> --mode see_everything --final
+  note: run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN; each `--final` refuses to run without it and checks that the val-time
+    numbers are reproduced (docs/t1_final_run.md)
 hi_small:
   one_bank:
     status: val_done
