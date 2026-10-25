@@ -307,10 +307,56 @@ Reading. **Sync-SGD with forward and backward exchange is the best arm** (PR-AUC
 
 - `layerwise.py`, `scripts/train_layerwise.py`: layer-wise exchange (above). Tests: `tests/test_layerwise.py`.
 
+## MEGA-GNN (week 10, secondary SOTA, E1/E7)
+
+MEGA-GNN (Bilgi, Chen, Atasu, "Multigraph Message Passing with Bi-Directional Multi-Edge Aggregations", arXiv:2412.00241) aggregates parallel edges first and then the neighbours. Variant run: **MEGA-GenAgg** (the `assets/commands.md` command of the repository: GIN, GenAgg node aggregation, GIN parallel-edge aggregation, edge updates, reverse message passing, ego ids, no port numbers; Table 2 of the paper: 74.88 minority F1 on HI-Small, Multi-PNA 68.16); it fits the 8 GB card (about 5 GB at batch 2048).
+
+**Source and licence, run from the checkout, not vendored.** `https://github.com/hcagri/MEGA-GNN` (Apache-2.0) is **archived**: its head commit only points to a successor repository (`MEGA-GNN-TMLR`, MIT, the TMLR version, a different code base: not used, so that the numbers stay those of the arXiv version of the plan). The last code commit **`ef60a71`** is checked out in `~/Documents/t1_external/MEGA-GNN`; the Apache notice stays in that checkout. The patch `mega_gnn_t1.patch` (apply with `git apply` inside the clone; 110 lines) holds: `AddEgoIds.__call__` -> `forward` (PyG 2.7), a wall-clock budget (`T1_BUDGET_S`) and a per-epoch metrics line (`T1_METRICS`) in `training.py`, the local paths in `data_config.json`, and `torch.index_select(...)` -> `[...]` indexing in `models.py` (PyG 2.7 replaces `index_select` by a hash-tensor wrapper that `to_hetero` cannot trace). Chosen over vendoring because it is the lighter option (the code base is 3,300 lines plus the vendored GenAgg, and the repository is frozen anyway) and consistent with Multi-GNN and FraudGT. **C++ extensions** (`ports_cpp.cpp`, `negative_sampling.cpp`, pybind11 3.1): rebuilt for Python 3.12 with `g++ -O3 -shared -std=c++17 -fPIC $(python3.12 -m pybind11 --includes) X.cpp -o X$(python3.12-config --extension-suffix)` inside the clone (torch untouched; the `.so` files are in the clone, not in the repo; a toy graph gives the same port numbers as the Python implementation). `genagg` (vendored in the clone) is used from `PYTHONPATH=.:genagg`, so nothing was pip-installed (no package, no change to torch, PyG, pyg_lib, torch_sparse, torch_scatter or pcst_fast). The launcher is `mega_gnn.py` (own process: the module names of the two clones collide); `scripts/train_gnn.py --model mega_gnn` is the same pipeline as Multi-GNN's.
+
+**Reproduction on its own split (reproduction only, HI-Small, as for Multi-GNN):** `python scripts/train_gnn.py --repro --model mega_gnn --run` (seed 0, because `main.py` replaces seed 1 by a random one; batch 2048 and neighbours [100, 100] as for Multi-GNN, the paper's code default is batch 8192; 80 epochs requested, **9,000 s wall-clock budget as for Multi-GNN's 2.5 h box, which allowed 10 epochs (9,542 s, 850 to 1,100 s each)**, one seed; split by transaction index overlapping our test days, the raw CSV only, nothing written to `data/scores` or `data/alerts`).
+
+| epoch | train F1 | val F1 | test F1 (own split) |
+|---|---|---|---|
+| 0 | 5.6 | 27.9 | 44.6 |
+| 1 | 24.4 | 29.7 | 34.4 |
+| 2 | 30.4 | 25.6 | 47.6 |
+| 3 | 36.3 | 47.7 | 60.1 |
+| 4 | 31.7 | 44.3 | 59.6 |
+| **5** | 37.2 | **50.4** | **59.7** |
+| 6 | 35.9 | 38.7 | 46.4 |
+| 7 | 35.4 | 47.5 | 57.1 |
+| 8 | 36.4 | 49.0 | 58.3 |
+| 9 | 38.9 | 48.5 | 56.2 |
+
+Model selection by best val F1 (epoch 5): **test F1 59.7 against the paper's 74.88 (MEGA-GenAgg) and the 68.16 of Multi-PNA+EU: not reproduced, 15 points below the paper's number** (Multi-GNN reached 67.64 in the same budget). The run is a **partial reproduction**: 10 of 80 epochs, the curve is noisy (val F1 between 26 and 50, test F1 between 34 and 60 from epoch to epoch) and still far from the paper's level; MEGA learns more slowly per epoch although an epoch is shorter (850 to 1,100 s against 1,260 to 1,560 s for Multi-GNN): train F1 is 39 after 10 epochs, Multi-GNN's was 49 after 5. It is not known whether 80 epochs at batch 8192 would reach 74.88; that is a 5070 Ti job (about 20 h on the 3070 Ti at 850 to 1,100 s per epoch): `PYTHONPATH=.:genagg T1_BUDGET_S=86400 python3.12 main.py --data Small_HI --model gin --emlps --reverse_mp --ego --flatten_edges --edge_agg_type gin --node_agg_type genagg --n_epochs 80 --save_model --task edge_class --testing --batch_size 8192 --seed 0` inside the clone after applying the patch. Metrics `data/mega_gnn/repro_metrics.jsonl`, log `data/runs/logs/mega_repro_genagg.log` (gitignored).
+
+**Our split, HI-Small** (same protocol as Multi-GNN above: train graph = train edges, val scored on train+val with the val look-ahead, epoch by weighted AP on the val `fit` part, isotonic or Platt on `fit` by the same signal rule, p0 in the p0 schema with `model = mega_gnn` and val rows only in `data/scores/hi_small/p0_mega_gnn__{one_bank,see_everything}.parquet` and `p0_mega_gnn.parquet`; batch 2048, [100, 100], seed 1).
+
+```
+python scripts/train_gnn.py --our-split --model mega_gnn --data hi_small --mode one_bank --max-epochs 100 --budget-s 7200      # 2,491 s
+python scripts/train_gnn.py --our-split --model mega_gnn --data hi_small --mode see_everything --max-epochs 100 --budget-s 9800   # 9,960 s
+```
+
+One-bank: all 28 scored views (banks 19 and 1674 have no val-`fit` positive, p0 null as for Multi-GNN and GFP) reached the full 100 epochs (the 7,200 s budget was never binding; bank 70 alone 646 s), 28 Platt calibrators. See-everything: **18 epochs** in the 9,800 s budget (the last one partial), best epoch 14 by val `fit` AP (0.585; Multi-GNN's 9 epochs: 0.617), the curve is noisy (fit AP 0.10 to 0.59 between epochs), isotonic calibration, 50 val seed edges not sampled. Val `eval` (93,238 common one-bank rows with 122 positives; the see-everything rows are the same transactions; Brier CIs from the cluster bootstrap with hub cap 20, paired; every row in `docs/t1_baselines_val.md`):
+
+| | Brier | PR-AUC | F1 | minus GFP, same mode [CI] | minus Multi-GNN, same mode [CI] |
+|---|---|---|---|---|---|
+| MEGA-GenAgg one-bank | **0.001082** | **0.295** | **0.345** | -0.000085 vs GFP one-bank [-0.000189, +0.000014] | -0.000032 [-0.000143, +0.000070] |
+| Multi-GNN one-bank | 0.001114 | 0.241 | 0.336 | -0.000053 [-0.000151, +0.000037] | 0 |
+| GFP one-bank | 0.001167 | 0.202 | 0.283 | 0 | +0.000053 [-0.000037, +0.000151] |
+| MEGA-GenAgg see-everything | 0.000821 | 0.484 | 0.560 | -0.000347 vs GFP one-bank [-0.000519, -0.000178] | **+0.000101 [+0.000017, +0.000190]** |
+| Multi-GNN see-everything | **0.000719** | **0.548** | **0.638** | -0.000448 vs GFP one-bank | 0 |
+
+(The "minus GFP" column of the see-everything rows is against GFP one-bank, as in the table of the doc; GFP see-everything is 0.000906.)
+
+Reading. (1) **One-bank: MEGA-GenAgg is the best starting model on HI-Small by point estimate** (Brier 0.001082, PR-AUC 0.295) but its paired differences to Multi-GNN and GFP both cover 0, so it is not distinguishable from them. (2) **See-everything: MEGA is a weaker upper limit than Multi-GNN** (0.000821 against 0.000719, the paired CI excludes 0: +0.000101 [+0.000017, +0.000190]) and a clearly better one than GFP one-bank, and it also beats GFP see-everything (0.000906) by point estimate (not paired here). So **the project's upper limit stays Multi-GNN see-everything**, and the HI-Small one-bank to see-everything gap, with the MEGA pair, is 0.000261 Brier (point difference of the two pooled Briers), against 0.000395 for Multi-GNN and 0.000261 for GFP. (3) Caveats: the paper's reproduction is partial (59.7 against 74.88 minority F1 after 10 of 80 epochs), so the claim "MEGA-GNN does not beat Multi-GNN as an upper limit" holds for this budget and recipe (18 epochs, batch 2048, one seed), not for the paper's; see-everything is still noisy at the epoch where it was stopped; one seed; the epoch is chosen on the `fit` part that also fits the calibrator; the val look-ahead of the GNN scoring applies. Bank 1 of the one-bank run was retrained after an accidental overwrite on 2026-10-25 (the same 100 epochs; see the Multi-GNN correction above).
+
+HIMEDIUM_MEGA_PLACEHOLDER
+
 ## Files
 
 - `gfp_gbt.py`: GFP wrapper, features, LightGBM fit, calibrators, metrics, `score_graph`, `p0_table`, `read_p0`.
 - `multi_gnn.py`, `multi_gnn_t1.patch`: launcher and compatibility patch for the IBM code (kept outside the repo).
 - `federated.py`, `scripts/train_federated.py`: DP-FedAvg (client-level and edge-level arms).
 - `fraudgt_t1.patch`: patch for the FraudGT checkout (reproduction only, section above).
-- Not done in this stage: MEGA-GNN (week 10).
+- `mega_gnn.py`, `mega_gnn_t1.patch`: MEGA-GNN launcher (own process) and the patch for its archived checkout (section above).
