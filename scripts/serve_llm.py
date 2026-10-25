@@ -108,6 +108,7 @@ def vllm_args(cfg: dict, name: str, port: int, host: str | None = None) -> list[
         args.append("--enable-prefix-caching")
     if m.get("reasoning_parser"):
         args += ["--reasoning-parser", m["reasoning_parser"]]
+    args += [str(x) for x in m.get("extra_args") or []]  # per-profile flags, e.g. no image inputs for Gemma 4
     return args
 
 
