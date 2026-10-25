@@ -1,0 +1,49 @@
+# The non-LLM planners and the ablation switches that apply to them, on validation (week 9, G4).
+# Read by ftm/orchestrator/ablations.py and scripts/run_ablations.py. One row of the G4 table per arm.
+# Every arm is scored on the same `eval` half (in time) of the validation alerts, through the same harness, gate and accountant;
+# only the listed settings differ from `base`. The learned policy and the fitted fusions are trained on the `fit` half.
+reference: eig            # paired differences are arm minus this arm (negative Brier difference = better than the reference)
+eps_levels: [0.25, 0.5, 1.0, 2.0]
+fit_frac: 0.5
+
+# settings every arm starts from
+base:
+  budget: 2.0             # eps per alert (plan 6.6 default)
+  cap: null               # per-partner-account cap across alerts (null = off; the production value is 8.0, privacy/default.yaml)
+  one_per_family: true    # a question template at most once per alert
+  waves: null             # null = one question at a time; [2, 1] = two together, then one (E13)
+  threshold: null         # decision threshold for the cannot-cross stop; null = budget stops only
+  p_decline: null         # null = the banks' own config (0.05)
+  p_timeout: null         # null = the banks' own config (0.02)
+  fusion: null            # null = summed log-LRs (naive); shared | per_family = T4's fitted fusion (fit on the fit half)
+  pool: realistic         # which back-test table the questions come from (realistic | exact_labels | enumerator)
+
+arms:
+  # --- Table 5b: simple planners, learned policy, enumerator (H3: is an LLM needed?)
+  - {name: random, group: planners, system: random}
+  - {name: fixed_order, group: planners, system: fixed}
+  - {name: eig, group: planners, system: eig}
+  - {name: learned_policy, group: planners, system: learned}
+  - {name: enumerator, group: planners, system: enumerator, pool: enumerator}
+  # --- eps per alert (E2; the full sweep with the no-noise point is scripts/eps_sweep.py)
+  - {name: eig_eps_0.5, group: budget, system: eig, budget: 0.5}
+  - {name: eig_eps_1, group: budget, system: eig, budget: 1.0}
+  - {name: eig_eps_4, group: budget, system: eig, budget: 4.0}
+  # --- per-account cap on / off (E14)
+  - {name: eig_cap_8, group: cap, system: eig, cap: 8.0}
+  - {name: eig_cap_2, group: cap, system: eig, cap: 2.0}
+  # --- questions of one template asked more than once
+  - {name: eig_repeat_family, group: questions, system: eig, one_per_family: false}
+  # --- stop rule
+  - {name: eig_stop_rule, group: stop, system: eig, threshold: 0.3}
+  # --- one at a time vs all at once (E13, H8)
+  - {name: eig_batched_2_1, group: async, system: eig, waves: [2, 1]}
+  # --- refusals and timeouts (E14)
+  - {name: eig_decline_20, group: robustness, system: eig, p_decline: 0.20}
+  - {name: eig_decline_50, group: robustness, system: eig, p_decline: 0.50}
+  - {name: eig_timeout_20, group: robustness, system: eig, p_timeout: 0.20}
+  # --- summed vs fitted fusion (T4's C8)
+  - {name: eig_fusion_shared, group: fusion, system: eig, fusion: shared}
+  - {name: eig_fusion_per_family, group: fusion, system: eig, fusion: per_family}
+  # --- realistic vs exact-label back-testing (E4; needs scripts/backtest.py --exact-labels)
+  - {name: eig_exact_label_lrs, group: backtest, system: eig, pool: exact_labels}
