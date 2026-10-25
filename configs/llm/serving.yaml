@@ -54,5 +54,5 @@ models:
     licence: apache-2.0
     max_model_len: 8192
     gpu_memory_utilization: 0.88
-    reasoning_parser: null                 # thinking is off via chat_template_kwargs, as for every candidate
+    reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
     extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory
