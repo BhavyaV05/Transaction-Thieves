@@ -18,7 +18,7 @@ Team **Cache me if you can** (LMA Group Project 2026). Banks see only their own 
 | Track | Owner | Packages (`ftm/`) | Scripts | Checklist |
 |---|---|---|---|---|
 | **T1** Data, detection models, retrieval | Abhishek | `data`, `baselines`, `intake`, `retrieval` | `prepare_data`, `train_gfp`, `train_gnn`, `make_alerts`, `train_federated` | [`tasks/T1_abhishek.md`](tasks/T1_abhishek.md) |
-| **T2** Banks, questions, back-testing | Bhavya | `banks`, `dsl`, `privacy`, `backtest`, `planners` (all but `llm.py`), `agent`, `harness`, `external/{co_investigator,finfre_rag}` | `backtest`, `run_experiment`, `run_ablations`, `train_policy`, `eps_sweep` | [`tasks/T2_bhavya.md`](tasks/T2_bhavya.md) |
+| **T2** Banks, questions, back-testing | Bhavya | `banks`, `dsl`, `privacy`, `backtest`, `planners` (all but `llm.py`), `agent`, `harness`, `external/{co_investigator,finfre_rag}`, `fastmodel/{encoder,router}.py` | `backtest`, `run_experiment`, `run_ablations`, `train_policy`, `eps_sweep`, `async_study`, `encoder_baseline` | [`tasks/T2_bhavya.md`](tasks/T2_bhavya.md) |
 | **T3** LLM planner, fine-tuning, agent frameworks | Akshat | `llm`, `planners/llm*.py`, `retrieval/views.py` (stub, until week 4), `library`, `fastmodel`, `external/{react,reflexion,rewoo,lats,llmcompiler,dspy_react}` | `serve_llm`, `bench_llm`, `run_llm_agent`, `build_library`, `train_planner` | [`tasks/T3_akshat.md`](tasks/T3_akshat.md) |
 | **T4** Rules, safety, evaluation, domain agents | Shreyas | `compliance`, `fusion`, `decision`, `safety`, `eval`, `external/{torres,sharma,debate_autogen,uot,bed_llm}` | `run_final` | [`tasks/T4_shreyas.md`](tasks/T4_shreyas.md) |
 
@@ -39,6 +39,7 @@ Extras by track (install only what you need):
 | Extra | Contents | Who |
 |---|---|---|
 | `gbt` | LightGBM, XGBoost, scikit-learn | T1, T2 |
+| `enc` | torch, transformers, scikit-learn (ModernBERT/DeBERTa classifiers) | T2 |
 | `gnn` | PyTorch, PyG, pcst_fast (install PyTorch from pytorch.org for your CUDA first) | T1 |
 | `fed` | Flower, Opacus | T1 |
 | `llm` | OpenAI client, DSPy, AG2 (client side only) | T3, T4, T2 |

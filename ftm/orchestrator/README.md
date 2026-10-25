@@ -81,3 +81,14 @@ Writes `ablations.json` and `ablations.md`. An arm whose input is missing (no en
 **Reading it.** Differences between arms on a small validation set are mostly inside the CIs; do not rank arms whose paired interval contains 0. On the synthetic world the pool has 7 questions in 5 families and EIG stops after about one, so the cap, repeat-family, stop-rule and wave arms come out identical to EIG there: the tests check the switches are wired, the real validation run is what can separate them.
 
 **G4 from T2's side.** Done: all non-LLM planners and the ablation configs run end to end on the synthetic world and are tested. **Not done: the run on real validation** (needs `data/`, T1's alert sets and the three back-test tables), so the G4 numbers do not exist yet; the compute check needs the LLM arms' GPU hours from T3.
+
+## Async runs (week 10, E13 / H8, stretch)
+
+`scripts/async_study.py`: for each non-LLM planner and per-alert budget, one question at a time vs waves of (2, 1) on the eval half of the validation alerts (the same alerts as the G4 table), the SimPy makespan, and **`share_2plus`**, the share of alerts that asked two or more questions at all. That column matters: a wave only holds two questions if two fit the eps left. T3's LLM run (`docs/t3_e13.md`) found the (2, 1) schedule never reached its second slot at eps 2, because every accepted question cost eps >= 1. The same holds here: on the synthetic world at budget 2 only 3 to 9% of alerts ask two questions, so the two arms are identical; at budget 4 every alert does and waves take about 75% of the sequential simulated time. `h8` rows give the share of the sequential Brier gain the batched arm keeps and its share of the time (the claim is 80% in 60%), and read `null` when nothing was batched or the sequential arm gained nothing. `load` rows put the same alerts on one SimPy clock at several arrival gaps (makespan, investigations open at once, mean latency).
+
+```
+python scripts/async_study.py --synthetic 600 --systems random eig --budgets 2 4          # smoke test, never a result
+python scripts/async_study.py --data hi_medium --split val --table <lr_table.jsonl> --systems random fixed eig learned --policy outputs/policy/hi_medium.json --budgets 2 4 --out outputs/async
+```
+
+A real E13 row needs accepted questions at low eps in the back-test table (or a larger per-alert budget for both arms), as T3 noted. Not run on real data (no `data/`).
