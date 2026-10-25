@@ -315,3 +315,11 @@ def test_val_runs_forward_the_backtest_table_and_need_it(driver, tmp_path):
     assert not e18.run_complete(tmp_path, 5, {"backtest": {"path": "x"}})  # a run without the table is not complete
     with pytest.raises(SystemExit, match="backtest"):
         driver.main(["stage1", "--val-part", "eval", "--backtest", str(tmp_path / "missing.jsonl"), "--dry-run"])
+
+
+def test_valid_dsl_output_rate_counts_eps_short_selects_but_not_bad_dsl_or_bad_json():
+    # 10 outputs: 1 unparsable, 1 compose with invalid DSL, 2 selects set aside for lack of eps, 1 stop, 5 valid asks
+    tot = {"outputs": 10, "json_ok": 9, "stops": 1, "questions": 6, "dsl_ok": 5}
+    assert e18.valid_dsl_output_rate(tot) == pytest.approx(0.8)  # 9 parsed - 1 invalid DSL
+    assert (tot["stops"] + tot["dsl_ok"]) / tot["outputs"] == pytest.approx(0.6)  # the old usable-output reading
+    assert np.isnan(e18.valid_dsl_output_rate({"outputs": 0, "json_ok": 0, "stops": 0, "questions": 0, "dsl_ok": 0}))

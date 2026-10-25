@@ -5,6 +5,7 @@
 #
 #   scripts/e18_queue.sh stage1 eval qwen3.8-27b-q3 gpt-oss-20b qwen3-14b
 #   scripts/e18_queue.sh stage2 all  <top-3 names>
+#   E18_OUT=outputs/e18_sensitivity/gptoss_out1024 E18_ARGS='--max-output-tokens 1024' scripts/e18_queue.sh stage1 eval gpt-oss-20b
 #
 # Writes outputs/e18/<stage>/load_<name>.json and outputs/e18/<stage>/{serve,run}_<name>.log. A candidate that does not
 # load is recorded as failed (load_<name>.json, the server log) and skipped, as the procedure says.
@@ -14,7 +15,7 @@ cd "$(dirname "$0")/.."
 export PATH=$HOME/projects/vllm-venv/bin:$PATH FTM_HF_HOME=${FTM_HF_HOME:-$HOME/hf_cache} HF_HUB_OFFLINE=1
 set -a; source .env; set +a
 export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1
-out=outputs/e18/$stage; mkdir -p "$out"
+root=${E18_OUT:-outputs/e18}; out=$root/$stage; mkdir -p "$out"
 PY=.venv/bin/python
 LOAD_TIMEOUT_S=${LOAD_TIMEOUT_S:-1200}
 
@@ -44,8 +45,9 @@ for name in "$@"; do
   echo "$(date -Is) $name: loaded in ${load_s}s"
   ( while kill -0 $spid 2>/dev/null; do gpu_used; sleep 10; done ) > "$out/vram_$name.txt" &
   vpid=$!
-  $PY scripts/run_e18.py "$stage" --val-part "$part" --only "$name" --machine t3-5070ti \
-      --clusters outputs/e18/clusters.json > "$out/run_$name.log" 2>&1
+  # shellcheck disable=SC2086  # E18_ARGS is a word list on purpose
+  $PY scripts/run_e18.py "$stage" --val-part "$part" --only "$name" --machine t3-5070ti --out "$root" \
+      --clusters outputs/e18/clusters.json ${E18_ARGS:-} > "$out/run_$name.log" 2>&1
   rc=$?
   kill $vpid 2>/dev/null
   run_peak=$(sort -n "$out/vram_$name.txt" | tail -1)

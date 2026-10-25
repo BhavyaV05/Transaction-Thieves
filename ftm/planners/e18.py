@@ -94,7 +94,7 @@ class Arm:
     y: np.ndarray
     p: np.ndarray  # end-to-end probability: no verdict = p0
     no_verdict_rate: float
-    valid_rate: float  # valid-DSL output rate = (stops + valid DSL) / outputs, the >=95% acceptance metric
+    valid_rate: float  # valid-DSL output rate = (parsed outputs - parsed outputs with invalid DSL) / outputs, the >=95% metric
     seconds: np.ndarray
     extra: dict = field(default_factory=dict)  # everything else the summary table shows
 
@@ -110,6 +110,16 @@ class Arm:
 def read_per_alert(run_dir: str | Path) -> list[dict]:
     lines = (Path(run_dir) / "per_alert.jsonl").read_text().splitlines()
     return [json.loads(line) for line in lines if line]
+
+
+def valid_dsl_output_rate(tot: dict) -> float:
+    """The stage-1 filter (prereg "valid-DSL output rate"; reading decided 2026-10-26, docs/t3_e18.md question 1): an
+    output is valid if it parsed (JSON + schema) and, when it carried a question, the DSL validated. A parsed select
+    that the planner set aside for lack of eps is a menu program, valid by construction; budget, duplicate and time
+    refusals are planning errors, not invalid DSL (they stay visible in `usable_output_rate`)."""
+    if not tot["outputs"]:
+        return float("nan")
+    return (tot["json_ok"] - (tot["questions"] - tot["dsl_ok"])) / tot["outputs"]
 
 
 def arm_from_run(run_dir: str | Path, cand: Candidate) -> Arm:
@@ -128,6 +138,7 @@ def arm_from_run(run_dir: str | Path, cand: Candidate) -> Arm:
     extra = {
         "valid_dsl_rate": ratio(tot["dsl_ok"], tot["questions"]),
         "json_parse_rate": ratio(tot["json_ok"], tot["outputs"]),
+        "usable_output_rate": ratio(tot["stops"] + tot["dsl_ok"], tot["outputs"]),  # also drops eps / time refusals
         "median_s": float(np.median(secs)), "p90_s": float(np.quantile(secs, 0.9)),
         "median_gpu_s": float(np.median(gpu)), "p90_gpu_s": float(np.quantile(gpu, 0.9)),
         "calls_per_alert": sum(r["llm_calls"] for r in rows) / n,
@@ -136,7 +147,7 @@ def arm_from_run(run_dir: str | Path, cand: Candidate) -> Arm:
     }  # fmt: skip
     return Arm(cand.name, cand.active_b, cand.params_b, tuple(r["alert_id"] for r in rows),
                np.array([r["label"] for r in rows], dtype="f8"), p, nvr,
-               ratio(tot["stops"] + tot["dsl_ok"], tot["outputs"]), secs, extra)  # fmt: skip
+               valid_dsl_output_rate(tot), secs, extra)  # fmt: skip
 
 
 def run_complete(run_dir: str | Path, n: int, expect: dict) -> bool:
@@ -279,7 +290,7 @@ def margin_from(brier_random: float, brier_best_simple: float) -> float:
 
 # -- summary table, plot, plan ---------------------------------------------------------------------------
 COLUMNS = ["candidate", "family", "params_b", "active_b", "quant", "stack", "size_gb", "size_gb_source", "n_alerts",
-           "brier", "brier_ci_lo", "brier_ci_hi", "no_verdict_rate", "valid_output_rate", "valid_dsl_rate",
+           "brier", "brier_ci_lo", "brier_ci_hi", "no_verdict_rate", "valid_output_rate", "usable_output_rate", "valid_dsl_rate",
            "json_parse_rate", "median_s", "p90_s", "median_gpu_s", "p90_gpu_s", "calls_per_alert",
            "tokens_in_per_alert", "tokens_out_per_alert"]  # fmt: skip
 
