@@ -1,0 +1,65 @@
+# T1 week-14 run: ordered command list, hours, machines, and what `run_final.py` must call (weeks 12-13, T1)
+
+Owner: T1 (Abhishek). **Nothing in this document was run on the test split** (`FTM_FINAL_RUN` was never set outside a pytest monkeypatch); the commands are the `--final` modes that were written in weeks 12-13 and tested on toy data and, where possible, on validation. Configs: `configs/t1_final/*.yaml` (generated from the validation artefacts by `scripts/make_t1_final_configs.py`; nothing re-tuned); check: `python scripts/t1_final_check.py` (configs parse, scripts and flags exist, val artefacts exist; it reads no data and refuses to run with `FTM_FINAL_RUN=1`).
+
+## What a `--final` mode is
+
+Every T1 training script was train/val only by design. Each now has a `--final` flag that (1) refuses to run unless `FTM_FINAL_RUN=1` (`ftm.guards.require_final_run`; only `scripts/run_final.py`, T4's, may set it), (2) **trains and tunes nothing new**: it reuses the hyper-parameters, seeds, epochs/steps, calibrators and checkpoints fixed on validation, (3) appends the test rows **after** the val rows (every feature of an earlier row uses earlier rows only, the category codes and normalisation statistics come from train/val), and (4) **checks that the val-time numbers are reproduced** by the same pass, and exits non-zero if not (the test scores are then not to be used). Outputs go to `final/` subdirectories (`data/scores/<ds>/final/`, `data/retrieval/<ds>/final/`, `data/retrieval/<ds>/explainers_final/`) and `data/runs/final_*.json`; the reads of test scores go through the guarded `gfp_gbt.read_p0(ds, split="test")`.
+
+| model | command (`<ds>` = `hi_small`, `hi_medium`) | what is reused | val check inside the pass |
+|---|---|---|---|
+| GFP + LightGBM | `python scripts/train_gfp.py --data <ds> --mode one_bank --final`, same with `--mode see_everything` | same code and seed 0 (the grid, early stopping and calibrator are re-derived on the same data, so identical) | train and val p0 of the pass must equal the stored `p0_<mode>.parquet` exactly (difference 0), else exit |
+| Multi-GNN, MEGA-GNN | `python scripts/train_gnn.py --final --model multi_gnn\|mega_gnn --data <ds> --mode one_bank\|see_everything` | the val run's checkpoints `models/<model>/<ds>_bank<b>.pt` (nothing is trained), seed 1; the calibrator is refit from the stored val raw scores | the refit calibrator must reproduce the stored val p0 (difference < 1e-9). Checkpoint re-scoring was also checked on real val data: 97.6 % (Multi-GNN) and 99.0 % (MEGA-GenAgg) of the 24,014 val rows of bank 10 reproduce the stored raw score to 1e-6, the rest differ through the neighbour sampler |
+| DP-FedAvg | `python scripts/train_federated.py --final --data <ds> --unit client --eps 1 2 4 8 16 --seeds 0 1 2` and `--unit edge --eps 1 2 4 8` | hyper-parameters, ε arms, seeds of `configs/t1_final/federated.yaml`; retrained on the train split on the CPU | non-private and edge arms must reproduce the stored val p0 (< 1e-9); the **client-level private arms cannot**: their noise came from numpy's unseeded global RNG in the val run (now seeded, `federated.run_federated`), so the final run is a fresh, seeded draw at the same ε and the val numbers of that draw are reported next to the test numbers |
+| layer-wise exchange | `python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2` | the step chosen on val (`best_step` of `data/runs/layerwise_hi_small.json`); the run stops at that step | val raw scores of the rerun against the stored ones: rank correlation must exceed 0.95 (GPU scatter is not bit-deterministic) |
+| edge scorer | `python -m ftm.retrieval.edge_scorer --data <ds> --final` | `models/edge_scorer_<ds>.pt` (weights, codes, mean, sd) | val scores of the pass must equal `edge_scores.parquet` (< 1e-5) |
+| explainers | `python scripts/run_explainers.py --data <ds> --final` | Multi-GNN bank checkpoints, per-bank PGExplainer weights (trained on train alerts in the val run) | explained prediction versus the test raw score of the Multi-GNN `--final` (the same agreement statistic as on val) |
+| evidence views | `python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer` | K = 40, 72 h, edge cost 0.05, token cap 4,000 (`configs/t1_final/retrieval.yaml`) | the same code path as val; views of test alerts (ids `F...`) may use edges of train, val and test up to the alert time |
+| conformal intake | `python scripts/make_alerts.py --data <ds> --final` | `t_alert` of `data/runs/alerts_<ds>.json` (calibrated on val `cal`, **not** on test) | none (a threshold); writes `data/alerts/<ds>/test.parquet` with a `test_tail` column (the sparse tail days, to be reported separately, decision 4) |
+| FraudGT | to build, 5070 Ti only (`configs/t1_final/fraudgt.yaml`) | full 500-epoch run with a prediction dump (not in the patch yet), epoch by best val F1, `T1_EVAL_TEST=1` set by `run_final.py` only | none yet |
+
+## Ordered list, hours and machines
+
+Hours are for the stated machine; the 3070 Ti numbers are measured on the validation runs where a number is given and **estimates** (marked ~) for the test pass; the 5070 Ti numbers are estimates (about 2 to 2.5 times the laptop for the GPU jobs, CPU-bound GFP gains from its 24 threads). Test rows add about a quarter to the graph sizes.
+
+| # | step | machine | hours | depends on |
+|---|---|---|---|---|
+| 0 | `t1_final_check.py` (no data read) | any | 0.1 | |
+| 1 | GFP one-bank, HI-Small and HI-Medium (`--final`) | 3070 Ti laptop (CPU-bound; HI-Medium bank 70 alone took 2 h on val) | HI-Small ~0.2 (val 0.14), HI-Medium ~2.5 (val 2.1) | |
+| 2 | GFP see-everything, HI-Small | 3070 Ti | ~0.3 (val 0.27) | |
+| 3 | conformal intake, test alert sets (`make_alerts.py --final`) | 3070 Ti | < 0.1 | 1 |
+| 4 | Multi-GNN `--final`: one-bank HI-Small and HI-Medium, see-everything HI-Small | 3070 Ti | ~0.7, ~2, ~0.7 (scoring only; the val runs took 1.7 h, 6.1 h and 2.7 h) | |
+| 5 | MEGA-GNN `--final` (same three) | 3070 Ti | ~0.7, ~2, ~0.7 (val one-bank HI-Small 0.7 h, see-everything 2.8 h; HI-Medium one-bank: see the MEGA section of `ftm/baselines/README.md`) | |
+| 6 | edge scorer `--final` | 3070 Ti | HI-Small ~0.1, HI-Medium ~0.3 | |
+| 7 | explainers `--final` (GNNExplainer 1.4 s per alert, PGExplainer 0.011 s, CPU) | 3070 Ti (CPU) | HI-Small ~0.6 (1,272 projected test alerts), HI-Medium ~2 (3,475) | 3, 4, 6 |
+| 8 | evidence views `--final` incl. the explainer views | 3070 Ti (CPU) | HI-Small ~0.2, HI-Medium ~0.7 | 3, 6, 7 |
+| 9 | DP-FedAvg `--final` (client: 6 settings x 3 seeds; edge: 5 x 3), CPU | 3070 Ti | HI-Small ~0.8, HI-Medium ~1.5 | |
+| 10 | layer-wise exchange `--final` (3 seeds), HI-Small | 3070 Ti | ~1.5 (val: 0.4 h per run) | |
+| 11 | FraudGT full run + prediction dump | 5070 Ti | ~6 (val: 97 s per epoch on the laptop, 13.5 h for 500 epochs) | patch update |
+| 12 | HI-Medium see-everything: **val runs first** (GFP: `train_gfp.py --data hi_medium --mode see_everything --neg-frac 0.1 --threads 16`, Multi-GNN and MEGA: `train_gnn.py --our-split --data hi_medium --mode see_everything --budget-s 28800`), then `--final` | 5070 Ti | val runs several hours each (GFP > 2 h on the laptop without finishing; GNNs need 24 GB RAM), final ~1 each | none of the above |
+
+Total on the laptop for steps 0 to 10: about 13 hours, of which 5 to 6 are GPU (4, 5, 10) and the rest CPU, so the CPU steps (1, 3, 7, 8, 9) can overlap the GPU steps. Steps 11 and 12 are the 5070 Ti's. Half of the LLM investigations on the laptop (tracks 3.9) would need the GPU free for the hours of the LLM server; the schedule above leaves it free after step 10.
+
+## What `scripts/run_final.py` (T4) must call for T1
+
+(`run_final.py` is T4's and was not touched.) In this order, after setting `FTM_FINAL_RUN=1` and recording the commit:
+
+1. the commands of rows 1 to 10 above (each is a script or module with a `--final` flag; they are independent processes, GPU jobs one at a time);
+2. read the results only through the guarded readers: `ftm.baselines.gfp_gbt.read_p0(ds, mode, split="test")` reads `data/scores/<ds>/final/p0_*.parquet`; the GNN, federated and layer-wise test p0 are in the same `final/` directory in the p0 schema (`ftm/baselines/README.md`; `model` column = `gfp_lgbm`, `multi_gnn`, `mega_gnn`, `dpfedavg_<unit>_eps<e>`, `ceydeli_<sync>_<ex>`; test rows only, `val_part` null);
+3. the test alert set is `data/alerts/<ds>/test.parquet` (`alert_id` `F000000...`, same columns as the val set plus `test_tail`); **build the frozen 1,000-alert subset from it first, before any external system runs**: `ftm.intake.alerts.stratified_subset(alerts, n=1000, seed=0, strata="bank_p0_decile")` (the default; it raises without `FTM_FINAL_RUN=1`); decision 4 of `docs/t4_decisions_week2.md` says the headline is the bulk days, so pass `alerts.filter(~pl.col("test_tail"))`, and write the sha256 of the sorted `alert_id` list to `prereg/subset_manifest.txt` (T4's file) and the run log;
+4. evidence for T3's planner on test alerts: `ftm.retrieval.evidence_views.view("F000123", "scorer_pcst", data=<ds>)` (any alert id starting with `F` reads the test edges up to its time and needs the flag);
+5. the retriever evaluation table: `data/runs/evidence_views_<ds>_scorer_<parts>_explainers_FINAL.json`, the H6 pattern-edge share is `h6.share.alerts_with_pattern_edges.denominator_k` of the same file;
+6. H10: the federated p0 files and the question-answer results are combined by T4; the caveat text is `docs/t1_federated_eps.md`.
+
+## The frozen alert rule and subset rule (week 4 leftovers)
+
+`docs/t4_decisions_week2.md` decided (1) freeze the rule, not the IDs: home bank x decile of p0, no labels, and (3) drop the 72 h window rule and keep the span rule as a flag. **Checked against the current code and sets:** `alerts.stratified_subset` defaults to `strata="bank_p0_decile"` (home bank x decile of p0 over the alerts passed in, ties by `alert_id`, proportional allocation with at least one per stratum, seed 0) and calls `require_final_run` first (`tests/test_intake.py`); the alert sets carry `spans_split` as a flag column only and no 72 h rule exists in `make_alerts.py` or `ftm/intake` (train and val sets rebuilt on 2026-10-23: HI-Small 5,198 and 1,284 alerts, HI-Medium 10,962 and 2,238; none dropped by a rule). The frozen rule is in **`configs/t1_final/subset_rule.yaml`** (strata, n = 1000, seed 0, code path `ftm.intake.alerts.stratified_subset`, code commit `2edfe4f`) and the alert-set definition in **`configs/t1_final/intake.yaml`** (alert = launder in the conformal prediction set, i.e. p0 >= `t_alert` fixed on val `cal`; alpha, half-life, bulk days). **For T4:** `prereg/subset_manifest.txt` still has `rule_commit: (filled at G3)`; T1 did not write to `prereg/`; the commit to quote is the one that merges `configs/t1_final/subset_rule.yaml`. Both week-4 boxes ("final alert sets", "freeze 1k subset") are covered by decisions 1 to 5 and are ticked in `tasks/T1_abhishek.md`, with the remark that the test alert set and the IDs are produced at G5 by the commands above.
+
+## Open items and risks (to review first)
+
+- **No `--final` mode was run on real test data**, by design. The val-equivalence checks inside each mode are the safeguard; they were exercised on toy data in `tests/` (GFP, Multi-GNN/MEGA calibrator and test rows, edge scorer, intake, federated, layer-wise, evidence views) and, for the checkpoint re-scoring of the GNNs, on real validation data (see the table). The first real use is the dry run that T4's G5 rehearsal should do on a copy where "test" is replaced by val.
+- **HI-Medium see-everything has no val run** (GFP, Multi-GNN, MEGA): its hyper-parameters, checkpoints and calibrators do not exist yet, so its `--final` cannot run (BLOCKED-COMPUTE, step 12).
+- **FraudGT**: the only val run is partial (111 of 500 epochs, nothing saved), so there is no val Brier and no checkpoint; the final run is a new full run on the 5070 Ti whose epoch is fixed by val F1 (to build).
+- Client-level DP arms: the final run draws new noise (see above); the val numbers of the reported draw are in `data/runs/final_federated_<ds>_client.json` for the record.
+- The explainer cache of the test alerts is a CPU job of about 2.5 hours; the PGExplainer weights are the val run's, trained on train alerts only.
+- Layer-wise exchange on HI-Medium stays BLOCKED-COMPUTE (full-batch graphs).
