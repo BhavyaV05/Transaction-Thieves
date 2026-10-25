@@ -22,12 +22,12 @@ parity:                       # identical for every candidate
   evidence_view: top40        # same evidence for every candidate
 
 stage1:
-  alerts: 200                 # validation alerts, fixed seed
+  alerts: 160                 # every askable HI-Medium val eval alert (prereg amended 2026-10-25), fixed seed
   min_valid_dsl: 0.95
   drop_if_clearly_worse: true # 95% cluster-bootstrap CI of Brier(model) - Brier(best) above 0
 stage2:
   top_k: 3
-  alerts: 500                 # 200 alerts detect ~0.05 Brier, 500 ~0.03
+  alerts: 460                 # every askable HI-Medium val alert, eval first (--val-part all); 160 detect ~0.05 Brier, 460 ~0.03
   thinking_arm: {models: winner, alerts: same, thinking: true, max_output_tokens_per_step: 1024}   # adopted for every system only if it wins by > margin within latency
 decision:
   rule: smallest_equivalent_to_best   # CI upper bound of Brier(model) - Brier(best) below the plan.md 9.3 margin

@@ -25,7 +25,7 @@ from ftm.types import AlertContext
 
 TOOL_NAMES = ("ask_bank", "lookup_rules", "finish")
 _ACTION = re.compile(r"(?:Action(?:\s*\d+)?\s*:\s*)?\b(ask_bank|lookup_rules|finish)\s*\[(.*)\]", re.DOTALL)
-_SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape"}
+_SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape", "top_features"}  # top_features: Sharma only (docs/t1_planner_view.md)
 
 
 @dataclass(frozen=True)

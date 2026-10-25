@@ -128,6 +128,19 @@ def sample_order(height: int, seed: int, n: int, offset: int = 0) -> list[int]:
     return order[offset:offset + n]
 
 
+def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: int, n: int, offset: int = 0) -> pl.DataFrame:
+    """The alert rows a run takes, in run order. `val_part` "all" (E18 stage 2, prereg/e18_decision.yaml): every val
+    part, the eval alerts first in the seeded order a `--val-part eval` run uses (so that run's alerts are a prefix),
+    then fit + cal in their own seeded order."""
+    if split == "val" and val_part == "all":
+        ev, rest = alerts.filter(pl.col("val_part") == "eval"), alerts.filter(pl.col("val_part") != "eval")
+        alerts = pl.concat([ev[sample_order(ev.height, seed, ev.height)], rest[sample_order(rest.height, seed, rest.height)]])
+        return alerts[offset:offset + n]
+    if split == "val":
+        alerts = alerts.filter(pl.col("val_part") == val_part)
+    return alerts[sample_order(alerts.height, seed, n, offset)]
+
+
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
@@ -140,15 +153,13 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     cfg = io.load_config(data)
     alerts_path = ROOT / "data" / "alerts" / data / f"{split}.parquet"
     alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
-    if split == "val":
-        alerts = alerts.filter(pl.col("val_part") == val_part)
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
+    alerts = select_alerts(alerts, split, val_part, seed, n, offset)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
     banks = io.read_banks(cfg["views_dir"])["bank"].to_list()
     out = []
-    for i in sample_order(alerts.height, seed, n, offset):
-        a = alerts.row(i, named=True)
+    for a in alerts.iter_rows(named=True):
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
         _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
@@ -274,8 +285,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
-    ap.add_argument("--val-part", choices=["fit", "cal", "eval"], default=None,
-                    help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks")
+    ap.add_argument("--val-part", choices=["fit", "cal", "eval", "all"], default=None,
+                    help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks; "
+                         "all = every part, eval alerts first (E18 stage 2 only: HI-Medium eval has 160 askable alerts)")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")

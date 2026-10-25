@@ -1,6 +1,6 @@
 # Planner evidence view: decision memo (week 7, T1)
 
-Owner: T1 (Abhishek). **A recommendation awaiting Akshat's confirmation (T3); nothing in T3's code was touched.** Rule (tracks.md 3.8): the fine-tuned planner is trained on top-40 evidence **unless scorer + PCST is ready and better on validation**. Numbers: `ftm/retrieval/README.md` (views tables, H6), `data/runs/evidence_views_<ds>_scorer_cal_eval.json`, `data/runs/h6_<ds>.json`. Val `cal`+`eval` alerts only, no test row.
+Owner: T1 (Abhishek). **Confirmed by Akshat (T3) on 2026-10-25:** the planner is trained on the `amount_1hop` top-40 stub; `scorer_pcst` stays the E8 inference-time arm (run zero-shot on the fine-tuned planner, and said so). `top_features` is hidden from every prompt except Sharma's (`_SUMMARY_HIDDEN` in `ftm/planners/llm.py`, `ftm/external/text_agent.py`, `ftm/external/_infoseek.py`). Rule (tracks.md 3.8): the fine-tuned planner is trained on top-40 evidence **unless scorer + PCST is ready and better on validation**. Numbers: `ftm/retrieval/README.md` (views tables, H6), `data/runs/evidence_views_<ds>_scorer_cal_eval.json`, `data/runs/h6_<ds>.json`. Val `cal`+`eval` alerts only, no test row.
 
 ## Recommendation
 

@@ -40,7 +40,7 @@ COUNT_EDGES = (0.5, 2.5, 5.5)  # a noisy count is rounded first: <=0 -> "0", 1-2
 P_FLOOR = 1e-3  # a stated probability is floored here before it is used
 MAX_CELLS = 8  # most cells any question has (k-ary over MAX_BANKS = 5 banks has 6)
 EVIDENCE_CHARS = 3000  # newest evidence rows kept in a prompt (the shared prompt cap is Limits.max_tokens)
-_HIDDEN = {"evidence", "partner_banks", "shape"}
+_HIDDEN = {"evidence", "partner_banks", "shape", "top_features"}  # top_features: Sharma only (docs/t1_planner_view.md)
 
 
 # -- answer cells ---------------------------------------------------------------------------------------------

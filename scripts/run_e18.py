@@ -188,8 +188,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("stage", choices=list(STAGE_DIRS))
     ap.add_argument("--config", type=Path, default=CONFIG)
     ap.add_argument("--alerts", default="val", help="val | synthetic (smoke test, random labels); test is refused")
-    ap.add_argument("--val-part", choices=["fit", "cal", "eval"], default=None,
-                    help="required with --alerts val; not fixed by plan.md / T4 decisions item 9, so no default")
+    ap.add_argument("--val-part", choices=["fit", "cal", "eval", "all"], default=None,
+                    help="required with --alerts val; prereg/e18_decision.yaml: stage 1 eval (160 askable HI-Medium "
+                         "alerts), stage 2 and thinking all (460, eval alerts first)")
     ap.add_argument("--data", default=None, help="default: the config's data (hi_medium)")
     ap.add_argument("--n", type=int, default=None, help="override the stage's alert count (smoke tests)")
     ap.add_argument("--sets", default="core", help="stage 1: candidate sets, e.g. core or core,if_time")

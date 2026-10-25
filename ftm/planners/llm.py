@@ -49,7 +49,7 @@ from ftm.types import AlertContext, Limits, Reply, Verdict
 EvidenceFn = Callable[[AlertContext, ToolBox], str]
 QuestionFilter = Callable[[dict, AlertContext], bool]  # does this listed question apply to this alert (slot binding)?
 RULES_QUERY = "sharing information with another financial institution about suspected money laundering"
-_SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape"}  # passed in their own prompt sections
+_SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape", "top_features"}  # own prompt sections; top_features: Sharma only (T3 decision, docs/t1_planner_view.md)
 
 
 def _family(canonical: str) -> str | None:

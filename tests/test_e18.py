@@ -278,12 +278,12 @@ def test_driver_refuses_a_draft_prereg_for_real_alerts_but_dry_run_prints_the_pl
 def test_dry_run_estimates_for_the_later_stages(driver, tmp_path, capsys):
     driver.main(["thinking", "--models", "qwen3-14b", "--alerts", "synthetic", "--dry-run", "--out", str(tmp_path)])
     plan = json.loads(capsys.readouterr().out)
-    assert plan["thinking"] and plan["n_alerts"] == 500
-    assert (plan["estimate"]["gpu_h_low"], plan["estimate"]["gpu_h_high"]) == (5.0, 9.0)
+    assert plan["thinking"] and plan["n_alerts"] == 460
+    assert (plan["estimate"]["gpu_h_low"], plan["estimate"]["gpu_h_high"]) == pytest.approx((4.6, 8.28))
     assert plan["candidates"][0]["max_output_tokens"] == 1024 and plan["candidates"][0]["thinking"]
     driver.main(["stage2", "--models", "qwen3-14b,qwen3-8b,gpt-oss-20b", "--alerts", "synthetic", "--dry-run", "--out", str(tmp_path)])
     est = json.loads(capsys.readouterr().out)["estimate"]
-    assert est["total_investigations"] == 1500 and est["gpu_h_low"] == pytest.approx(3.33) and est["gpu_h_high"] == pytest.approx(8.33)
+    assert est["total_investigations"] == 1380 and est["gpu_h_low"] == pytest.approx(3.07, abs=0.01) and est["gpu_h_high"] == pytest.approx(7.67, abs=0.01)
 
 
 def test_parity_check_catches_different_alerts_seed_or_limits():
