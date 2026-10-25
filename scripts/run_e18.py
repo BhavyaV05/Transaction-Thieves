@@ -75,6 +75,14 @@ def arm_settings(cfg: dict, cand: e18.Candidate, thinking: bool) -> dict:
     return out
 
 
+def run_settings(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, thinking: bool) -> dict:
+    """arm_settings plus a sensitivity override of the output cap (`--max-output-tokens`, never a prereg arm)."""
+    s = arm_settings(cfg, cand, thinking)
+    if getattr(a, "max_output_tokens", None):
+        s["max_output_tokens"] = a.max_output_tokens
+    return s
+
+
 def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, thinking: bool, run_dir: Path) -> list[str]:
     lim = llm_limits()
     argv = ["--system", "planner", "--mode", "compose", "--alerts", a.alerts, "--n", str(n), "--k", "40",
@@ -91,7 +99,7 @@ def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, th
         argv += ["--endpoint", endpoint]
     if cand.served_model:
         argv += ["--model", cand.served_model]
-    s = arm_settings(cfg, cand, thinking)
+    s = run_settings(cfg, cand, a, thinking)
     if s.get("thinking"):
         argv += ["--thinking"]
     if "reasoning_effort" in s:
@@ -102,7 +110,7 @@ def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, th
 
 
 def expected_summary(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, thinking: bool) -> dict:
-    s = arm_settings(cfg, cand, thinking)
+    s = run_settings(cfg, cand, a, thinking)
     lim = llm_limits()
     return {"seed": cfg["seed"], "alerts": a.alerts, "val_part": a.val_part, "candidate": cand.name,
             "thinking": bool(s.get("thinking")), "reasoning_effort": s.get("reasoning_effort"),
@@ -147,7 +155,7 @@ def plan_table(cfg: dict, cands: list[e18.Candidate], a: argparse.Namespace, n: 
             "thinking": thinking, "machine": a.machine, "prereg": prereg_state(),
             "candidates": [{"name": c.name, "stack": c.stack, "quant": c.quant, "active_b": c.active_b,
                             "size_gb": c.size_gb_est[0], "endpoint": a.endpoint or c.endpoint or "FTM_LLM_ENDPOINT",
-                            **arm_settings(cfg, c, thinking)} for c in cands],
+                            **run_settings(cfg, c, a, thinking)} for c in cands],
             "estimate": est, "plan_total_gpu_h": cfg["budget"]["plan_total_gpu_h"]}  # fmt: skip
 
 
@@ -210,10 +218,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--summarize-only", action="store_true", help="no runs: tabulate and decide from complete run dirs")
     ap.add_argument("--allow-draft-prereg", action="store_true", help="prereg/e18_decision.yaml must be committed before stage 1")
+    ap.add_argument("--max-output-tokens", type=int, default=None,
+                    help="sensitivity arm only (needs a non-default --out): output cap per step for every candidate run "
+                         "here, e.g. 1024 for gpt-oss, whose low-effort reasoning does not fit the JSON-sized default")
     a = ap.parse_args(argv)
 
     if a.alerts == "test":
         raise SystemExit("E18 uses validation only and never touches the test split")
+    if a.max_output_tokens and a.out.resolve() == (ROOT / "outputs" / "e18").resolve():
+        ap.error("--max-output-tokens is a sensitivity arm: write it to its own --out, never the pre-registered stages")
     if a.alerts not in ("val", "synthetic"):
         ap.error("--alerts must be val or synthetic")
     if (a.alerts == "val") != (a.val_part is not None):
