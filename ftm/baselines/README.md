@@ -291,16 +291,16 @@ Json (settings, per-seed rows, commit): `data/runs/federated_hi_small_{edge,clie
 python scripts/train_layerwise.py --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd fedavg:bwd fedprox:bwd sync_sgd:none fedavg:none fedprox:none sync_sgd:fwd local:none --seeds 0 1 2    # 24 runs, 10 h
 ```
 
-Results (HI-Small val `eval`, 93,239 common rows, 122 laundering; Brier mean +- sd over 3 seeds; constant 0.001307, GFP one-bank 0.001167, Multi-GNN one-bank 0.001110; PR-AUC and F1 and every CI in `docs/t1_baselines_val.md`):
+Results (HI-Small val `eval`, 93,239 common rows, 122 laundering; Brier mean +- sd over 3 seeds; constant 0.001307, GFP one-bank 0.001167, Multi-GNN one-bank 0.001110, DP-FedAvg client-level 0.00126; PR-AUC, F1 and every CI in `docs/t1_baselines_val.md`):
 
 | optimisation | no exchange | forward exchange | forward + backward exchange |
 |---|---|---|---|
-| Fully Local | 0.001279 +- 0.000012 | | |
-| FedAvg | 0.001169 +- 0.000007 | | 0.001162 +- 0.000005 |
-| FedProx | 0.001194 +- 0.000008 | | 0.001188 +- 0.000004 |
-| Sync-SGD | **0.001101 +- 0.000043** | 0.001109 +- 0.000018 | 0.001134 +- 0.000011 |
+| Fully Local | 0.001290 +- 0.000006 | | |
+| FedAvg | 0.001229 +- 0.000005 | | 0.001248 +- 0.000017 |
+| FedProx | 0.001279 +- 0.000005 | | 0.001280 +- 0.000006 |
+| Sync-SGD | 0.001200 +- 0.000031 | 0.001202 +- 0.000084 | **0.001116 +- 0.000054** |
 
-Reading. Parameter synchronisation is what matters here: Sync-SGD (0.00110) is at the level of Multi-GNN one-bank (0.00111) and better than GFP one-bank (0.001167, paired difference -0.000066 [-0.000153, +0.000025], not significant), FedAvg and FedProx sit at GFP's level, Fully Local at the constant's. **The paper's headline gain from layer-wise exchange is not reproduced on this setup**: exchange moves FedAvg and FedProx by 6 to 7e-6 Brier (about one seed sd, the right sign) and does not help Sync-SGD (forward 0.001109, forward and backward 0.001134, both within the seed spread of no exchange). The likely reason is structural, not a verdict on the method: with 30 top banks as the only owners, a client's remote neighbours are mostly accounts of the 30,440 unowned banks (zero in every mode), so there is little cross-client signal to exchange; the paper's partition gives every account an owner. The seed spread of Sync-SGD (sd 4e-5) is as large as the differences between its exchange variants. Nothing was tuned on val beyond the step choice; the pilot (1,000 steps, one seed) gave 0.001113.
+Reading. **Sync-SGD with forward and backward exchange is the best arm** (PR-AUC 0.269, F1 0.328), at the level of Multi-GNN one-bank and better than GFP one-bank (paired difference -0.000051 [-0.000154, +0.000050], CI covers 0); without exchange or with forward exchange only it is 0.00120, so **the backward exchange carries the gain** (the paper's ordering; `tests/test_layerwise.py` checks Theorems 1 and 2: shared parameters give the centralised logits and gradient to 1e-5). FedAvg and FedProx do not profit from exchange (within a seed sd, the paper also reports FedAvg with exchange as unstable). Sync-SGD needs a per-step parameter exchange between the banks and the exchange itself has no DP, so this is a non-private reference for the federated family, not a competitor to DP-FedAvg at a privacy level. Limits: 30 owners of 30,470 banks (most remote neighbours have no owner), full batch, 3 seeds, 480 steps and still improving. A first grid with an unexchanged edge-update input (caught by the equivalence test) was discarded and rerun.
 
 - `layerwise.py`, `scripts/train_layerwise.py`: layer-wise exchange (above). Tests: `tests/test_layerwise.py`.
 
