@@ -6,6 +6,8 @@ Owner: T2 (Bhavya). Spec: `tracks.md` 4.8 and 4.9.
 |---|---|
 | `runner.py` | Sequential orchestrator for the non-LLM arms: build a planner, run it over alerts in fresh harness sessions, score, write run-log rows |
 | `decision_set.py`, `scripts/make_decision_set.py` | **Small-decision dataset v1 (hand-off #13, T2 to T3)** |
+| `ablations.py`, `scripts/run_ablations.py`, `configs/experiments/ablations_nonllm.yaml` | **The G4 table for T2**: every non-LLM planner and ablation switch on validation |
+| `policy_data.py` | Training rows for the learned policy (`ftm/planners/NONLLM.md`) |
 | `raw_share.py` | **The raw-sharing baseline arm (H2)**: the one place where rows leave a bank |
 
 ## Small-decision dataset (hand-off #13)
@@ -52,3 +54,30 @@ python scripts/eps_sweep.py --system eig --data hi_medium --split val --table-no
 * **Batched planners.** `waves=(2, 1)` on any non-LLM planner: two questions asked together, then one more (never two of one family, all fitting the eps left together). `build_planner(..., waves=...)`.
 * **SimPy runner** (`simpy_run.py`): one investigation = one SimPy process on a shared clock; alert i arrives at `i * arrival_gap_days`. Reports each alert's latency, the makespan and the most investigations open at once. Gate and accountant are touched in arrival order, so the per-account cap sees alerts as it would live.
 * **Study** (`async_study.py`): the same planner, pool, budget and validation alerts, sequential vs batched: Brier, questions and eps per alert, simulated days per alert (mean, p95), makespan, investigations in flight. The run summaries now carry `mean_sim_days` and `p95_sim_days`.
+
+## Non-LLM planners and ablations on validation (week 9, G4)
+
+`scripts/run_ablations.py` runs every arm of `configs/experiments/ablations_nonllm.yaml` through the same harness, gate and accountant on the same alerts: the validation alerts are cut in time, the first half trains what needs training (the learned policy, the fitted fusions), **every arm is scored on the second half**. One row per arm: Brier before and after, the gain with a cluster-bootstrap 95% CI (T4's `ftm.eval.bootstrap`, clusters = alerts sharing an account), the paired Brier difference to the reference arm (`eig`) with its CI, questions and eps per alert, the share of questions that got no reply, simulated days.
+
+| Group | Arms |
+|---|---|
+| planners (Table 5b, H3) | random, fixed order, EIG, learned policy, enumerator |
+| budget (E2) | EIG at eps 0.5 / 1 / 4 per alert (the full sweep with the no-noise point is `scripts/eps_sweep.py`) |
+| cap (E14) | per-account cap 8 (production) and 2, against off |
+| questions | a template asked more than once per alert |
+| stop | the cannot-cross stop rule at threshold 0.3 |
+| async (E13) | waves (2, 1) |
+| robustness (E14) | 20% and 50% declines, 20% timeouts |
+| fusion | summed log-LRs vs T4's shared and per-family fusion, fitted on the `fit` half |
+| backtest (E4) | LRs from the exact-label back-test, questions answered noisily |
+
+```
+python scripts/run_ablations.py --synthetic 600                      # smoke test, never a result
+python scripts/run_ablations.py --data hi_medium --split val --table <lr_table.jsonl>     --table-enumerator <lr_table_enum.jsonl> --table-exact-labels <lr_table_exact.jsonl> --out outputs/g4
+```
+
+Writes `ablations.json` and `ablations.md`. An arm whose input is missing (no enumerated table, no exact-label table, no LightGBM) is listed as **skipped with the reason**, never dropped. Adding an arm is a line in the YAML; unknown settings raise.
+
+**Reading it.** Differences between arms on a small validation set are mostly inside the CIs; do not rank arms whose paired interval contains 0. On the synthetic world the pool has 7 questions in 5 families and EIG stops after about one, so the cap, repeat-family, stop-rule and wave arms come out identical to EIG there: the tests check the switches are wired, the real validation run is what can separate them.
+
+**G4 from T2's side.** Done: all non-LLM planners and the ablation configs run end to end on the synthetic world and are tested. **Not done: the run on real validation** (needs `data/`, T1's alert sets and the three back-test tables), so the G4 numbers do not exist yet; the compute check needs the LLM arms' GPU hours from T3.

@@ -48,7 +48,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] back-testing rerun for held-out cycles: loader flag, CLI flag, transfer report (the real run needs `data/` and T1)
 
 ## Week 9
-- [ ] All non-LLM planners + ablation configs on val. **G4**
+- [x] Learned policy (`ftm/planners/learned.py`, `scripts/train_policy.py`) and all non-LLM planners + ablation configs on val (`scripts/run_ablations.py`, `ftm/orchestrator/README.md`)
+- [ ] **G4**: needs the run on real validation (`data/`, T1's alert sets, the back-test tables) and T3's GPU-hour numbers for the compute check
 
 ## Week 10
 - [ ] Async runs (stretch)

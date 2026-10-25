@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 from ftm.backtest.world import load_world  # noqa: E402
 from ftm.harness.runlog_rows import write_runlog  # noqa: E402
 from ftm.orchestrator.runner import (  # noqa: E402
-    SYSTEMS,
+    ALL_SYSTEMS,
     build_planner,
     make_harness,
     run_alerts,
@@ -47,7 +47,9 @@ def git_commit() -> str:
 
 def main(argv=None) -> dict:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--system", choices=SYSTEMS, required=True)
+    ap.add_argument("--system", choices=ALL_SYSTEMS, required=True)
+    ap.add_argument("--policy", default=None, help="fitted policy for --system learned (scripts/train_policy.py); the run "
+                    "then scores the eval half of the validation alerts only, the half the policy never saw")
     ap.add_argument("--synthetic", type=int, default=None, help="n alerts of the synthetic world (smoke test)")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--split", default="val", choices=["train", "val"])
@@ -64,18 +66,28 @@ def main(argv=None) -> dict:
     run_id = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = Path(a.out) / run_id
     if a.synthetic:
+        if a.system == "learned":
+            raise SystemExit("the learned policy on the synthetic world: scripts/run_ablations.py --synthetic N --only learned_policy")
         res = synthetic_experiment(a.system, a.synthetic, a.seed, limits=Limits())
         variant = "synthetic"
     else:
         if not a.table:
             raise SystemExit("--table is required for real data (run scripts/backtest.py --assemble first)")
+        if a.system == "learned" and not a.policy:
+            raise SystemExit("--policy is required for --system learned (run scripts/train_policy.py first)")
         world = load_world(a.data, a.split, a.seed, max_alerts=a.max_alerts)
+        alerts, policy = world.alerts, None
+        if a.system == "learned":
+            from ftm.planners.learned import LearnedPolicy, split_val
+
+            policy = LearnedPolicy.load(a.policy)
+            alerts = split_val(world.alerts)[1]  # the policy was fitted on the first half of the validation alerts
         pool = QuestionPool.from_jsonl(a.table)
-        harness = make_harness(world.banks, {x.alert_id: x.binding for x in world.alerts})
-        planner = build_planner(a.system, pool, a.seed, a.eps, a.threshold, max_size=a.max_size)
+        harness = make_harness(world.banks, {x.alert_id: x.binding for x in alerts})
+        planner = build_planner(a.system, pool, a.seed, a.eps, a.threshold, max_size=a.max_size, policy=policy)
         base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": a.system,
                 "variant": "nonllm", "seed": a.seed}  # fmt: skip
-        res = run_alerts(planner, world.alerts, harness, Limits(), base, a.split)
+        res = run_alerts(planner, alerts, harness, Limits(), base, a.split)
         res.summary["pool"] = len(pool)
         variant = "nonllm"
     for r in res.rows:
