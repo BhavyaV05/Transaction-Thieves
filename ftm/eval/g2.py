@@ -24,7 +24,7 @@ A pool with no accepted question is a FAIL (gain 0), not a missing run. Nothing 
 has finished an alert (labels go to the scoring only), and nothing here touches the test split.
 
 Result fields (`run_g2` returns this dict; the script writes it as JSON):
-  world, fusion, ask_eps, budget, n_alerts, n_pos, pool, brier_p0, brier_post, gain, gain_ci95, gain_naive,
+  world, fusion, fusion_select, fusion_chosen, fusion_chosen_all, ask_eps, budget, n_alerts, n_pos, pool, brier_p0, brier_post, gain, gain_ci95, gain_naive,
   gain_ok, clusters, mean_questions, mean_eps, max_eps, budget_ok, families_used, fusion_matches_planner,
   ceiling {cells_judged, entries_skipped, violations, ok}, ceiling_ok, passed.
 """
@@ -49,7 +49,7 @@ from ftm.dsl.expert import expert_programs
 from ftm.dsl.parser import canonical, parse
 from ftm.eval import bootstrap as bs
 from ftm.eval import ceiling
-from ftm.fusion.fuse import Fusion, answer_features
+from ftm.fusion.fuse import Fusion, answer_features, fit_cv, fold_labels
 from ftm.orchestrator.runner import build_planner, make_harness, run_alerts
 from ftm.planners.pool import QuestionPool
 from ftm.privacy.accountant import PrivacyAccountant
@@ -61,6 +61,7 @@ ASK_EPS = 0.5  # eps level of each expert question (four of them fit in the budg
 EPS_LEVELS = (0.5, 1.0, 2.0)  # back-tested levels (scripts/backtest.py default)
 SYNTH_CONFIG = BacktestConfig(min_answers=50, min_per_class=8, min_per_bin=12)  # small world: looser eligibility
 FUSIONS = ("naive", "per_family")
+SELECTS = ("fixed", "cv")  # how per_family picks its ridge and prior: the default ridge, or inner cross-validation
 SYNTH_PROGRAMS = (  # expert questions that carry signal in the synthetic world (ftm.backtest.synth)
     "n_counterparties(ALERT.receiver, dir=in, window=before(72))",
     "n_tx(ALERT.receiver, dir=in, window=around(72), max_amount=2000)",
@@ -111,27 +112,35 @@ def answer_log_lrs(verdicts, pool: QuestionPool) -> tuple[list[str], list[str], 
     return ids, fams, llr
 
 
-def fold_labels(clusters: np.ndarray, n_folds: int, seed: int) -> np.ndarray:
-    """A fold per alert, with every cluster whole in one fold (related alerts are never split between fit and score)."""
-    uniq = np.unique(clusters)
-    k = max(1, min(n_folds, len(uniq)))
-    fold_of = dict(zip(np.random.default_rng(seed).permutation(uniq), np.arange(len(uniq)) % k, strict=True))
-    return np.array([fold_of[c] for c in clusters])
-
-
 def crossfit_posterior(p0, X, y, clusters, mode: str = "per_family", n_folds: int = 5, seed: int = 0,
-                       ridge: float = 1.0) -> np.ndarray:  # fmt: skip
-    """Posterior of every alert from a fusion model fitted on the other folds only. `naive` has nothing to fit."""
+                       ridge: float = 1.0, select: str = "fixed", chosen: list | None = None) -> np.ndarray:  # fmt: skip
+    """Posterior of every alert from a fusion model fitted on the other folds only. `naive` has nothing to fit.
+
+    select="fixed": the ridge given, prior "naive" (v0, the default). select="cv": `fit_cv` picks (ridge, prior) inside
+    each training part by an inner cluster-grouped CV (the held-out fold is never seen); the picks are appended to
+    `chosen` when a list is given."""
+    if select not in SELECTS:
+        raise ValueError(f"select must be one of {SELECTS}")
     p0, y = np.asarray(p0, "f8"), np.asarray(y, "f8")
     if mode == "naive" or X.shape[1] == 0:
         return Fusion("naive").predict(p0, X) if X.shape[1] else p0.copy()
-    folds = fold_labels(np.asarray(clusters), n_folds, seed)
+    clusters = np.asarray(clusters)
+    folds = fold_labels(clusters, n_folds, seed)
     if len(np.unique(folds)) < 2:
         raise ValueError("cross-fitting needs at least two clusters")
     out = np.empty(len(y))
     for f in np.unique(folds):
         tr, te = folds != f, folds == f
-        out[te] = Fusion(mode, ridge=ridge).fit(p0[tr], X[tr], y[tr]).predict(p0[te], X[te])
+        if select == "cv":
+            try:
+                m, info = fit_cv(p0[tr], X[tr], y[tr], clusters[tr], mode, n_folds=n_folds, seed=seed + 1 + int(f))
+            except ValueError:  # fewer than two clusters in the training part: nothing to select on, leave p0 alone
+                m, info = Fusion(mode, ridge=1e6, prior="zero").fit(p0[tr], X[tr], y[tr]), {"ridge": 1e6, "prior": "zero"}
+            if chosen is not None:
+                chosen.append({"fold": int(f), "ridge": info["ridge"], "prior": info["prior"]})
+        else:
+            m = Fusion(mode, ridge=ridge).fit(p0[tr], X[tr], y[tr])
+        out[te] = m.predict(p0[te], X[te])
     return out
 
 
@@ -142,17 +151,10 @@ def clusters_for(alerts: Sequence[BtAlert], attempt_of: dict | None = None, hub_
     return bs.cluster_ids(att, [[a.binding.sender for a in alerts], [a.binding.receiver for a in alerts]], hub_cap)
 
 
-def run_g2(banks, entries: list[dict], val: Sequence[BtAlert], world: str = "synth", fusion: str = "naive",
-           budget: float = BUDGET, ask_eps: float = ASK_EPS, eps_levels: Sequence[float] = EPS_LEVELS,
-           attempt_of: dict | None = None, hub_cap: int | None = None, n_boot: int = bs.N_BOOT, seed: int = 0,
-           n_folds: int = 5, gain_min: float = GAIN_MIN, fdr: float = 0.10) -> dict:  # fmt: skip
-    """The G2 check. `entries` are the back-test cache entries (e-BH is applied here, over all of them), `val` the
-    validation alerts, `banks` the partner banks the validation alerts are put to."""
-    if fusion not in FUSIONS:
-        raise ValueError(f"fusion must be one of {FUSIONS}")
-    val = list(val)
-    if not val:
-        raise ValueError("no validation alerts")
+def play(banks, entries: list[dict], val: Sequence[BtAlert], budget: float = BUDGET, ask_eps: float = ASK_EPS,
+         eps_levels: Sequence[float] = EPS_LEVELS, seed: int = 0, fdr: float = 0.10):  # fmt: skip
+    """The planner run of G2: e-BH over `entries`, the pool of accepted questions, the fixed-order expert planner through
+    the harness on `val`. Returns (entries with `accepted` set, pool, run result). Shared with `ftm.fusion.diagnostics`."""
     entries = accept([dict(e) for e in entries], fdr)  # e-BH over the whole batch (idempotent if already applied)
     pool = QuestionPool.from_rows(lr_table_rows(entries))
     acc = PrivacyAccountant(eps_per_alert=budget)
@@ -160,7 +162,27 @@ def run_g2(banks, entries: list[dict], val: Sequence[BtAlert], world: str = "syn
     planner = build_planner("fixed", pool, seed, eps=ask_eps)  # the expert order, one eps level, no stop threshold
     base = {"run_id": uuid.uuid4().hex[:8], "commit": "", "machine": "t4", "system": "fixed", "variant": "g2",
             "seed": seed}  # fmt: skip
-    res = run_alerts(planner, val, harness, Limits(eps_per_alert=budget), base)
+    return entries, pool, run_alerts(planner, val, harness, Limits(eps_per_alert=budget), base)
+
+
+def run_g2(banks, entries: list[dict], val: Sequence[BtAlert], world: str = "synth", fusion: str = "naive",
+           budget: float = BUDGET, ask_eps: float = ASK_EPS, eps_levels: Sequence[float] = EPS_LEVELS,
+           attempt_of: dict | None = None, hub_cap: int | None = None, n_boot: int = bs.N_BOOT, seed: int = 0,
+           n_folds: int = 5, gain_min: float = GAIN_MIN, fdr: float = 0.10,
+           fusion_select: str = "fixed") -> dict:  # fmt: skip
+    """The G2 check. `entries` are the back-test cache entries (e-BH is applied here, over all of them), `val` the
+    validation alerts, `banks` the partner banks the validation alerts are put to. `fusion_select="cv"` (per_family only)
+    chooses the ridge and the prior by inner cross-validation inside each fold (`fuse.fit_cv`); the choices go to the
+    result as `fusion_chosen` (per outer fold) and `fusion_chosen_all` (fit_cv on all the val alerts: the setting to
+    pre-register)."""
+    if fusion not in FUSIONS:
+        raise ValueError(f"fusion must be one of {FUSIONS}")
+    if fusion_select not in SELECTS:
+        raise ValueError(f"fusion_select must be one of {SELECTS}")
+    val = list(val)
+    if not val:
+        raise ValueError("no validation alerts")
+    entries, pool, res = play(banks, entries, val, budget, ask_eps, eps_levels, seed, fdr)
 
     ids = [a.alert_id for a in val]
     y = np.array([float(a.label) for a in val])
@@ -170,7 +192,16 @@ def run_g2(banks, entries: list[dict], val: Sequence[BtAlert], world: str = "syn
     X, _ = answer_features(ids, a_ids, a_fams, a_llr, families=fams) if fams else (np.zeros((len(ids), 0)), [])
     cl = clusters_for(val, attempt_of, hub_cap)
     naive = crossfit_posterior(p0, X, y, cl, "naive")
-    post = naive if fusion == "naive" else crossfit_posterior(p0, X, y, cl, fusion, n_folds, seed)
+    chosen: list = []
+    post = naive if fusion == "naive" else crossfit_posterior(p0, X, y, cl, fusion, n_folds, seed,
+                                                                select=fusion_select, chosen=chosen)  # fmt: skip
+    chosen_all = None
+    if fusion != "naive" and fusion_select == "cv" and X.shape[1]:
+        try:
+            _, info = fit_cv(p0, X, y, cl, fusion, n_folds=n_folds, seed=seed)
+            chosen_all = {"ridge": info["ridge"], "prior": info["prior"], "cv_brier": info["cv_brier"]}
+        except ValueError:
+            pass
     d = bs.brier_diff(y, p0, post, cl, n_boot=n_boot, seed=seed)  # Brier(p0) - Brier(post): positive = the answers help
     gain = d["diff"]
     gain_naive = float(np.mean((p0 - y) ** 2) - np.mean((naive - y) ** 2))
@@ -180,7 +211,8 @@ def run_g2(banks, entries: list[dict], val: Sequence[BtAlert], world: str = "syn
     ceil = ceiling.backtest_check(entries)
     gain_ok = bool(gain >= gain_min)
     return {
-        "world": world, "fusion": fusion, "ask_eps": ask_eps, "budget": budget, "n_alerts": len(val),
+        "world": world, "fusion": fusion, "fusion_select": fusion_select, "fusion_chosen": chosen,
+        "fusion_chosen_all": chosen_all, "ask_eps": ask_eps, "budget": budget, "n_alerts": len(val),
         "n_pos": int(y.sum()), "pool": len(pool), "brier_p0": float(np.mean((p0 - y) ** 2)),
         "brier_post": float(np.mean((post - y) ** 2)), "gain": float(gain), "gain_ci95": [float(x) for x in d["ci"]],
         "gain_naive": gain_naive, "gain_min": gain_min, "gain_ok": gain_ok, "clusters": bs.cluster_report(cl),
