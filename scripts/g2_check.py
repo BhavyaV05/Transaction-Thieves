@@ -9,6 +9,8 @@ Owner: T4 (Shreyas).  Spec: plan.md 13, tracks.md 2.2.  Run from the repo root. 
     # the same with the back-test cache scripts/backtest.py already wrote (skips loading the train split)
     python scripts/g2_check.py --world real --data hi_medium --backtest-dir data/backtest/hi_medium/<namespace>
     python scripts/g2_check.py --world real --data hi_medium --fusion per_family     # cross-fitted inside val
+    # per-family fusion with the ridge and the prior ("naive" or "zero") chosen by inner cross-validation
+    python scripts/g2_check.py --world real --data hi_medium --fusion per_family --fusion-select cv
 
 The fixed-order expert planner asks up to four questions per alert (eps 0.5 each, budget 2) through the harness (gate,
 accountant, clock); the answers go through fusion; the Brier gain over p0 gets a cluster-bootstrap CI. The ceiling check
@@ -68,6 +70,8 @@ def main(argv=None) -> int:
     ap.add_argument("--backtest-dir", default=None, help="assembled back-test cache directory (real world)")
     ap.add_argument("--n", type=int, default=360, help="alerts of the synthetic world")
     ap.add_argument("--fusion", choices=g2.FUSIONS, default="naive")
+    ap.add_argument("--fusion-select", choices=g2.SELECTS, default="fixed",
+                    help="per_family only: 'cv' picks ridge and prior by inner cross-validation (fuse.fit_cv)")
     ap.add_argument("--budget", type=float, default=g2.BUDGET, help="eps per alert")
     ap.add_argument("--ask-eps", type=float, default=g2.ASK_EPS, help="eps level of each question")
     ap.add_argument("--eps-levels", type=float, nargs="+", default=list(g2.EPS_LEVELS))
@@ -91,7 +95,7 @@ def main(argv=None) -> int:
         print(f"G2 NOT RUN: {len(val)} validation alerts, {len(entries)} back-test entries", file=sys.stderr)
         return NOT_RUN
     r = g2.run_g2(banks, entries, val, a.world, a.fusion, a.budget, a.ask_eps, a.eps_levels, attempt_of, a.hub_cap,
-                  a.n_boot, a.seed, fdr=a.fdr)  # fmt: skip
+                  a.n_boot, a.seed, fdr=a.fdr, fusion_select=a.fusion_select)  # fmt: skip
     if a.world == "real":
         r["data"], r["val_part"] = a.data, a.val_part
     out = Path(a.out or ROOT / "data" / "runs" / f"g2_{a.world}.json")
