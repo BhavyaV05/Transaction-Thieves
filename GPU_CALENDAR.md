@@ -11,8 +11,8 @@ Times are local to the machine owner; say the timezone if it matters. Keep it ch
 | 2026-10-23 (done) | 5070 Ti PC (Linux) | Akshat | First real runs: planner/ReAct on 20 val-fit alerts, untuned 4B/8B cascade baseline | 8B server down between runs | 0.26 |
 | 2026-10-23/24 (done) | 5070 Ti PC (Linux) | Akshat | Draft strategy library: planner on 1,983 HI-Medium train alerts, Qwen3-8B | 8B server was mine | 1.31 |
 | 2026-10-24 (done) | 5070 Ti PC (Linux) | Akshat | E13 engineering check: planner sequential vs `--batch-schedule 2,1` on 20 val-fit alerts, Qwen3-8B | 8B server was mine | 0.17 |
-| 2026-10-25 22:19 → 22:42 (done) | 5070 Ti PC (Linux) | Akshat | E18 stage 1, Qwen3-8B, 160 HI-Medium val eval alerts (median 6.0 s/alert) | Yes (no shared 8B server) | 0.38 |
-| 2026-10-25 22:45 → ~26 Oct 06:00 | 5070 Ti PC (Linux) | Akshat | E18 stage 1 queue (`scripts/e18_queue.sh`): Qwen3.8-27B Q3, gpt-oss-20b, Qwen3-14B, Gemma 4 12B, Gemma 4 26B-A4B, one at a time | Yes, all night | ~4-7 |
+| 2026-10-25 22:19 → 23:20 (done, wasted) | 5070 Ti PC (Linux) | Akshat | E18 stage 1, Qwen3-8B and Qwen3.8-27B, 160 alerts each: invalid (no back-test table passed, every verdict p0); rerun | Yes (no shared 8B server) | 1.05 |
+| 2026-10-25 23:30 → ~26 Oct 07:00 | 5070 Ti PC (Linux) | Akshat | E18 stage 1 queue (`scripts/e18_queue.sh`): Qwen3-8B, Qwen3.8-27B Q3, gpt-oss-20b, Qwen3-14B, Gemma 4 12B, Gemma 4 26B-A4B, one at a time | Yes, all night | ~4-7 |
 | 2026-10-26 (after stage 1) | 5070 Ti PC (Linux) | Akshat | E18 stage 2 (top 3, 460 alerts) and the thinking arm; decision by end of 26 Oct | Yes | ~8-15 |
 
 ## Weekly GPU-hour log (reference-hours)
