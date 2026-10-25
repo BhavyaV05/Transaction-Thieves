@@ -122,6 +122,8 @@ def draw(out: dict, path: Path) -> None:
         ax.spines[sp].set_color(grid)
     ax.set_title(f"{out['dataset']}: Brier versus ε, federated training and question answers", fontsize=10, color=ink, loc="left")
     ax.legend(fontsize=7.2, frameon=False, loc="lower left", bbox_to_anchor=(0.0, -0.46), ncol=1, labelcolor=ink2)
+    if "gfp_see_everything" not in ref:
+        ax.text(0.99, 0.02, "GFP see-everything and layer-wise exchange: not run on this dataset (BLOCKED-COMPUTE)", transform=ax.transAxes, fontsize=6.8, color=ink2, ha="right")
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", dpi=100)
