@@ -8,7 +8,7 @@ candidates:
   - {name: gemma4-12b,         family: gemma, params_b: 12,   active_b: 12,  quant: qat-w4a16,    stack: vllm,      hf_id: google/gemma-4-12B-it-qat-w4a16-ct, set: core, profile: gemma4-12b}
   - {name: qwen3-14b,          family: qwen,  params_b: 14,   active_b: 14,  quant: awq,          stack: vllm,      hf_id: Qwen/Qwen3-14B-AWQ,        set: core, profile: qwen3-14b}
   - {name: phi4-reasoning,     family: phi,   params_b: 14,   active_b: 14,  quant: 4bit,         stack: vllm,      hf_id: microsoft/Phi-4-reasoning, set: if_time, profile: null}
-  - {name: gpt-oss-20b,        family: gpt-oss, params_b: 21, active_b: 3.6, quant: mxfp4,        stack: vllm,      hf_id: openai/gpt-oss-20b,        set: core,    profile: gpt-oss-20b}
+  - {name: gpt-oss-20b,        family: gpt-oss, params_b: 21, active_b: 3.6, quant: mxfp4,        stack: llama.cpp, hf_id: ggml-org/gpt-oss-20b-GGUF, set: core,    profile: null}   # vLLM OOMs at weight allocation beside the desktop (docs/t3_week0.md section 4)
   - {name: gemma4-26b-a4b,     family: gemma, params_b: 25.2, active_b: 3.8, quant: UD-IQ4_XS,    stack: llama.cpp, hf_id: unsloth/gemma-4-26B-A4B-it-GGUF, set: core, profile: null}   # no vLLM 4-bit build; Google's QAT GGUF (14.4 GB) does not fit beside the desktop
   - {name: qwen3.8-27b-q3,     family: qwen,  params_b: 27,   active_b: 27,  quant: UD-Q3_K_XL,   stack: llama.cpp, hf_id: null,                      set: core, profile: null}   # the CIBC reasoning model
   - {name: gemma4-31b-q3,      family: gemma, params_b: 31,   active_b: 31,  quant: Q3_K,         stack: llama.cpp, hf_id: null,                      set: if_time, profile: null}  # only if it fits at the context cap
@@ -56,7 +56,9 @@ serving:
   gemma4-12b:      {served_model: gemma4-12b,      revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee, max_model_len: 8192, size_gb: 10.3, endpoint: null, hf_id: google/gemma-4-12B-it-qat-w4a16-ct}
   qwen3-14b:       {served_model: qwen3-14b,       revision: 31c69efc29464b6bb0aee1398b5a7b50a99340c3, max_model_len: 8192, size_gb: 10.0, endpoint: null, hf_id: Qwen/Qwen3-14B-AWQ}
   phi4-reasoning:  {served_model: phi4-reasoning,  revision: 1de18ec97600877ce63dbf60c73b998da99f0195, max_model_len: 8192, size_gb: null, endpoint: null}
-  gpt-oss-20b:     {served_model: gpt-oss-20b,     revision: 6cee5e81ee83917806bbde320786a8fb61efebee, max_model_len: 8192, size_gb: 13.0, endpoint: null}
+  gpt-oss-20b:     {served_model: gpt-oss-20b,     revision: 15dcfc7e7c608c6161507211ed43c5b590801b4b, max_model_len: 8192, size_gb: 12.1, endpoint: null, hf_id: ggml-org/gpt-oss-20b-GGUF,
+                   gguf_repo: ggml-org/gpt-oss-20b-GGUF, gguf_file: gpt-oss-20b-MXFP4.gguf, reasoning_format: auto,
+                   chat_template_kwargs: {reasoning_effort: low}}   # parity.thinking: gpt-oss has no switch, low effort is the off arm
   gemma4-26b-a4b:  {served_model: gemma4-26b-a4b,  revision: c099eb48e663fd284577b04978a94ffccb261841, max_model_len: 8192, size_gb: 13.6, endpoint: null, hf_id: unsloth/gemma-4-26B-A4B-it-GGUF,
                    gguf_repo: unsloth/gemma-4-26B-A4B-it-GGUF, gguf_file: gemma-4-26B-A4B-it-UD-IQ4_XS.gguf}
   qwen3.8-27b-q3:  {served_model: qwen3.8-27b-q3,  revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502, max_model_len: 8192, size_gb: 13.1, endpoint: null, hf_id: unsloth/Qwen3.8-27B-GGUF,

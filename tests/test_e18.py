@@ -141,7 +141,7 @@ def test_candidates_from_the_real_config():
     core = e18.candidates(cfg)
     assert [c.name for c in core] == ["qwen3-8b", "gemma4-12b", "qwen3-14b", "gpt-oss-20b", "gemma4-26b-a4b", "qwen3.8-27b-q3"]
     assert len(e18.candidates(cfg, ("core", "if_time"))) == 8
-    assert e18.candidates(cfg, only=["gpt-oss-20b"])[0].size_gb_est == (13.0, "config")
+    assert e18.candidates(cfg, only=["gpt-oss-20b"])[0].size_gb_est == (12.1, "config")
     assert e18.candidates(cfg, only=["phi4-reasoning"])[0].size_gb_est == (7.9, "estimate")
     with pytest.raises(ValueError):
         e18.candidates(cfg, only=["nope"])
@@ -201,7 +201,7 @@ def test_driver_end_to_end_two_candidates_resume_parity_and_decisions(driver, fa
     # parity: same alerts, seed and limits in both run dirs; thinking off, gpt-oss at reasoning_effort low
     sm = {n: json.loads((s1 / n / "summary.json").read_text()) for n in mocks}
     assert len({m["alerts_hash"] for m in sm.values()}) == 1 and len({json.dumps(m["limits"]) for m in sm.values()}) == 1
-    assert sm["qwen3-8b"]["limits"]["max_tokens"] == 6000 and sm["gpt-oss-20b"]["serving_stack"] == "vllm"
+    assert sm["qwen3-8b"]["limits"]["max_tokens"] == 6000 and sm["gpt-oss-20b"]["serving_stack"] == "llama.cpp"
     assert mocks["qwen3-8b"].requests[0]["extra"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert mocks["gpt-oss-20b"].requests[0]["extra"]["reasoning_effort"] == "low"
     assert {r["seed"] for m in mocks.values() for r in m.requests} == {0}

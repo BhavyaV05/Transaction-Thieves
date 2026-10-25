@@ -215,10 +215,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(a.config)
     host = check_host(a.host or cfg["host"])
     port = a.port or cfg["port"]
-    prof = None if a.model in cfg["models"] else llama_profile(a.sweep_config, a.model)
-    backend = a.backend or (
-        "llamacpp" if prof and prof.get("stack") == LLAMA_STACK
-        else "docker" if platform.system() == "Windows" else "native")
+    prof = llama_profile(a.sweep_config, a.model)  # an E18 llama.cpp candidate wins over a same-named vLLM profile
+    if prof is not None and prof.get("stack") != LLAMA_STACK:
+        prof = None  # a vLLM candidate: served from serving.yaml
+    backend = a.backend or ("llamacpp" if prof else "docker" if platform.system() == "Windows" else "native")
     hf_home = str(Path(os.path.expanduser(cfg["hf_home"])))
     if backend == "llamacpp":
         if prof is None:
