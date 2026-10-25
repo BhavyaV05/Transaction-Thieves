@@ -52,8 +52,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] **G4**: needs the run on real validation (`data/`, T1's alert sets, the back-test tables) and T3's GPU-hour numbers for the compute check
 
 ## Week 10
-- [ ] Async runs (stretch)
-- [ ] ModernBERT/DeBERTa + RouteLLM-style baselines (secondary)
+- [x] Async runs (stretch): `scripts/async_study.py` (tooling and synthetic check; the real E13 rows need `data/` and low-eps accepted questions, `ftm/orchestrator/README.md`)
+- [x] ModernBERT/DeBERTa + RouteLLM-style baselines (secondary): `ftm/fastmodel/{encoder,router}.py`, `scripts/encoder_baseline.py`, `ftm/fastmodel/BASELINES.md`; training on the 3050 Ti and real numbers need the decision set, the 8B scores and a CUDA torch
 
 ## Week 11
 - [ ] Stretch external agents if time
