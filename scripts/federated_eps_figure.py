@@ -97,7 +97,6 @@ def draw(out: dict, path: Path) -> None:
         ax.axhline(v, color=ink2, lw=1.0, ls=ls, zorder=1)
         ax.text(0.47, v, f"{name} {v:.4f}", fontsize=7.5, color=ink2, va="bottom", ha="left")
     for key, pts in out["curves"].items():
-        pts = [p for p in pts if np.isfinite(p["eps"]) or key != "question"]
         x = np.array([INF_X if not np.isfinite(p["eps"]) else p["eps"] for p in pts])
         y = np.array([p["brier"] for p in pts])
         ax.plot(x, y, color=COLORS[key], lw=2, marker="o", ms=6, mec="#fcfcfb", mew=1.5, label=UNITS[key], zorder=3)
