@@ -38,16 +38,16 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] FraudGT (secondary): partial reproduction on our val days (3 h, 111 of 500 epochs, val F1 0.648; full run is a 5070 Ti job), see ftm/baselines/README.md
 
 ## Week 7
-- [ ] AML-specific federated method (secondary)
-- [ ] four evidence views final
-- [ ] planner-view decision with Akshat
+- [x] AML-specific federated method (secondary): Ceydeli et al. layer-wise exchange from the paper, HI-Small (`ftm/baselines/README.md`)
+- [x] four evidence views final (`view()` API, both datasets, H6)
+- [ ] planner-view decision with Akshat (recommendation written, `docs/t1_planner_view.md`; awaiting his confirmation)
 
 ## Week 8
-- [ ] Held-out-cycles rerun (data, GFP, conformal; T2 reruns back-testing, T4 refits fusion)
+- [x] Held-out-cycles rerun (data, GFP, conformal, T2's held-out back-test run with her; T4 refits fusion) (`docs/t1_heldout_cycles.md`)
 
 ## Week 9
-- [ ] All baselines on val
-- [ ] retrieval demo. **G4**
+- [x] All baselines on val (`docs/t1_baselines_val.md`; HI-Medium see-everything and FraudGT full run still blocked-compute)
+- [x] retrieval demo (`scripts/retrieval_demo.py`). **G4**
 
 ## Week 10
 - [ ] MEGA-GNN (secondary)
