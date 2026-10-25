@@ -28,6 +28,8 @@ dependencies = [
 dev = ["pytest", "ruff"]
 # T1: one-bank models and SOTA GNNs. snapml is installed separately if the licence allows (plan section 4.1).
 gbt = ["lightgbm", "xgboost", "scikit-learn"]
+# T2: fine-tuned ModernBERT/DeBERTa classifiers for the small decisions (install a CUDA build of torch first for the GPU)
+enc = ["torch", "transformers", "scikit-learn"]
 gnn = ["torch", "torch_geometric", "pcst_fast"]
 fed = ["flwr", "opacus"]
 # T3 (and T4 for ports): LLM client side. vLLM/Unsloth run on the serving machine only, see docs/hardware.md.
