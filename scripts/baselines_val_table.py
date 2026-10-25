@@ -8,6 +8,7 @@ exchange) report the seed mean of every metric and the sd over seeds. CIs: clust
 for the Brier differences; 2,000 resamples for Brier, 500 for PR-AUC and F1.
 
   python scripts/baselines_val_table.py --data hi_small
+MEGA-GNN rows (week 10): "Brier minus Multi-GNN (same mode)" is the paired difference to Multi-GNN one-bank for view-level models and to Multi-GNN see-everything for whole-graph models.
 Writes data/runs/baselines_val_<ds>.json. Val only, no test row.
 """
 
@@ -42,14 +43,15 @@ def registry(ds: str) -> dict[str, dict]:
     reg: dict[str, dict] = {"GFP one-bank": {"kind": "view", "files": [s / "p0_one_bank.parquet"], "mode": "one_bank", "model": "gfp_lgbm"}}
     if (s / "p0_see_everything.parquet").exists():
         reg["GFP see-everything"] = {"kind": "tx", "files": [s / "p0_see_everything.parquet"], "mode": "see_everything", "model": "gfp_lgbm"}
-    for mg in (s / "p0_multi_gnn.parquet", s / "p0_multi_gnn__one_bank.parquet"):  # HI-Medium only has the one-bank file
-        if not mg.exists():
-            continue
-        d = pl.read_parquet(mg, columns=["mode"])["mode"].unique().to_list()
-        if "one_bank" in d and "Multi-GNN one-bank" not in reg:
-            reg["Multi-GNN one-bank"] = {"kind": "view", "files": [mg], "mode": "one_bank", "model": "multi_gnn"}
-        if "see_everything" in d and "Multi-GNN see-everything" not in reg:
-            reg["Multi-GNN see-everything"] = {"kind": "tx", "files": [mg], "mode": "see_everything", "model": "multi_gnn"}
+    for model, label in (("multi_gnn", "Multi-GNN"), ("mega_gnn", "MEGA-GNN (MEGA-GenAgg)")):
+        for mg in (s / f"p0_{model}.parquet", s / f"p0_{model}__one_bank.parquet"):  # HI-Medium only has the one-bank file
+            if not mg.exists():
+                continue
+            d = pl.read_parquet(mg, columns=["mode"])["mode"].unique().to_list()
+            if "one_bank" in d and f"{label} one-bank" not in reg:
+                reg[f"{label} one-bank"] = {"kind": "view", "files": [mg], "mode": "one_bank", "model": model}
+            if "see_everything" in d and f"{label} see-everything" not in reg:
+                reg[f"{label} see-everything"] = {"kind": "tx", "files": [mg], "mode": "see_everything", "model": model}
     fd = s / "federated"
     for name in ("dpfedavg_client_eps16", "dpfedavg_client_eps8", "dpfedavg_client_epsinf", "dpfedavg_edge_eps8", "dpfedavg_edge_epsinf"):
         fs = sorted(fd.glob(f"{name}_seed*.parquet"))
@@ -120,12 +122,17 @@ def main() -> None:
     ref = "GFP one-bank"
     for name, se in mean_se.items():
         r = out["models"][name]
-        bm = bs.bootstrap_means(np.column_stack([se, se_const, mean_se[ref]]), cl, n_boot=a.n_boot, seed=a.seed)
+        same = "Multi-GNN see-everything" if reg.get(name, {}).get("mode") == "see_everything" else "Multi-GNN one-bank"  # paired reference of the same mode
+        r["multi_gnn_reference"] = same if same in mean_se else None
+        bm = bs.bootstrap_means(np.column_stack([se, se_const, mean_se[ref], mean_se.get(same, se)]), cl, n_boot=a.n_boot, seed=a.seed)
         r["brier_mean"] = float(se.mean())
         r["brier_ci95"] = [float(np.quantile(bm[:, 0], 0.025)), float(np.quantile(bm[:, 0], 0.975))]
         r["skill_vs_constant"] = 1 - r["brier_mean"] / float(se_const.mean())
         d = bm[:, 0] - bm[:, 2]
         r["brier_minus_gfp_one_bank"] = {"diff": float(se.mean() - mean_se[ref].mean()), "ci95": [float(np.quantile(d, 0.025)), float(np.quantile(d, 0.975))]}
+        if r["multi_gnn_reference"]:
+            d = bm[:, 0] - bm[:, 3]
+            r["brier_minus_multi_gnn_same_mode"] = {"diff": float(se.mean() - mean_se[same].mean()), "ci95": [float(np.quantile(d, 0.025)), float(np.quantile(d, 0.975))]}
         d = bm[:, 0] - bm[:, 1]
         r["brier_minus_constant"] = {"diff": float(se.mean() - se_const.mean()), "ci95": [float(np.quantile(d, 0.025)), float(np.quantile(d, 0.975))]}
     # PR-AUC and F1 CIs (slow path) for the seed-0 predictions of every model

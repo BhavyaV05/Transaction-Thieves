@@ -28,16 +28,18 @@ import polars as pl
 
 from ftm import guards
 from ftm.data import alias, io
-from ftm.retrieval import pcst
+from ftm.retrieval import explainers, pcst
 from ftm.retrieval import views as stub_views
 
 K = 40
 WINDOW_HOURS = 72
 COLS = ["tx_id", "timestamp", "src_id", "dst_id", "from_bank", "to_bank", "amount_paid", "payment_currency", "payment_format"]
 TRAIL_COLS = ["tx_id", "timestamp", "src_alias", "dst_alias", "from_bank", "to_bank", "amount_paid", "payment_currency", "payment_format"]
-VIEWS = ("amount", "amount_1hop", "scorer", "scorer_greedy", "scorer_pcst", "long_prompt")
-# The four views of E8 under the names T3 calls: top-40 by amount, scorer only, scorer + time-respecting PCST trail, everything.
-NAMES = ("amount", "scorer", "scorer_pcst", "long_prompt", "amount_1hop", "scorer_greedy")
+VIEWS = ("amount", "amount_1hop", "scorer", "scorer_greedy", "scorer_pcst", "long_prompt", "ppr", "gnnexplainer", "pgexplainer")
+# The four views of E8 under the names T3 calls: top-40 by amount, scorer only, scorer + time-respecting PCST trail, everything;
+# then the ablations and the three explainer comparisons (personalised PageRank, GNNExplainer, PGExplainer: `ftm.retrieval.explainers`).
+NAMES = ("amount", "scorer", "scorer_pcst", "long_prompt", "amount_1hop", "scorer_greedy", "ppr", "gnnexplainer", "pgexplainer")
+EXPLAINER_VIEWS = ("gnnexplainer", "pgexplainer")  # scores come from the Multi-GNN one-bank model (cache or live), not from the candidates alone
 # "Everything in a long prompt": all candidate edges of the 72 h window, serialised like the other views, newest kept when they
 # do not fit. The harness prompt cap is `Limits.max_tokens` = 6,000 (configs/llm/default.yaml; the server has an 8,192 context).
 # The instructions, the alert, the question menu and the answer history of T3's planner prompt take about 2,000 of those, so
@@ -76,6 +78,11 @@ def _top(order_key: np.ndarray, tx: np.ndarray, alert: int, k: int, pool: np.nda
     return m
 
 
+def _positive_top(score: np.ndarray, tx: np.ndarray, alert: int, k: int) -> np.ndarray:
+    """The alerted edge plus the k-1 highest `score` among the edges with score > 0."""
+    return _top(score, tx, alert, k, np.asarray(score) > 0)
+
+
 def line_chars(cand: pl.DataFrame, alert: int, home_bank: int | None) -> np.ndarray:
     """Characters of each candidate's trail line (`views.format_trail`, newline included): lets the long-prompt view be cut
     without formatting 17,000 rows. Exact (a test compares it with the real lines)."""
@@ -105,8 +112,13 @@ def long_prompt_mask(cand: pl.DataFrame, alert: int, home_bank: int | None, max_
 
 
 def select_views(cand: pl.DataFrame, alert: int, prize: np.ndarray, k: int = K, edge_cost: float = 0.05,
-                 home_bank: int | None = None, max_tokens: int = EVIDENCE_TOKENS, only: tuple[str, ...] | None = None) -> dict[str, np.ndarray]:  # fmt: skip
-    """{view name: bool mask over `cand`} for the alerted row index `alert` (only the views in `only`, default all)."""
+                 home_bank: int | None = None, max_tokens: int = EVIDENCE_TOKENS, only: tuple[str, ...] | None = None,
+                 explain: dict[str, np.ndarray] | None = None) -> dict[str, np.ndarray]:  # fmt: skip
+    """{view name: bool mask over `cand`} for the alerted row index `alert` (only the views in `only`, default all).
+
+    `explain` = {explainer view name: score per candidate edge}; the explainer views exist only for the names it holds. Every
+    score-ranked selector (`ppr` and the explainers) takes the k-1 best edges with a score above 0, so an edge the selector never saw
+    (outside the alerted edge's component, or outside the model's receptive field) is not padded in."""
     tx, src, dst = cand["tx_id"].to_numpy(), cand["src_id"].to_numpy(), cand["dst_id"].to_numpy()
     t = cand["timestamp"].dt.epoch("s").to_numpy().astype("f8")
     amt = cand["amount_paid"].to_numpy()
@@ -119,7 +131,10 @@ def select_views(cand: pl.DataFrame, alert: int, prize: np.ndarray, k: int = K, 
         "scorer_greedy": lambda: pcst.greedy_trail(src, dst, t, prize, alert, k, allowed=pool),  # ablation: trail without PCST
         "scorer_pcst": lambda: pcst.select_pcst_trail(src, dst, t, prize, alert, k, edge_cost)[0],
         "long_prompt": lambda: long_prompt_mask(cand, alert, home_bank, max_tokens),
+        "ppr": lambda: _positive_top(explainers.ppr_edge_scores(src, dst, alert), tx, alert, k),
     }
+    for name, sc in (explain or {}).items():
+        make[name] = lambda sc=sc: _positive_top(sc, tx, alert, k)
     return {n: f() for n, f in make.items() if only is None or n in only}
 
 
@@ -148,6 +163,27 @@ def _scores(ds: str) -> pl.DataFrame:
     if not f.exists():
         raise FileNotFoundError(f"{f}: train the edge scorer first (python -m ftm.retrieval.edge_scorer --data {ds} --train)")
     return pl.read_parquet(f, columns=["tx_id", "score"])  # time-guard: not transactions
+
+
+@lru_cache(maxsize=8)
+def _explainer_cache(ds: str, method: str) -> dict:
+    """{(bank, alerted tx_id): {candidate tx_id: score}} written by `scripts/run_explainers.py` (empty when nothing is cached)."""
+    d = Path("data/retrieval") / ds / "explainers" / method
+    fs = sorted(d.glob("bank*.parquet"))
+    out: dict = {}
+    for f in fs:
+        for (bank, alert_tx), g in pl.read_parquet(f, columns=["bank", "alert_tx", "tx_id", "score"]).group_by(["bank", "alert_tx"]):  # time-guard: not transactions
+            out[(bank, alert_tx)] = dict(zip(g["tx_id"].to_list(), g["score"].to_list(), strict=True))
+    return out
+
+
+def explainer_scores(ds: str, method: str, bank: int, tx_id: int, as_of, cand: pl.DataFrame) -> np.ndarray:
+    """Score per candidate edge of the alert under an explainer view: the cached one if `run_explainers.py` explained this alert, else
+    computed now (needs the Multi-GNN clone, the bank's checkpoint and, for PGExplainer, its trained weights)."""
+    hit = _explainer_cache(ds, method).get((bank, tx_id))
+    if hit is not None:
+        return np.array([hit.get(int(t), 0.0) for t in cand["tx_id"].to_numpy()])
+    return explainers.live_scores(ds, method, bank, tx_id, as_of, cand["tx_id"].to_numpy())
 
 
 @lru_cache(maxsize=4)
@@ -184,8 +220,10 @@ def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small"
 
     name: `amount` (top-k by amount over the whole window), `scorer` (top-k by edge-scorer score), `scorer_pcst` (the scorer's
     edges as a time-respecting PCST trail connected to the alerted edge, at most k), `long_prompt` (every candidate edge,
-    newest kept until `max_evidence_tokens`; k is ignored), plus the ablations `amount_1hop` (the week-2 stub's definition) and
-    `scorer_greedy`. The candidates are the home bank's edges in [as_of - 72 h, as_of], read through `ftm.data.io` (time
+    newest kept until `max_evidence_tokens`; k is ignored), the ablations `amount_1hop` (the week-2 stub's definition) and
+    `scorer_greedy`, and the explainer comparisons `ppr` (personalised PageRank from the alerted edge's two accounts, undirected),
+    `gnnexplainer` and `pgexplainer` (edge masks of the home bank's Multi-GNN one-bank model for the class laundering;
+    `ftm.retrieval.explainers`). The candidates are the home bank's edges in [as_of - 72 h, as_of], read through `ftm.data.io` (time
     guard, train/val only); nothing later than the alert is read, scored or returned. Accounts are aliased with
     `alias_seed` (the run seed). Raises FileNotFoundError for the scorer views when the scorer has not been trained.
     """
@@ -199,7 +237,8 @@ def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small"
         raise ValueError(f"alerted transaction {tx_id} is not in view({bank}) up to {as_of}")
     i = int(hit[0])
     pr = prizes(cand, _scores(data)) if name.startswith("scorer") else prizes(cand, None)
-    mask = select_views(cand, i, pr, k, home_bank=bank, max_tokens=max_evidence_tokens, only=(name,))[name]
+    explain = {name: explainer_scores(data, name, bank, tx_id, as_of, cand)} if name in EXPLAINER_VIEWS else None
+    mask = select_views(cand, i, pr, k, home_bank=bank, max_tokens=max_evidence_tokens, only=(name,), explain=explain)[name]
     sel = cand.filter(pl.Series(mask)).sort(["timestamp", "tx_id"])
     guards.assert_not_future(sel["timestamp"].max(), as_of)
     rows = format_trail(cand, mask, _aliases(cfg["parquet_dir"], alias_seed))
@@ -238,7 +277,8 @@ def h6_report(per_alert: pl.DataFrame, n_boot: int = 10_000, seed: int = 0, k: i
         return out
 
     hits = per_alert.pivot(on="view", index=["alert_id", "attempt_id", "n_relevant"], values="hits")
-    nsel = per_alert.pivot(on="view", index="alert_id", values="n_sel").rename({v: f"{v}_n" for v in VIEWS})
+    present = [v for v in VIEWS if v in set(per_alert["view"])]
+    nsel = per_alert.pivot(on="view", index="alert_id", values="n_sel").rename({v: f"{v}_n" for v in present})
     wide = hits.join(nsel, on="alert_id")
     out = {"margin": H6_MARGIN, "n_boot": n_boot, "k": k, "baseline": "amount (plain top-40 by amount)", "share": {}}
     for pop, w in (("alerts_with_pattern_edges", wide.filter(pl.col("n_relevant") > 0)), ("all_alerts", wide)):
@@ -268,7 +308,7 @@ def _h6_block(wide: pl.DataFrame, n_boot: int, seed: int) -> dict:
     att = [a if a is not None else f"alert:{i}" for i, a in zip(wide["alert_id"], wide["attempt_id"], strict=True)]
     out["attempts"] = int(len(set(att)))
     cl_attempt, cl_alert = bs.cluster_ids(att, []), np.arange(wide.height)
-    for other in (*H6_BASELINES, "scorer", "scorer_greedy", "long_prompt"):
+    for other in (v for v in (*H6_BASELINES, "scorer", "scorer_greedy", "long_prompt", "ppr", *EXPLAINER_VIEWS) if v in wide.columns):
         for kind, col in (("recall", other), ("pattern_edges", f"{other}_hits")):
             d = (wide[H6_VS if kind == "recall" else f"{H6_VS}_hits"] - wide[col]).to_numpy()
             res = {"diff": float(d.mean())}
@@ -282,8 +322,12 @@ def _h6_block(wide: pl.DataFrame, n_boot: int, seed: int) -> dict:
     return out
 
 
-def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: str = "scorer", k: int = K, limit: int | None = None) -> dict:
-    """Pattern-edge recall among the K and trail checks over the val alerts of `parts` (data/alerts/<ds>/val.parquet)."""
+def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: str = "scorer", k: int = K, limit: int | None = None,
+             explainer_views: tuple[str, ...] = ()) -> dict:  # fmt: skip
+    """Pattern-edge recall among the K and trail checks over the val alerts of `parts` (data/alerts/<ds>/val.parquet).
+
+    `explainer_views` (names from `EXPLAINER_VIEWS`) adds the explainer comparisons; their scores come from the cache of
+    `scripts/run_explainers.py` and are computed live for an alert that is not in it (slow: seconds per alert)."""
     cfg = io.load_config(ds)
     pq = cfg["parquet_dir"]
     al = pl.read_parquet(Path(cfg["alerts_dir"]) / "val.parquet").filter(pl.col("val_part").is_in(list(parts)))  # time-guard: not transactions
@@ -297,7 +341,8 @@ def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: st
         cand = candidates(cfg, r["bank"], r["timestamp"])
         i = int(np.flatnonzero(cand["tx_id"].to_numpy() == r["tx_id"])[0])
         pr = prizes(cand, scores)
-        masks = select_views(cand, i, pr, k, edge_cost, home_bank=int(r["bank"]))
+        explain = {n: explainer_scores(ds, n, int(r["bank"]), int(r["tx_id"]), r["timestamp"], cand) for n in explainer_views} or None
+        masks = select_views(cand, i, pr, k, edge_cost, home_bank=int(r["bank"]), explain=explain)
         tx, src, dst = cand["tx_id"].to_numpy(), cand["src_id"].to_numpy(), cand["dst_id"].to_numpy()
         t = cand["timestamp"].dt.epoch("s").to_numpy().astype("f8")
         rel = np.isin(tx, list(by_att.get(r["attempt_id"], ()))) if r["attempt_id"] is not None else np.zeros(len(tx), bool)
@@ -313,7 +358,7 @@ def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: st
     df = pl.DataFrame(rows)
     has = df.filter(pl.col("n_relevant") > 0)
     summ = []
-    for name in VIEWS:
+    for name in (v for v in VIEWS if v in set(df["view"])):
         d, h = df.filter(pl.col("view") == name), has.filter(pl.col("view") == name)
         summ.append({"view": name, "alerts": d.height, "alerts_with_pattern_edges": h.height,
                      "recall_at_k": float((h["hits"] / h["n_relevant"]).mean()), "mean_pattern_edges_in_k": float(h["hits"].mean()),
@@ -337,11 +382,12 @@ if __name__ == "__main__":
     ap.add_argument("--prize", choices=["scorer", "amount"], default="scorer")
     ap.add_argument("--edge-cost", type=float, default=0.05)
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--explainers", nargs="*", choices=EXPLAINER_VIEWS, default=[], help="add gnnexplainer / pgexplainer (cache of scripts/run_explainers.py)")
     a = ap.parse_args()
-    res = evaluate(a.data, tuple(a.parts), a.edge_cost, a.prize, limit=a.limit)
+    res = evaluate(a.data, tuple(a.parts), a.edge_cost, a.prize, limit=a.limit, explainer_views=tuple(a.explainers))
     df = res.pop("_per_alert")
     res["h6"] = h6_report(df)
-    tag = f"{a.data}_{a.prize}_{'_'.join(a.parts)}"
+    tag = f"{a.data}_{a.prize}_{'_'.join(a.parts)}" + ("_explainers" if a.explainers else "")
     Path("data/runs").mkdir(exist_ok=True)
     df.write_parquet(f"data/runs/evidence_views_{tag}.parquet")
     Path(f"data/runs/evidence_views_{tag}.json").write_text(json.dumps(res, indent=1))
