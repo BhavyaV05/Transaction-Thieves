@@ -40,6 +40,7 @@ seed: 0
 # --- run settings for scripts/run_e18.py (T3). Nothing above is changed; the prereg rule wins on any disagreement. ---
 reference_machine: t3-5070ti  # latency and GPU-s count only from here (ftm/eval/runlog.py)
 data: hi_medium               # HI-Medium val alerts (docs/t4_decisions_week2.md item 9); the val part is a required CLI arg
+backtest: data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl   # the realistic HI-Medium table every LLM run uses (440 rows, 23 accepted)
 gpt_oss_thinking_on_effort: medium   # gpt-oss has no thinking switch: the "on" arm raises reasoning_effort from low
 budget:                       # plan.md section 12 (17-31 GPU-h): only used by --dry-run
   plan_total_gpu_h: [17, 31]

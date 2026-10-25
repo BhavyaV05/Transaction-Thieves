@@ -145,16 +145,23 @@ def run_complete(run_dir: str | Path, n: int, expect: dict) -> bool:
     if not f.exists() or not (Path(run_dir) / "per_alert.jsonl").exists():
         return False
     s = json.loads(f.read_text())
-    return s.get("n_alerts") == n and all(s.get(k) == v for k, v in expect.items())
+
+    def match(got, want) -> bool:  # a dict expectation is a subset, e.g. {"backtest": {"path": ...}}
+        if isinstance(want, dict):
+            return isinstance(got, dict) and all(got.get(k) == v for k, v in want.items())
+        return got == want
+
+    return s.get("n_alerts") == n and all(match(s.get(k), v) for k, v in expect.items())
 
 
 def check_parity(summaries: dict[str, dict], arms: dict[str, Arm]) -> None:
-    """Every candidate: same alerts (ids, in order), seed, data, val part, limits, system. Raises ParityError."""
+    """Every candidate: same alerts (ids, in order), seed, data, val part, limits, system, back-test table. Raises
+    ParityError."""
     if len(arms) < 2:
         return
     ref = next(iter(arms))
     for name in arms:
-        for k in ("seed", "data", "val_part", "alerts", "system", "limits", "n_alerts", "alerts_hash"):
+        for k in ("seed", "data", "val_part", "alerts", "system", "limits", "n_alerts", "alerts_hash", "backtest"):
             if summaries[name].get(k) != summaries[ref].get(k):
                 raise ParityError(f"{name} differs from {ref} in {k}: {summaries[name].get(k)!r} vs {summaries[ref].get(k)!r}")
         if arms[name].alert_ids != arms[ref].alert_ids:

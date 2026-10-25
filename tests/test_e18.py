@@ -296,3 +296,22 @@ def test_parity_check_catches_different_alerts_seed_or_limits():
             e18.check_parity({"a": base, "b": {**base, k: v}}, {"a": a, "b": b})
     with pytest.raises(e18.ParityError):
         e18.check_parity({"a": base, "b": dict(base)}, {"a": a, "b": arm("b", 14, 0.9, ids=tuple(reversed(IDS)))})
+
+
+def test_val_runs_forward_the_backtest_table_and_need_it(driver, tmp_path):
+    """Without the LR table the planner has no accepted questions and every verdict is p0 (the 2026-10-25 bug)."""
+    import argparse
+
+    cfg = e18.load_config(CONFIG)
+    cand = e18.candidates(cfg, only=["qwen3-8b"])[0]
+    a = argparse.Namespace(alerts="val", val_part="eval", data="hi_medium", backtest=Path("x/lr_table.jsonl"),
+                           toolbox="harness", machine="m", endpoint=None)  # fmt: skip
+    argv = driver.agent_argv(cfg, cand, a, 5, False, tmp_path / "stage1" / "qwen3-8b")
+    assert argv[argv.index("--backtest") + 1] == "x/lr_table.jsonl"
+    assert driver.expected_summary(cfg, cand, a, False)["backtest"] == {"path": "x/lr_table.jsonl"}
+    assert not e18.run_complete(tmp_path, 5, {"backtest": {"path": "x"}})  # no summary yet
+    (tmp_path / "per_alert.jsonl").write_text("")
+    (tmp_path / "summary.json").write_text(json.dumps({"n_alerts": 5, "backtest": None}))
+    assert not e18.run_complete(tmp_path, 5, {"backtest": {"path": "x"}})  # a run without the table is not complete
+    with pytest.raises(SystemExit, match="backtest"):
+        driver.main(["stage1", "--val-part", "eval", "--backtest", str(tmp_path / "missing.jsonl"), "--dry-run"])
