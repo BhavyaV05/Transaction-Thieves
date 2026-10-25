@@ -34,6 +34,19 @@ def log(msg) -> None:
     print(time.strftime("%H:%M:%S"), msg, flush=True)
 
 
+def save_p0(ds: str, unit: str, eps, seed: int, clients: list[dict], p0: np.ndarray, cm: str) -> None:
+    """data/scores/<ds>/federated/<unit>_eps<eps>_seed<k>.parquet: the p0 schema of ftm/baselines/README.md (val rows only)."""
+    import polars as pl
+
+    d = Path("data/scores") / ds / "federated"
+    d.mkdir(parents=True, exist_ok=True)
+    n = [len(c["tx_va"]) for c in clients]
+    name = f"dpfedavg_{unit}_eps{'inf' if eps is None else format(eps, 'g')}"
+    pl.DataFrame({"tx_id": np.concatenate([c["tx_va"] for c in clients]), "bank": np.repeat([c["bank"] for c in clients], n), "mode": "one_bank",
+                  "model": name, "split": "val", "val_part": np.concatenate([c["part_va"] for c in clients]), "p0": p0, "score_raw": None,
+                  "label": np.concatenate([c["yva"] for c in clients]).astype(bool), "seed": seed, "commit": cm}).write_parquet(d / f"{name}_seed{seed}.parquet")  # fmt: skip
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
@@ -44,6 +57,8 @@ def main() -> None:
     ap.add_argument("--local-steps", type=int, default=None)
     ap.add_argument("--q", type=float, default=0.02, help="edge arm: Poisson sampling rate per client (same for all clients)")
     ap.add_argument("--banks", type=int, nargs="*", default=None)
+    ap.add_argument("--save-p0", action="store_true", help="write the calibrated p0 of every val row, per setting and seed, to data/scores/<ds>/federated/")
+    ap.add_argument("--tag", default="", help="suffix of the result json (so a partial rerun does not overwrite the full curve)")
     a = ap.parse_args()
     hp = DEFAULTS[a.unit] | {k: v for k, v in dict(rounds=a.rounds, local_steps=a.local_steps).items() if v}
     cm = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -54,7 +69,9 @@ def main() -> None:
         res = []
         for seed in a.seeds:
             r = fed.run_federated(clients, a.unit, eps, seed=seed, q=a.q, log=log, **hp)
-            m = fed.evaluate(clients, r.pop("raw"))
+            m = fed.evaluate(clients, r.pop("raw"), return_p0=a.save_p0)
+            if a.save_p0:
+                save_p0(a.data, a.unit, eps, seed, clients, m.pop("p0"), cm)
             res.append(m | {"sigma": r["sigma"], "epsilon": r["epsilon"], "seed": seed})
             log(f"{a.unit} eps={eps} seed={seed}: sigma={r['sigma']:.3f} brier={m['brier']:.6f} skill={m['brier_skill']:.3f} pr_auc={m['pr_auc']:.4f}")
         mean, sd = (lambda k, f=f, res=res: float(f([x[k] for x in res])) for f in (np.mean, np.std))
@@ -65,7 +82,7 @@ def main() -> None:
            "hyper": hp, "clients": [c["bank"] for c in clients], "skipped": info["skipped"], "val_cut": info["cut"],
            "n_eval_rows": rows[0]["runs"][0]["n"], "n_eval_pos": rows[0]["runs"][0]["n_pos"], "rows": rows}  # fmt: skip
     Path("data/runs").mkdir(exist_ok=True)
-    Path(f"data/runs/federated_{a.data}_{a.unit}.json").write_text(json.dumps(out, indent=1, default=str))
+    Path(f"data/runs/federated_{a.data}_{a.unit}{a.tag}.json").write_text(json.dumps(out, indent=1, default=str))
     print(f"{'epsilon':>8} {'sigma':>7} {'Brier':>10} {'+-sd':>9} {'skill':>7} {'PR-AUC':>7} {'F1':>6}")
     for r in rows:
         print(f"{r['epsilon']:>8} {r['sigma']:>7.2f} {r['brier']:>10.6f} {r['brier_sd']:>9.6f} {r['brier_skill']:>7.3f} {r['pr_auc']:>7.4f} {r['f1']:>6.3f}")

@@ -30,6 +30,7 @@ Input: one-bank `p0` (calibrated, `ftm/baselines`). Non-conformity of label k is
 | p0, label | calibrated one-bank score, `is_laundering` |
 | attempt_id, typology | from `patterns.parquet`; null when the transaction is in no attempt (clean rows and the laundering rows missing from the pattern file) |
 | split, val_part | val rows carry `fit`/`cal`/`eval`; train alerts use out-of-fold scores |
+| direction, counterparty_bank | (week 7) `out` if the home bank `bank` sent the money, else `in`; the bank on the other side (public id), null when both parties are at the home bank. Same rule as `ftm.banks.binding.alert_context` (`scripts/check_alert_context.py`). Also reach `alert.summary` through `ftm.retrieval.views.alert_summary` |
 | spans_split | the laundering attempt spans a split boundary (plan.md 5.2 step 3). **A flag for the sensitivity analysis only; the headline alert set is never filtered by it** (decision 3 of `docs/t4_decisions_week2.md`). The 72 h evidence-window rule was removed: it only drops alerts whose evidence reaches into an earlier split, which is past data and allowed at `as_of`. |
 
 Counts below are for the full alert set. Load with `pl.read_parquet` in a script or notebook (these are not transaction rows; no time-guard issue, but they contain labels, so do not hand them to a tool).
@@ -110,3 +111,8 @@ HI-Medium targets (plan.md 6.3): train about 20,000 (we have 10,962 at the alpha
 5. **alpha_launder is an alert-budget knob**, not a coverage promise: to reach thousands of alerts the target miss rate on laundering rows is 0.55-0.6, so the guarantee is "recall of at least 40-45%".
 6. Calibration data are small (`cal` part: 104 laundering rows on HI-Small, 387 on HI-Medium, a handful per bank), so thresholds are pooled over banks. Per-bank thresholds would need more positives than a 3-day val has.
 7. **Time weighting is not optional on HI-Medium**: equal weights miss the laundering target by 8 points (0.713 vs 0.63). The calibration window is short (under a day), so the half-life is 0.25 day, fixed before looking at HI-Medium `eval` as a fraction of the `cal` span; 0.1 is shown only for sensitivity (it over-shoots the other way).
+
+## Week 7-8 additions
+
+- **`top_features_{train,val}.parquet`** next to the alert sets: the home bank's one-bank model's top-5 SHAP features per alert (`scripts/top_features.py`, `docs/t1_handoffs.md` A2).
+- **Held-out cycles (E12).** `configs/data/<ds>_heldout.yaml` + `python scripts/train_gfp.py --data <ds>_heldout ...` + `python scripts/make_alerts.py --data <ds>_heldout` write `data/scores/<ds>_heldout/` and `data/alerts/<ds>_heldout/{train,val}.parquet` (same schema; cycle attempts are absent from the train rows and alerts, val is untouched; same alpha_launder as the full run, threshold recomputed). Results: `docs/t1_heldout_cycles.md`. HI-Small held-out: 5,403 train / 1,307 val alerts (full 5,198 / 1,284); HI-Medium: 9,060 / 1,950 (full 10,962 / 2,238), val positives 764 vs 798, t_alert 0.147 vs 0.129.

@@ -1,6 +1,6 @@
 # T1 hand-offs for the other tracks (week 7, branch `t1/week7-handoffs`)
 
-Owner: T1 (Abhishek). Machine: 3070 Ti laptop, system python 3.12, torch 2.5.1+cu121 untouched, no new package. Test split never read, `FTM_FINAL_RUN` never set. Every result below carries its commit in the JSON it came from (`data/runs/`, gitignored). Section A4 is **in progress** (HI-Medium back-tests are running); its remaining rows are filled in on branch `t1/week7-9`.
+Owner: T1 (Abhishek). Machine: 3070 Ti laptop, system python 3.12, torch 2.5.1+cu121 untouched, no new package. Test split never read, `FTM_FINAL_RUN` never set. Every result below carries its commit in the JSON it came from (`data/runs/`, gitignored). Section A4 was completed on branch `t1/week7-9`.
 
 ## A1. `direction` and `counterparty_bank` in alert contexts (asked by T2, T3: `ftm/planners/NONLLM.md`)
 
@@ -40,25 +40,58 @@ Refused share of questions by cap (alerts with a refusal in brackets):
 
 Reading: between a quarter and two fifths of the askable alerts touch a partner account that is the subject of another alert, one account is the subject of up to 14. A cap of 8 refuses 1 to 3 % of the questions (3 % on the 4-5x larger train sets, under 1 % on HI-Medium val); a cap of 4 refuses 4 to 10 %, 2 refuses 15 to 25 %. The cap bites on a small tail of repeat accounts; 8 looks safe, 16 almost never binds. Caveat: an alert stream of 2 questions each, not what a planner asks.
 
-## A4. T2's real-data runs: IN PROGRESS
+## A4. T2's real-data runs (done on branch `t1/week7-9`)
 
-Back-tests are on the **train** alerts (the LRs are fitted on the past and applied to val; fitting them on val alerts would leak into every val result); `--eps 0.25 0.5 1 2` (the planners' eps levels), 110 expert programs (both subject slots). Driver: `data/runs/a4_backtest.sh` (HI-Small then HI-Medium: realistic back-test + assemble, then `--exact-labels` + assemble), log `data/runs/logs/a4_backtest.log`.
-
-```
-python scripts/backtest.py --data hi_small --split train --eps 0.25 0.5 1 2            # then the same with --assemble
-python scripts/backtest.py --data hi_small --split train --exact-labels                # then the same with --assemble
-```
-
-**Done: HI-Small realistic table** (`data/backtest/hi_small/4338ebb59b35/`, 1,038 askable train alerts, 4,160 without a partner bank, 440 hypotheses, about 10 min). All 440 eligible; **1 accepted** at e-BH FDR 10 %: `cross_currency_out(ALERT.sender, window=after(72))` at eps 2 (e-value 28,398; LR 3.83 for "true", 0.54 for "false"). The next ones: the same question at `after(24)` (e-value 1,097, not accepted at FDR 10 % in the batch) and `new_account(ALERT.receiver, days=2)` (85). **Flag for T2:** the accepted question looks at the 72 h *after* the alert time; check that a live answer cannot see the future (the back-test ledger is the train split, which is why it works there). The T3 table on HI-Medium has 23 accepted of 440 (`docs/t3_first_runs.md`); HI-Small has about a tenth of the positives.
-
-**Running or queued** (filled in on `t1/week7-9`, `docs/t1_handoffs.md`): HI-Small exact (`--exact-labels`, 8,158 sampled alerts), HI-Medium realistic and exact, then `--compare`, `eps_sweep.py`, `make_decision_set.py` (the 50k set for T3), `g2_check.py`, each on HI-Small first and then HI-Medium. Commands (namespaces are printed in each report.json):
+Back-tests are on the **train** alerts (the LRs are fitted on the past and applied to val; fitting them on val alerts would leak into every val result); `--eps 0.25 0.5 1 2` (the planners' eps levels), 110 expert programs (both subject slots). Commands, with the namespaces of the caches in `data/backtest/<ds>/<ns>/` (each has `report.json` and `lr_table.jsonl`):
 
 ```
-python scripts/backtest.py --compare data/backtest/<ds>/<ns_realistic> data/backtest/<ds>/<ns_exact>
+python scripts/backtest.py --data <ds> --split train --eps 0.25 0.5 1 2 [--assemble]     # realistic
+python scripts/backtest.py --data <ds> --split train --exact-labels [--assemble]         # exact mode proper (every bank's labels, no noise)
+python scripts/backtest.py --data <ds> --split train --exact [--assemble]                # no noise, same alerts (for the eps sweep)
+python scripts/backtest.py --compare <realistic_dir> <exact_dir>
 python scripts/eps_sweep.py --system eig --data <ds> --split val --table-noisy <ns_realistic>/lr_table.jsonl --table-exact <ns_exact_same_alerts>/lr_table.jsonl --out data/runs/eps_sweep_<ds>.json
-python scripts/make_decision_set.py --data hi_medium --table <ns_realistic>/lr_table.jsonl --threshold 0.3 --max-total 50000
-python scripts/g2_check.py --world real --data <ds> --val-part eval --backtest-dir data/backtest/<ds>/<ns_realistic>
+python scripts/make_decision_set.py --data <ds> --table <ns_realistic>/lr_table.jsonl --threshold 0.3 --max-total <n>
+python scripts/g2_check.py --world real --data <ds> --val-part eval [--fusion per_family] --backtest-dir <ns_realistic>
 ```
+
+| | HI-Small | HI-Medium |
+|---|---|---|
+| askable train alerts (partner bank in the 30 modelled views) | 1,038 (4,160 without) | 1,983 (8,979 without) |
+| realistic table | `4338ebb59b35`, 440 hypotheses, **1 accepted**, about 10 min | `7df6bad5337d`, 440 hypotheses, **23 accepted**, about 1 h 40 min (same namespace as T3's table, so the alert set and configuration are identical) |
+| exact-labels (8,158 / 8,396 sampled alerts, no noise) | `2d6016dc09d2`, 110 hypotheses, 106 eligible, 4 accepted | `a829616cb2a1`, 110 hypotheses, 106 eligible, **16 accepted** |
+| exact, same alerts (eps inf) | `75f9f282dc82`, 110 hypotheses, 7 accepted | `650db027008b`, 110 hypotheses, 38 accepted |
+
+Runtimes are wall clock on the laptop with other jobs running; the exact-labels runs are dominated by five to six set questions (`n_repeated`, `n_round`, `n_format` over 8,000 alerts) that take hours each, so the last ones were started as separate processes with `--questions-file` into the same cache (no code change).
+
+**`--compare` realistic vs exact-labels** (matched by program; the realistic entries are at four eps levels, so each exact entry is paired four times and the exact counts below are pairs: 16 = 4 accepted exact questions x 4): HI-Small 424 pairs, accepted 1 vs 16 pairs, both 1, strength rank correlation 0.21, median strength ratio 0.98; **HI-Medium 424 pairs, accepted 23 realistic vs 64 exact pairs (16 exact questions), accepted in both 9, only realistic 14, only exact 55, Spearman 0.12, median strength ratio realistic/exact 0.67** (noise and the narrower, harder alert set cost a third of a question's strength). Against the same-alerts exact run (pairs again): HI-Small 1 vs 28 (7 questions), ratio 0.66; HI-Medium 23 vs 152 (38 questions), ratio 0.47, Spearman 0.19. Files `data/runs/a4_compare_<ds>_{labels,same}.json`.
+
+**HI-Small realistic table, accepted question.** `cross_currency_out(ALERT.sender, window=after(72))` at eps 2 (e-value 28,398; LR 3.83 for "true", 0.54 for "false"). **Flag for T2:** it looks at the 72 h *after* the alert time; check that a live answer cannot see the future (the back-test ledger is the train split, which is why it works there).
+
+**eps sweep** (`scripts/eps_sweep.py`, EIG planner, val alerts through the harness; Brier gain = Brier(p0) minus Brier(final), positive = better), `data/runs/eps_sweep_<ds>.json`:
+
+| per-alert budget | HI-Small gain (p0 Brier 0.1473) | HI-Small questions/alert | HI-Medium gain (p0 Brier 0.1704) | HI-Medium questions/alert |
+|---|---|---|---|---|
+| 0.5 | 0.0000 | 0 | 0.0000 | 0 |
+| 1 | 0.0000 | 0 | -0.0100 | 0.94 |
+| 2 | +0.0035 | 0.50 | -0.0058 | 1.56 |
+| 4 | +0.0035 | 0.50 | -0.0155 | 2.22 |
+| no noise | +0.0091 | 2.33 | -0.0287 | 6.0 |
+
+(theoretical LR ceilings 1.65, 2.72, 7.39, 54.6 for 0.5, 1, 2, 4.) On HI-Medium the naive-fusion planner is **worse than p0 at every budget that asks anything, and worse still without noise**: more questions make it worse, so this is the fusion rule (T4), not the noise. G2 says the same below.
+
+**Decision set for T3** (`data/decisions/<ds>/{decisions_train,decisions_val}.jsonl`, `manifest.json` with sha256; not committed). HI-Medium: **73,242 rows** (train 59,450 + val 13,792, the full set at 30 decisions per alert; the same 13,792 val rows T3 already used). Asked for 50,000: `--max-total 50000` stops after 50,000 train rows and **writes no val rows at all** (the cap is applied before the val split), so that version is kept only as `data/decisions/hi_medium_50k_trainonly/`; send T3 the full set (29 MB). HI-Small: 36,792 rows. Threshold 0.3 for the `stop` labels.
+
+**G2 on real data** (`scripts/g2_check.py`, eps 2, 4 questions of 0.5, fixed-order expert planner; gain over p0, cluster bootstrap CI, need >= 0.01):
+
+| | alerts (pos) | questions/alert | Brier p0 -> after | gain [95 % CI] | verdict |
+|---|---|---|---|---|---|
+| HI-Small val eval, naive fusion | 87 (17) | 0.5 | 0.1514 -> 0.1568 | -0.0053 [-0.0149, +0.0042] | FAIL |
+| HI-Small, per-family fusion | 87 (17) | 0.5 | 0.1514 -> 0.1577 | -0.0063 [-0.0214, +0.0095] | FAIL |
+| HI-Medium val eval, naive fusion | 160 (52) | 1.0 | 0.1985 -> 0.1994 | -0.0008 [-0.0135, +0.0125] | FAIL |
+| **HI-Medium, per-family fusion** (cross-fitted) | 160 (52) | 1.0 | 0.1985 -> 0.1856 | **+0.0129** [-0.0342, +0.0637] | point estimate passes, CI far from excluding 0 |
+| HI-Medium, all val parts, naive fusion | 460 (208) | 1.0 | 0.1704 -> 0.1719 | -0.0015 [-0.0107, +0.0077] | FAIL; the run prints "WARNING: a budget or gate breach in the run" (for T2/T4) |
+
+The ceiling check passes everywhere (1,037 cells on HI-Medium, 0 violations). So G2 is **not met on real data**: the point estimate is positive only with per-family fusion on HI-Medium and its CI covers 0 widely (160 askable alerts); 23 accepted questions exist but a planner that asks one question per alert barely moves p0. For T4: the naive summed fusion moves p0 the wrong way on real LRs (as T3 also found).
 
 ## A5. T4's `scripts/eval_report.py` on the current real p0
 

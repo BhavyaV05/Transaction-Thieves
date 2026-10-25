@@ -120,6 +120,7 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
 
     cfg = io.load_config(ds)
     pq = cfg["parquet_dir"]
+    held = bool(cfg.get("heldout_cycles", False))  # configs/data/<ds>_heldout.yaml (E12): cycle attempts removed from the train rows
     v = io.scan_transactions(pq, split="val", columns=["timestamp"]).select(
         pl.col("timestamp").min().alias("a"), pl.col("timestamp").max().alias("b")).collect()  # fmt: skip
     cut = (v["a"][0], v["b"][0])
@@ -127,11 +128,11 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
     out_dir.mkdir(parents=True, exist_ok=True)
     Path("data/runs").mkdir(parents=True, exist_ok=True)
     cm = commit()
-    meta = {"dataset": ds, "mode": mode, "commit": cm, "seed": SEED, "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}}
+    meta = {"dataset": ds, "heldout_cycles": held, "mode": mode, "commit": cm, "seed": SEED, "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}}
     parts = []
     t0 = time.time()
     if mode == "see_everything":
-        frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS).sort(["timestamp", "tx_id"]).collect()
+        frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS, heldout_cycles=held).sort(["timestamp", "tx_id"]).collect()
         codes = g.category_codes(frame)
         frame = g.encode_categoricals(frame, codes)  # memory: strings -> Int16
         res = g.score_graph(frame, codes, cut, seed=SEED, threads=threads, neg_frac=neg_frac, presorted=True)
@@ -141,7 +142,7 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
     else:
         todo = [b for b in (banks or io.read_banks(cfg["views_dir"])["bank"].to_list()) if b not in exclude]
         for b in todo:
-            frame = io.scan_view(cfg["views_dir"], b, split=["train", "val"], columns=COLS).collect()
+            frame = io.scan_view(cfg["views_dir"], b, split=["train", "val"], columns=COLS, heldout_cycles=held, parquet_dir=pq).collect()
             frame = frame.with_columns((pl.col("from_bank") == b).cast(pl.Int8).alias("out"))  # bank knows its direction
             res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads, extra_cols=["out"])
             meta["graphs"][str(b)] = res["meta"]

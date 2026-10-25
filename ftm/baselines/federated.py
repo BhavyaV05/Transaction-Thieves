@@ -247,7 +247,7 @@ def run_federated(clients: list[dict], unit: str, eps: float | None, *, rounds: 
             "seed": seed}  # fmt: skip
 
 
-def evaluate(clients: list[dict], raw: list[np.ndarray]) -> dict:
+def evaluate(clients: list[dict], raw: list[np.ndarray], return_p0: bool = False) -> dict:
     """Brier / PR-AUC / F1 pooled over the clients' val `eval` rows. One Platt calibrator (2 parameters) is fit on the pooled val `fit`
     rows (post-processing with val labels, as in the other models' protocol); F1 uses the best-F1 threshold on `fit`."""
     from ftm.baselines import gfp_gbt as g
@@ -261,5 +261,6 @@ def evaluate(clients: list[dict], raw: list[np.ndarray]) -> dict:
     m = g.metrics(y[ev], p[ev], thr)
     const = float(y[fit].mean())
     brier_const = float(np.mean((const - y[ev]) ** 2))
-    return {k: m.get(k) for k in ("n", "n_pos", "brier", "pr_auc", "f1")} | {
+    out = {k: m.get(k) for k in ("n", "n_pos", "brier", "pr_auc", "f1")} | {
         "brier_const": brier_const, "brier_skill": 1 - m["brier"] / brier_const}  # fmt: skip
+    return out | {"p0": p} if return_p0 else out  # p0: calibrated probability of every val row, clients concatenated
