@@ -39,6 +39,7 @@ from ftm.baselines import mega_gnn, multi_gnn  # noqa: E402
 from ftm.data import io  # noqa: E402
 
 MODELS = {"multi_gnn": (multi_gnn, "~/Documents/t1_external/Multi-GNN"), "mega_gnn": (mega_gnn, "~/Documents/t1_external/MEGA-GNN")}
+SCORES, RUNS, MODEL_DIR = Path("data/scores"), Path("data/runs"), Path("models")  # `--scratch DIR` moves all three (smoke tests never touch the real files)
 MIN_TRAIN_POS = 5  # one-bank: skip views with fewer train positives (logged with the count); same rule as GFP
 TOP_BANKS = 30  # every view
 EXTRA = ["from_bank", "to_bank"]
@@ -88,19 +89,19 @@ def our_split(a) -> None:
     pq, clone = cfg["parquet_dir"], Path(a.clone or MODELS[a.model][1]).expanduser()
     cut, cm = val_cut(pq), commit()
     cols = multi_gnn.EDGE_COLS
-    out = Path("data/scores") / a.data
+    out = SCORES / a.data
     out.mkdir(parents=True, exist_ok=True)
-    Path("data/runs").mkdir(exist_ok=True)
+    RUNS.mkdir(parents=True, exist_ok=True)
     meta = {"dataset": a.data, "model": a.model, "mode": a.mode, "commit": cm, "seed": 1, "batch_size": a.batch_size, "neighbours": list(multi_gnn.N_NEIGHS), "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}, "skipped": {}}
     t0, parts = time.time(), []
-    f_tab, f_meta = out / f"p0_{a.model}__{a.mode}.parquet", Path(f"data/runs/p0_{a.data}_{a.model}_{a.mode}.json")
+    f_tab, f_meta = out / f"p0_{a.model}__{a.mode}.parquet", RUNS / f"p0_{a.data}_{a.model}_{a.mode}.json"
     base = None  # --banks resumes: the other banks' rows already on disk stay (written back with every checkpoint)
     if a.mode == "one_bank" and a.banks and f_tab.exists():
         base = pl.read_parquet(f_tab).filter(~pl.col("bank").is_in(list(a.banks)))  # time-guard: not transactions
 
     def write_table(ps):
         pl.concat(([base] if base is not None else []) + ps).write_parquet(f_tab)
-    ckdir = Path("models") / a.model  # gitignored
+    ckdir = MODEL_DIR / a.model  # gitignored
     ckdir.mkdir(parents=True, exist_ok=True)
     if a.mode == "see_everything":
         frame = io.scan_transactions(pq, split=["train", "val"], columns=cols).collect()
@@ -139,9 +140,84 @@ def our_split(a) -> None:
     log(f"done {a.mode} {meta['seconds']:.0f}s")
 
 
+def final_graph(frame: pl.DataFrame, cut, mode: str, bank, clone: Path, cm: str, workers: int, ckpt: Path, batch_size: int, model_name: str, stored: pl.DataFrame):
+    """Final run for one graph: the checkpoint of the val run scores the TEST rows; the calibrator is refit from the stored val raw scores.
+
+    Nothing is trained or tuned. `frame` holds train, val and test rows of the graph (a bank view or the whole graph). The calibrator is the
+    val run's (`run_graph`): fit on the val `fit` rows of `stored` (the p0 table of the val run: raw score, label), with the same signal rule;
+    its p0 on the stored val rows must equal the stored p0 (recorded, must be 0). Test seeds are scored on the train+val+test graph, in `eval()`
+    mode, with the seed of the val run. Returns (p0 table of the test rows, record)."""
+    frame = frame.sort(["timestamp", "tx_id"])
+    sp = frame["split"].to_numpy()
+    part = np.full(frame.height, "", dtype="U4")
+    part[sp == "val"] = g.val_parts(frame["timestamp"].filter(pl.Series(sp == "val")), *cut)
+    test = frame.filter(pl.col("split") == "test")
+    raw_v, y_v = stored["score_raw"].to_numpy(), stored["label"].cast(pl.Int8).to_numpy()
+    ok_v, fit_v = ~np.isnan(raw_v) & stored["p0"].is_not_null().to_numpy(), (stored["val_part"] == "fit").to_numpy()
+    rec: dict = {"graph": "all" if bank is None else int(bank), "test_rows": test.height, "val_rows_stored": stored.height}
+    if y_v[fit_v & ok_v].sum() < 1:  # the val run skipped this view (no positive in the val fit part): p0 stays null
+        p0, rec["calibration"] = np.full(test.height, np.nan), "skipped: no val-fit positives"
+        tx, raw_t = test["tx_id"].to_numpy(), np.full(test.height, np.nan)
+    else:
+        sig = g.has_signal(y_v[fit_v & ok_v], raw_v[fit_v & ok_v])
+        cal, rec["calibration"] = g.fit_calibrator(raw_v[fit_v & ok_v], y_v[fit_v & ok_v], has_signal=sig)
+        back = cal(raw_v[ok_v])
+        rec["val_p0_max_abs_diff"] = float(np.max(np.abs(back - stored["p0"].to_numpy()[ok_v]))) if ok_v.any() else None
+        if not Path(ckpt).exists():
+            raise FileNotFoundError(f"{ckpt}: the checkpoint of the val run is missing; the final run never trains")
+        if test.height:
+            res = MODELS[model_name][0].train_and_score(frame, clone, 0.0, 0, part == "fit", num_workers=workers, log=log, ckpt=ckpt, batch_size=batch_size, resume=True, score_splits=("test",))
+            tx, raw_t = res["tx_id"], res["raw"]
+        else:  # no test row (a check of the calibrator on a val-only frame)
+            tx, raw_t = test["tx_id"].to_numpy(), np.zeros(0)
+        p0 = np.full(len(raw_t), np.nan)
+        okt = ~np.isnan(raw_t)
+        p0[okt] = cal(raw_t[okt])
+        rec["test_not_scored"] = int((~okt).sum())
+    tab = pl.DataFrame({"tx_id": tx, "bank": pl.Series([bank] * len(tx), dtype=pl.Int64), "mode": [mode] * len(tx), "model": [model_name] * len(tx),
+                        "split": ["test"] * len(tx), "val_part": pl.Series([None] * len(tx), dtype=pl.Utf8), "p0": pl.Series(p0).fill_nan(None),
+                        "score_raw": pl.Series(raw_t.astype("f8")).fill_nan(None), "label": test["is_laundering"], "seed": [1] * len(tx), "commit": [cm] * len(tx)})  # fmt: skip
+    return tab, rec
+
+
+def final_run(a) -> None:
+    """Week 14: score the test rows of every graph with the checkpoints of the val run. Needs FTM_FINAL_RUN=1 (scripts/run_final.py)."""
+    from ftm import guards
+
+    guards.require_final_run("the test split of the GNN baselines")
+    cfg = io.load_config(a.data)
+    pq, clone = cfg["parquet_dir"], Path(a.clone or MODELS[a.model][1]).expanduser()
+    cut, cm, cols = val_cut(pq), commit(), multi_gnn.EDGE_COLS
+    stored_all = pl.read_parquet(SCORES / a.data / f"p0_{a.model}__{a.mode}.parquet")  # time-guard: not transactions
+    ckdir = MODEL_DIR / a.model
+    splits, parts, recs, t0 = ["train", "val", "test"], [], [], time.time()
+    if a.mode == "see_everything":
+        frame = io.scan_transactions(pq, split=splits, columns=cols).collect()
+        tab, rec = final_graph(frame, cut, a.mode, None, clone, cm, a.workers, ckdir / f"{a.data}_see.pt", a.batch_size, a.model, stored_all)
+        parts.append(tab), recs.append(rec)
+    else:
+        banks = io.read_banks(cfg["views_dir"]).sort("rank")
+        for b in a.banks or banks["bank"].head(TOP_BANKS).to_list():
+            stored = stored_all.filter(pl.col("bank") == b)
+            if stored.height == 0:  # skipped in the val run (too few train positives)
+                continue
+            f = io.scan_view(cfg["views_dir"], b, split=splits, columns=cols + EXTRA).collect().drop(EXTRA)
+            tab, rec = final_graph(f, cut, a.mode, b, clone, cm, a.workers, ckdir / f"{a.data}_bank{b}.pt", a.batch_size, a.model, stored)
+            parts.append(tab), recs.append(rec)
+            log(f"bank {b}: {rec} {time.time() - t0:.0f}s")
+    d = SCORES / a.data / "final"
+    d.mkdir(parents=True, exist_ok=True)
+    pl.concat(parts).write_parquet(d / f"p0_{a.model}__{a.mode}.parquet")
+    bad = [r for r in recs if (r.get("val_p0_max_abs_diff") or 0) > 1e-9]
+    RUNS / f"final_p0_{a.data}_{a.model}_{a.mode}.json".write_text(json.dumps({"commit": cm, "seconds": time.time() - t0, "graphs": recs}, indent=1, default=str))
+    if bad:
+        raise SystemExit(f"the calibrator does not reproduce the stored val p0 for {[r['graph'] for r in bad]}: do not use these test scores")
+    log(f"final {a.model} {a.mode} done {time.time() - t0:.0f}s")
+
+
 def combine(ds: str, name: str = "multi_gnn") -> None:
     """p0_<name>.parquet = whichever of the two per-mode files exist (GFP's p0 files are never touched)."""
-    d = Path("data/scores") / ds
+    d = SCORES / ds
     fs = [d / f"p0_{name}__{m}.parquet" for m in ("one_bank", "see_everything") if (d / f"p0_{name}__{m}.parquet").exists()]
     pl.concat([pl.read_parquet(f) for f in fs]).write_parquet(d / f"p0_{name}.parquet")  # time-guard: not transactions
 
@@ -213,7 +289,9 @@ def compare(ds: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repro", action="store_true")
+    ap.add_argument("--scratch", default=None, help="write every output (scores, run json, checkpoints) under this directory instead of data/scores, data/runs, models/: use it for smoke tests")
     ap.add_argument("--our-split", action="store_true")
+    ap.add_argument("--final", action="store_true", help="week 14: score the TEST rows with the val run's checkpoints (needs FTM_FINAL_RUN=1; trains nothing)")
     ap.add_argument("--compare", action="store_true")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--mode", choices=["see_everything", "one_bank"], default="see_everything")
@@ -227,6 +305,12 @@ def main() -> None:
     ap.add_argument("--budget-s", type=int, default=8700, help="stop after the epoch that passes this many seconds")
     ap.add_argument("--run", action="store_true", help="--repro: launch it (otherwise only print the command)")
     a = ap.parse_args()
+    if a.scratch:
+        global SCORES, RUNS, MODEL_DIR
+        SCORES, RUNS, MODEL_DIR = (Path(a.scratch) / n for n in ("scores", "runs", "models"))
+        log(f"scratch run: outputs under {a.scratch}")
+    if a.final:
+        return final_run(a)
     if a.our_split:
         return our_split(a)
     if a.compare:

@@ -73,7 +73,7 @@ def _hetero(ei, ea, y, n_nodes, mean=None, std=None):
 
 
 def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epochs: int, fit_mask: np.ndarray,
-                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False) -> dict:  # fmt: skip
+                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False, score_splits: tuple = ("val",)) -> dict:  # fmt: skip
     """Train MEGA-GenAgg on the train rows of `frame` (time-sorted, split in {train, val}), pick the epoch by weighted AP on the val
     `fit` rows, return raw P(laundering) for every val row. Same contract, epoch rule, scoring (always `eval()` mode) and val
     look-ahead (a val edge is scored on the graph of train + the whole val split) as `multi_gnn.train_and_score`."""
@@ -96,7 +96,7 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     cfg = SimpleNamespace(**json.loads((clone / "model_settings.json").read_text())["gin"]["params"])
     sp = frame["split"].to_numpy()
     ntr = int((sp == "train").sum())
-    assert (sp[:ntr] == "train").all() and (sp[ntr:] == "val").all(), "frame must be time-sorted with all train rows first"
+    assert (sp[:ntr] == "train").all() and np.isin(sp[ntr:], ["val", "test"]).all(), "frame must be time-sorted with all train rows first"
     ei, ea, y, txid, n_nodes, _ = edge_arrays(frame)
     t0 = time.time()
     tr, mean, std = _hetero(ei[:, :ntr], ea[:ntr], y[:ntr], n_nodes)
@@ -146,7 +146,7 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
         return out
 
     rng = np.random.default_rng(seed)
-    vpos = np.arange(ntr, len(y))
+    vpos = np.flatnonzero(np.isin(sp, score_splits))  # val rows (the val run) or test rows (`score_splits=("test",)`, final run, resume=True, max_epochs=0)
     fpos = np.flatnonzero(fit_mask)
     sel = fpos[(y[fpos] == 1) | (rng.random(len(fpos)) < 0.1)]
     sw = np.where(y[sel] == 1, 1.0, 10.0)
