@@ -10,7 +10,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] check code/licence for Group A/B and pick the AML-specific federated method (Tian et al.; docs/t1_week0.md)
 - [x] report RAM/CPU
 - [x] **test whether Qwen3-8B 4-bit runs on your GPU at the harness context cap**: passed as an ollama Q4_K_M proxy (6.4 GB VRAM, 62 tok/s); vLLM check still open.
-- [ ] run the conversion benchmark (waiting for the T3 script)
+- [ ] run the conversion benchmark: script available; BLOCKED for the official factor (T3's reference JSON is not on this machine); indicative ollama proxy run, factor 0.664, `docs/t1_bench.md`
 
 ## Week 1
 - [x] Parquet, splits, pattern parsing, bank views, aliasing, time guard (HI-Small and HI-Medium; docs in ftm/data/README.md). **Hand off to everyone by end of week**
@@ -25,8 +25,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] p₀ and upper-limit predictions to T2/T4. **G2** support (GFP p₀ and `p0_multi_gnn.parquet` on disk for HI-Small, schema in `ftm/baselines/README.md`; HI-Medium see-everything still blocked-compute)
 
 ## Week 4
-- [ ] Final alert sets (draft train/val sets built; drop-rule ruling and test projection need the team, see `ftm/intake/README.md`)
-- [ ] freeze 1k subset
+- [x] Final alert sets (train/val sets final under decisions 1 to 5 of `docs/t4_decisions_week2.md`, alert definition in `configs/t1_final/intake.yaml`; the test set comes from `make_alerts.py --final` at G5, `docs/t1_final_run.md`)
+- [x] freeze 1k subset (the rule, not the IDs, decision 1: `configs/t1_final/subset_rule.yaml`; the IDs are drawn by `run_final.py` at G5; T4 quotes the rule commit in `prereg/`)
 - [x] start edge scorer training. **G3** (trained: val eval AUC 0.993, AP 0.228; `ftm/retrieval/README.md`)
 
 ## Week 5
@@ -50,14 +50,14 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] retrieval demo (`scripts/retrieval_demo.py`). **G4**
 
 ## Week 10
-- [ ] MEGA-GNN (secondary)
-- [ ] GNNExplainer / PGExplainer / PPR comparisons
+- [x] MEGA-GNN (secondary): reproduction partial (59.7 vs 74.88), our split HI-Small both modes and HI-Medium one-bank, HI-Medium see-everything BLOCKED-COMPUTE (`ftm/baselines/README.md`, `docs/t1_baselines_val.md`)
+- [x] GNNExplainer / PGExplainer / PPR comparisons (`ftm/retrieval/README.md`, both datasets)
 
 ## Week 11
-- [ ] Federated ε reporting and caveat text
+- [x] Federated ε reporting and caveat text (`docs/t1_federated_eps.md`, `docs/figures/t1_federated_eps_<ds>.png`)
 
 ## Week 12–13
-- [ ] Final configs
+- [x] Final configs (`configs/t1_final/`, `scripts/t1_final_check.py`, `docs/t1_final_run.md`; FraudGT and HI-Medium see-everything need the 5070 Ti)
 - [ ] buffer
 
 ## Week 14

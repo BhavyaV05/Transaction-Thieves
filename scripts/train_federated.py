@@ -47,6 +47,47 @@ def save_p0(ds: str, unit: str, eps, seed: int, clients: list[dict], p0: np.ndar
                   "label": np.concatenate([c["yva"] for c in clients]).astype(bool), "seed": seed, "commit": cm}).write_parquet(d / f"{name}_seed{seed}.parquet")  # fmt: skip
 
 
+def final_run(a, hp: dict, cm: str) -> None:
+    """Week 14: retrain every arm on the train split with the val run's hyper-parameters, epsilons and seeds (CPU, deterministic), calibrate on the val
+    `fit` rows and score the TEST rows. Needs FTM_FINAL_RUN=1 (scripts/run_final.py). The val p0 of the same models must equal the stored ones
+    (`data/scores/<ds>/federated/`, where they exist: the maximum difference is recorded and must be below 1e-9). Writes
+    data/scores/<ds>/final/dpfedavg_<unit>_eps<eps>_seed<k>.parquet (test rows only) and data/runs/final_federated_<ds>_<unit>.json."""
+    import polars as pl
+
+    from ftm import guards
+
+    guards.require_final_run("the test split of the federated baselines")
+    clients, info = fed.load_clients(a.data, FEATURES[a.unit], a.banks, log=log, final=True)
+    out = Path("data/scores") / a.data / "final"
+    out.mkdir(parents=True, exist_ok=True)
+    recs = []
+    for eps in [None, *a.eps]:
+        for seed in a.seeds:
+            r = fed.run_federated(clients, a.unit, eps, seed=seed, q=a.q, log=log, **hp)
+            m = fed.evaluate(clients, r["raw"], return_p0=True)
+            p0_te = fed.test_p0(clients, r["raw"], r.pop("raw_test"))
+            name = f"dpfedavg_{a.unit}_eps{'inf' if eps is None else format(eps, 'g')}"
+            n = [len(c["tx_te"]) for c in clients]
+            pl.DataFrame({"tx_id": np.concatenate([c["tx_te"] for c in clients]), "bank": np.repeat([c["bank"] for c in clients], n), "mode": "one_bank",
+                          "model": name, "split": "test", "val_part": None, "p0": p0_te, "score_raw": None,
+                          "label": np.concatenate([c["yte"] for c in clients]).astype(bool), "seed": seed, "commit": cm},
+                         schema_overrides={"val_part": pl.Utf8, "score_raw": pl.Float64}).write_parquet(out / f"{name}_seed{seed}.parquet")  # fmt: skip
+            old = Path("data/scores") / a.data / "federated" / f"{name}_seed{seed}.parquet"
+            diff = None
+            private_client = a.unit == "client" and eps is not None  # the val run drew its noise from numpy's unseeded global RNG: not reproducible
+            if old.exists() and not private_client:  # the val run of this setting stored its per-row p0: the retrained model must give the same
+                o = pl.read_parquet(old).sort(["tx_id", "bank"])["p0"].to_numpy()
+                nv = pl.DataFrame({"tx_id": np.concatenate([c["tx_va"] for c in clients]), "bank": np.repeat([c["bank"] for c in clients], [len(c["tx_va"]) for c in clients]),
+                                   "p0": m["p0"]}).sort(["tx_id", "bank"])["p0"].to_numpy()
+                diff = float(np.max(np.abs(o - nv)))
+            recs.append({"setting": name, "seed": seed, "epsilon": r["epsilon"], "sigma": r["sigma"], "val_p0_max_abs_diff_vs_stored": diff, "test_rows": int(sum(n))})
+            log(f"final {name} seed {seed}: {recs[-1]}")
+    Path(f"data/runs/final_federated_{a.data}_{a.unit}.json").write_text(json.dumps({"commit": cm, "hyper": hp, "records": recs}, indent=1, default=str))
+    bad = [r for r in recs if r["val_p0_max_abs_diff_vs_stored"] is not None and r["val_p0_max_abs_diff_vs_stored"] > 1e-9]
+    if bad:
+        raise SystemExit(f"the retrained models do not reproduce the stored val p0 for {[(r['setting'], r['seed']) for r in bad]}: do not use these test scores")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
@@ -58,10 +99,13 @@ def main() -> None:
     ap.add_argument("--q", type=float, default=0.02, help="edge arm: Poisson sampling rate per client (same for all clients)")
     ap.add_argument("--banks", type=int, nargs="*", default=None)
     ap.add_argument("--save-p0", action="store_true", help="write the calibrated p0 of every val row, per setting and seed, to data/scores/<ds>/federated/")
+    ap.add_argument("--final", action="store_true", help="week 14: retrain the val run's arms and score the TEST rows (needs FTM_FINAL_RUN=1)")
     ap.add_argument("--tag", default="", help="suffix of the result json (so a partial rerun does not overwrite the full curve)")
     a = ap.parse_args()
     hp = DEFAULTS[a.unit] | {k: v for k, v in dict(rounds=a.rounds, local_steps=a.local_steps).items() if v}
     cm = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if a.final:
+        return final_run(a, hp, cm)
     clients, info = fed.load_clients(a.data, FEATURES[a.unit], a.banks, log=log)
     log(f"{len(clients)} clients, {info['n_features']} features ({FEATURES[a.unit]}), skipped {info['skipped']}")
     rows = []

@@ -127,3 +127,46 @@ def test_strata_default_is_label_free_and_locked(monkeypatch):
     assert abs((s1["bank"] == 1).mean() - (a["bank"] == 1).mean()) < 0.05
     # p0 does not depend on a label, so shuffling labels cannot change the subset
     assert alerts.stratified_subset(a.with_columns(pl.lit(0).alias("label")), n=300)["alert_id"].sort().to_list() == s1["alert_id"].sort().to_list()
+
+
+def test_frozen_alerts_and_the_final_run_are_locked_and_use_the_val_threshold(monkeypatch, tmp_path):
+    import json
+    import sys
+    from datetime import datetime
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import make_alerts
+
+    from ftm import guards
+    from ftm.baselines import gfp_gbt as g
+    from ftm.data import io
+
+    p0 = pl.DataFrame({"tx_id": [1, 2, 3, 4, 5], "bank": [7, 7, 8, 8, 7], "split": ["test"] * 5, "val_part": [None] * 5, "label": [False, True, False, True, False],
+                       "p0": [0.01, 0.5, None, 0.2, float("nan")]}, schema_overrides={"val_part": pl.Utf8})  # fmt: skip
+    t = datetime(2022, 9, 20)
+    tx = pl.DataFrame({"tx_id": [1, 2, 3, 4, 5], "timestamp": [t, t, t, t, t], "day": [13, 13, 13, 18, 14], "from_bank": [7, 7, 9, 9, 7], "to_bank": [8, 9, 8, 8, 7]})
+    f = alerts.frozen_alerts(p0.join(tx, on="tx_id"), 0.2)
+    assert f["tx_id"].to_list() == [2, 4]  # >= the threshold; null and NaN p0 are never alerts
+    assert alerts.test_alert_ids(f)["alert_id"].to_list() == ["F000000", "F000001"]
+
+    monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
+    with pytest.raises(guards.TestSplitLocked):
+        make_alerts.final_run("toy", {"bulk_days": {"toy": 16}, "targets": {}})
+    monkeypatch.setenv("FTM_FINAL_RUN", "1")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "alerts").mkdir()
+    (tmp_path / "data" / "runs").mkdir(parents=True)
+    (tmp_path / "data" / "runs" / "alerts_toy.json").write_text(json.dumps({"thresholds": {"t_alert": 0.2}, "alpha_launder_used": 0.6, "sweep": [{"alpha_launder": 0.6, "proj_test_alerts": 3.0}]}))
+    monkeypatch.setattr(io, "load_config", lambda ds: {"parquet_dir": "pq", "alerts_dir": str(tmp_path / "alerts")})
+    monkeypatch.setattr(io, "scan_transactions", lambda *a, **k: tx.lazy())
+    monkeypatch.setattr(io, "scan_patterns", lambda *a, **k: pl.DataFrame({"tx_id": [2], "attempt_id": [5], "typology": ["cycle"]}).lazy())
+    monkeypatch.setattr(io, "scan_attempts", lambda *a, **k: pl.DataFrame({"attempt_id": [5], "spans_split": [True]}).lazy())
+    monkeypatch.setattr(g, "read_p0", lambda *a, **k: p0)
+    make_alerts.final_run("toy", {"bulk_days": {"toy": 16}, "targets": {"test": [1, 5]}})
+    out = pl.read_parquet(tmp_path / "alerts" / "test.parquet")
+    assert out["alert_id"].to_list() == ["F000000", "F000001"] and out["test_tail"].to_list() == [False, True]  # day 18 is the sparse tail
+    assert out["spans_split"].to_list() == [True, False] and out["typology"].to_list() == ["cycle", None]
+    assert out["direction"].to_list() == ["out", "in"] and out["counterparty_bank"].to_list() == [9, 9]
+    rec = json.loads((tmp_path / "data" / "runs" / "alerts_toy_test.json").read_text())
+    assert rec["alerts"] == 2 and rec["bulk_alerts"] == 1 and rec["t_alert_from_val"] == 0.2
