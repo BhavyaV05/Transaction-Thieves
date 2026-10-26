@@ -198,7 +198,7 @@ def hypotheses_detail(res: dict) -> list[dict]:
 
 def table_5a(panel: Panel, w: Writer) -> list[dict]:
     items: dict[str, tuple[Scores, dict]] = {}
-    for prefer, tag in (("subset", "subset"), ("full_test", "full test")):
+    for prefer in ("subset", "full_test"):
         s = panel.try_role("ours_compose", prefer)
         if s is not None and s.key is not None and (s.key.alert_set in (prefer, "any")):
             items[f"A|ours (compose, eps 2)|-|{s.key.alert_set}"] = (s, {"group": "ours", "name": "ours_compose", "mode": "ported", "tier": "core"})
@@ -802,7 +802,10 @@ def draw_privacy_curve(plt, rows):
 
 def pareto_rows(panel: Panel) -> list[dict]:
     items = {}
+    full = {(k.system, k.variant, k.mode) for k in panel.scores if k.alert_set == "full_test"}
     for k, s in panel.scores.items():
+        if k.alert_set == "subset" and (k.system, k.variant, k.mode) in full:
+            continue  # the same arm on the full test set is plotted; its subset twin would be a second point of the same system
         items[k.label()] = s
     gaps = batch_gaps(panel, items) if items else {}
     ups = list(panel.uppers())
@@ -1044,6 +1047,32 @@ def fill_report(report_dir: Path, numbers: dict, out_dir: Path, skip: tuple[str,
     return {"filled": filled, "unfilled": unfilled}
 
 
+def index_md(panel: Panel, res: dict, w: Writer, power: str) -> str:
+    """The front page of an analysis directory: what run, how complete, the headline table, what is produced and what is not."""
+    run, man = panel.run, (panel.run.manifest if panel.run else None) or {}
+    lines = [f"# Final analysis: run {run.run_id if run else '?'} ({panel.split})", ""]
+    if run is not None and run.synthetic:
+        lines += ["**SYNTHETIC REHEARSAL. These numbers are plumbing checks, never results.**", ""]
+    if panel.split == "val":
+        lines += ["Validation dry run: the test tables are built the same way once the final run is analysed with `--split test`.", ""]
+    lines.append(f"- alerts: {len(panel.y)}, positives {int(panel.y.sum())}, clusters {panel.cluster_info['n_clusters']} "
+                 f"(largest share {panel.cluster_info['largest_share']:.3f})")  # fmt: skip
+    for k in ("git_commit", "git_commits", "freeze_sha256", "subset_sha256", "full_test_sha256"):
+        if man.get(k):
+            lines.append(f"- {k}: {man[k]}")
+    n_miss = len(run.missing_jobs) if run else 0
+    lines.append(f"- arms: {len(run.jobs) if run else 0} present, {n_miss} missing" + (" (partial run: missing arms are marked not_run below)" if n_miss else ""))
+    lines += ["", "## Hypotheses", "", md_table(hypotheses_table(res), ["hypothesis", "tier", "estimate", "95% CI", "p (Holm)", "verdict"]), "", power, ""]
+    if panel.warnings:
+        lines += ["## Warnings", ""] + [f"- {x}" for x in panel.warnings] + [""]
+    ok = [k for k, v in w.status.items() if v["status"] == "ok"]
+    lines += ["## Produced", ""] + [f"- {k}: {w.status[k].get('file') or w.status[k].get('csv')}" + (f", {w.status[k]['png']}" if w.status[k].get("png") else "") for k in ok]
+    nr = {k: v["reason"] for k, v in w.status.items() if v["status"] == "not_run"}
+    if nr:
+        lines += ["", "## Not produced", ""] + [f"- {k}: {r}" for k, r in nr.items()]
+    return "\n".join(lines) + "\n"
+
+
 # --------------------------------------------------------------------------------------------------------------------
 # orchestration
 # --------------------------------------------------------------------------------------------------------------------
@@ -1054,6 +1083,15 @@ def run_all(panel: Panel, inputs: dict, outdir: Path, figures: bool = True, outl
     res = fn.run_hypotheses(panel, inputs)
     hyp_rows = hypotheses_table(res)
     w.table("hypotheses", hyp_rows, HYP_COLS, "Pre-registered hypotheses (Holm within the primary and the secondary family; H5 and H8 exploratory, uncorrected)")
+    if panel.run is not None:
+        arms = [{"job": a.get("job_id") or f"{a.get('system')}/{a.get('variant')}", "system": a.get("system"), "variant": a.get("variant"),
+                 "alert set": a.get("alerts"), "status": a.get("status"), "alerts": a.get("n_alerts")} for a in panel.run.job_table]  # fmt: skip
+        if not arms:  # --logs without a manifest: every log is an arm
+            arms = [{"job": j.job_id or j.path.name, "system": j.system, "variant": j.variant, "alert set": j.alert_set, "status": "present", "alerts": None}
+                    for j in panel.run.jobs]  # fmt: skip
+        n_missing = len(panel.run.missing_jobs)
+        w.table("arms_status", arms, ["job", "system", "variant", "alert set", "status", "alerts"],
+                f"Arms of the run: {len(arms) - n_missing} present, {n_missing} missing (a missing arm leaves its tables and hypotheses marked not_run)")
     det = hypotheses_detail(res)
     w.table("hypotheses_components", det, ["hypothesis", "component", "estimate", "ci_lo", "ci_hi", "p", "rule_met"], "Every tested component")
     fa = (res["H4"].get("fdr_audit") or {}).get("rows")
@@ -1119,4 +1157,5 @@ def run_all(panel: Panel, inputs: dict, outdir: Path, figures: bool = True, outl
     (outdir / "numbers.json").write_text(json.dumps(numbers, indent=1, default=str), encoding="utf-8")
     (outdir / "hypotheses.json").write_text(json.dumps({h: fn._clean(r) for h, r in res.items()}, indent=1, default=str), encoding="utf-8")
     (outdir / "status.json").write_text(json.dumps(w.status, indent=1, default=str), encoding="utf-8")
+    (outdir / "index.md").write_text(index_md(panel, res, w, power), encoding="utf-8")
     return {"hypotheses": res, "numbers": numbers, "writer": w, "power": power}

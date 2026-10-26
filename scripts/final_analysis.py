@@ -2,13 +2,16 @@
 
 Owner: T4 (Shreyas).  Spec: prereg/hypotheses.yaml, plan.md 7-9, docs/t4_final_analysis.md.  Run from the repo root.
 
-    # validation dry run (writes outputs/analysis/<run_id>/ incl. fixed_on_val.json)
+    # dry run with no data at all: a synthetic world of known skills, every table and figure (never a result)
+    python scripts/final_analysis.py --synthetic --outdir outputs/analysis/synthetic
+    # validation dry run on a run directory (writes <run>/analysis/ incl. fixed_on_val.json); also fine on a partial run
+    # (MANIFEST.partial.json): missing arms are marked, their tables and hypotheses come out not_run
     python scripts/final_analysis.py --split val --run outputs/final/<run_id>
     python scripts/final_analysis.py --split val --logs outputs/runs/<id>/runlog.parquet outputs/runs/<id2>/runlog.parquet
     # the final run: the caller sets FTM_FINAL_RUN=1 (this script never sets it), and hands over what validation fixed
-    FTM_FINAL_RUN=1 python scripts/final_analysis.py --split test --run outputs/final/<run_id> --fixed outputs/analysis/<val_run>/fixed_on_val.json
+    FTM_FINAL_RUN=1 python scripts/final_analysis.py --split test --run outputs/final/<run_id> --fixed outputs/final/<val_run>/analysis/fixed_on_val.json
     # report copies with the numbers in place (never in place), unfilled placeholders listed
-    python scripts/final_analysis.py --fill docs/report --numbers outputs/analysis/<run_id>/numbers.json --out outputs/analysis/<run_id>/report_filled
+    python scripts/final_analysis.py --fill docs/report --numbers outputs/final/<run_id>/analysis/numbers.json --out outputs/final/<run_id>/analysis/report_filled
     # the alert table of configs/analysis/inputs.yaml, from T1's alert parquet and the transactions (needs data/)
     python scripts/final_analysis.py --build-alert-table hi_medium --split val --alerts-out outputs/analysis/inputs/alerts_val.parquet
 
@@ -28,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 from ftm import guards  # noqa: E402
 from ftm.eval import bootstrap as bs  # noqa: E402
 from ftm.eval import final as fn  # noqa: E402
+from ftm.eval import final_synth as synth  # noqa: E402
 from ftm.eval import final_tables as ft  # noqa: E402
 
 OUTLINE = ROOT / "docs" / "report" / "00_outline.md"
@@ -48,12 +52,14 @@ def do_fill(report: str, numbers_path: Path, out: Path, link_base: Path | None) 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--split", choices=["val", "test"], default=None)
+    ap.add_argument("--synthetic", action="store_true",
+                    help="dry run on a synthetic world of known skills (ftm/eval/final_synth.py): every table and figure, no data, no LLM, never a result")
     ap.add_argument("--run", default=None, help="run directory with MANIFEST.json (scripts/run_final.py)")
     ap.add_argument("--logs", nargs="+", default=None, help="run-log parquet files, when there is no manifest")
     ap.add_argument("--inputs", default=None, help="configs/analysis/inputs.yaml")
     ap.add_argument("--systems", default=None, help="configs/analysis/systems.yaml")
     ap.add_argument("--fixed", default=None, help="fixed_on_val.json of the validation run (required for --split test)")
-    ap.add_argument("--outdir", default=None, help="default outputs/analysis/<run_id>")
+    ap.add_argument("--outdir", default=None, help="default <run>/analysis (--run), outputs/analysis/<run_id> (--logs)")
     ap.add_argument("--n-boot", type=int, default=bs.N_BOOT)
     ap.add_argument("--seed", type=int, default=bs.SEED)
     ap.add_argument("--no-figures", action="store_true")
@@ -74,6 +80,13 @@ def main(argv=None) -> int:
         if not a.out:
             ap.error("--fill with --numbers needs --out")
         return do_fill(a.fill, Path(a.numbers), Path(a.out), Path(a.numbers).parent)
+    if a.synthetic:
+        if a.split == "test" or a.run or a.logs:
+            ap.error("--synthetic builds its own val-shaped run: no --split test, --run or --logs")
+        a.split = "val"
+        root = Path(a.outdir) if a.outdir else ROOT / "outputs" / "analysis" / "synthetic"
+        env = synth.build_run(root / "_world")
+        a.run, a.inputs, a.outdir, a.n_boot = str(env["run_dir"]), str(env["inputs"]), str(root), min(a.n_boot, 2000)
     if not a.split:
         ap.error("--split is required")
     if not a.run and not a.logs:
@@ -89,7 +102,7 @@ def main(argv=None) -> int:
         print(f"final_analysis: refusing to analyse, nothing computed.\n{e}", file=sys.stderr)
         return 2
 
-    outdir = Path(a.outdir) if a.outdir else ROOT / "outputs" / "analysis" / run.run_id
+    outdir = Path(a.outdir) if a.outdir else (Path(a.run) / "analysis" if a.run else ROOT / "outputs" / "analysis" / run.run_id)
     out = ft.run_all(panel, inputs, outdir, figures=not a.no_figures, outline=OUTLINE)
     res = out["hypotheses"]
     if a.split == "val":

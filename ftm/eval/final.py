@@ -28,7 +28,6 @@ import math
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import polars as pl
@@ -109,6 +108,9 @@ class JobSpec:
     seeds: list[int] | None = None
     sha256: str | None = None
     subset_sha256: str | None = None
+    job_id: str | None = None
+    kind: str | None = None
+    n_alerts: int | None = None
 
 
 def _first(d: dict, names, default=None):
@@ -127,24 +129,39 @@ def _norm_alert_set(v) -> str:
     return "any"
 
 
+DONE_STATUSES = {"done", "complete", "completed", "ok", "success", "finished", "present"}
+
+
 def parse_manifest(path: str | Path) -> tuple[list[JobSpec], dict]:
-    """Tolerant reader of outputs/final/<run_id>/MANIFEST.json: a list of jobs, or {"jobs": [...], run-level keys}."""
+    """Tolerant reader of outputs/final/<run_id>/MANIFEST.json (or MANIFEST.partial.json): a list of jobs, or {"jobs": [...], run keys}.
+
+    Jobs that are not done yet (status missing/pending/failed, or no run-log path) are not an error: they come back in
+    head["missing_jobs"] as {job_id, system, variant, alerts, status}, so the analysis marks those arms and goes on."""
     path = Path(path)
     raw = json.loads(path.read_text(encoding="utf-8"))
     head = {} if isinstance(raw, list) else {k: v for k, v in raw.items() if k != "jobs"}
     jobs_raw = raw if isinstance(raw, list) else _first(raw, ["jobs", "runs", "items"], [])
     if isinstance(jobs_raw, dict):
         jobs_raw = [{"name": k, **v} for k, v in jobs_raw.items()]
-    jobs = []
+    jobs, missing = [], []
     for j in jobs_raw:
         p = _first(j, ["runlog", "run_log", "runlog_path", "log", "log_path", "path", "parquet", "file"])
-        if p is None:
-            raise AnalysisInputError(f"{path}: a job has no run-log path: {j}")
+        status = str(j.get("status") or "").lower()
+        jid = _first(j, ["job_id", "name", "id"])
+        if status and status not in DONE_STATUSES or p is None:
+            missing.append({"job_id": jid, "system": j.get("system"), "variant": j.get("variant"),
+                            "alerts": _norm_alert_set(_first(j, ["alert_set", "alerts", "eval_set", "subset"])),
+                            "status": status or "no run-log path"})  # fmt: skip
+            continue
         seeds = _first(j, ["seeds", "seed"])
         seeds = None if seeds is None else [int(s) for s in (seeds if isinstance(seeds, list) else [seeds])]
-        jobs.append(JobSpec(resolve_path(p, base=path.parent) or Path(p), j.get("system"), j.get("variant"), j.get("mode"),
+        mode = j.get("mode")
+        jobs.append(JobSpec(resolve_path(p, base=path.parent) or Path(p), j.get("system"), j.get("variant"), mode,
                             _norm_alert_set(_first(j, ["alert_set", "alerts", "eval_set", "subset"])), seeds,
-                            j.get("sha256"), j.get("subset_sha256")))  # fmt: skip
+                            _first(j, ["sha256", "runlog_sha256"]), j.get("subset_sha256"), jid, j.get("kind"), j.get("n_alerts")))  # fmt: skip
+    head["missing_jobs"] = missing
+    head["job_table"] = [{"job_id": js.job_id, "system": js.system, "variant": js.variant, "alerts": js.alert_set, "status": "present",
+                          "n_alerts": js.n_alerts} for js in jobs] + [{**m} for m in missing]  # fmt: skip
     return jobs, head
 
 
@@ -158,13 +175,19 @@ class Run:
     warnings: list[str] = field(default_factory=list)
     subset_sha256: str | None = None
     subset_ids: tuple[str, ...] = ()
+    missing_jobs: list[dict] = field(default_factory=list)  # arms of the manifest that are not done yet (partial run)
+    job_table: list[dict] = field(default_factory=list)
+    synthetic: bool = False  # a rehearsal run (manifest synthetic=true): never a result, labels may sit in the logs
+    synth_labels: pl.DataFrame | None = None
 
 
-def _read_log(job: JobSpec, idx: int) -> pl.DataFrame:
+def _read_log(job: JobSpec, idx: int, keep_label: bool = False) -> pl.DataFrame:
     df = pl.read_parquet(job.path)  # time-guard: not transactions
     problems = rl.validate(df.columns, df["event"].unique().to_list() if "event" in df.columns else [])
     if problems:
         raise AnalysisInputError(f"{job.path}: {'; '.join(problems)}")
+    if keep_label and "label" in df.columns:
+        df = df.rename({"label": "_label"})  # synthetic rehearsals only: no alert table exists for them
     df = df.drop([c for c in ("label",) if c in df.columns])  # labels are attached by the analysis, never taken from a log
     fills = {"variant": "", "mode": ""}
     for c, v in fills.items():
@@ -186,6 +209,9 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
     run_id = "adhoc"
     if run_dir is not None:
         mpath = Path(run_dir) / "MANIFEST.json"
+        if not mpath.exists() and (Path(run_dir) / "MANIFEST.partial.json").exists():
+            mpath = Path(run_dir) / "MANIFEST.partial.json"  # arms finish one at a time (schedule phase C)
+            warnings.append("only MANIFEST.partial.json exists: the run is not complete, missing arms are marked")
         if mpath.exists():
             jobs, manifest = parse_manifest(mpath)
             run_id = str(manifest.get("run_id") or Path(run_dir).name)
@@ -200,8 +226,15 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
             raise AnalysisInputError("give either a run directory with a MANIFEST.json or --logs, not both")
         jobs = [JobSpec(Path(p)) for p in logs]
         run_id = run_id if run_dir is not None else "logs"
+    missing_jobs = list((manifest or {}).get("missing_jobs") or [])
     if not jobs:
-        raise AnalysisInputError("no jobs: the manifest lists none and no --logs were given")
+        raise AnalysisInputError("no jobs are done yet: the manifest lists "
+                                 + (f"{len(missing_jobs)} job(s), none with a run log" if missing_jobs else "none") + " and no --logs were given")
+    synthetic = bool((manifest or {}).get("synthetic"))
+    if missing_jobs:
+        warnings.append(f"{len(missing_jobs)} job(s) of the manifest are not done and are marked missing: "
+                        + ", ".join(str(m.get("job_id") or f"{m.get('system')}/{m.get('variant')}") for m in missing_jobs[:12])
+                        + (" ..." if len(missing_jobs) > 12 else ""))  # fmt: skip
     frames = []
     for i, j in enumerate(jobs):
         if not j.path.exists():
@@ -210,11 +243,12 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
         if j.sha256 and file_sha256(j.path).lower() != str(j.sha256).lower():
             problems.append(f"job {i} ({j.system}/{j.variant}): sha256 of {j.path.name} differs from the manifest")
             continue
-        frames.append(_read_log(j, i))
+        frames.append(_read_log(j, i, keep_label=synthetic))
     if problems:
         raise AnalysisInputError("run is incomplete:\n  - " + "\n  - ".join(problems))
     log = pl.concat(frames, how="diagonal_relaxed")
-    bad_split = log.filter(pl.col("split") != split)["split"].unique().to_list()
+    ok_splits = {split, "synthetic"} if synthetic else {split}  # a rehearsal run logs split=synthetic and is analysed like val
+    bad_split = log.filter(~pl.col("split").is_in(sorted(ok_splits)))["split"].unique().to_list()
     if bad_split:
         raise AnalysisInputError(f"--split {split} but the logs hold rows of split {bad_split}: a val analysis never reads test rows")
     if split == "test" and never_results:
@@ -241,10 +275,52 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
         if subset_hash and subset_hash != mine:
             warnings.append(f"manifest subset_sha256 {subset_hash[:12]} differs from the sha256 of the sorted alert ids found in the "
                             f"logs ({mine[:12]}); the hash definitions may differ, the alert sets themselves agree across jobs")
+    problems += _check_against_id_files(log, jobs, manifest, Path(run_dir) if run_dir is not None else None, warnings)
     if problems:
         raise AnalysisInputError("run is inconsistent:\n  - " + "\n  - ".join(problems))
+    synth_labels = None
+    if synthetic and "_label" in log.columns:
+        synth_labels = (log.filter((pl.col("event") == "verdict") & pl.col("_label").is_not_null())
+                        .group_by("alert_id").agg(pl.col("_label").first().cast(pl.Int64).alias("label"), pl.col("p0").first()))  # fmt: skip
+    if "_label" in log.columns:
+        log = log.drop("_label")
+    table = (manifest or {}).get("job_table") or []
     return Run(split, run_id, jobs, log, manifest, warnings, subset_hash or (ids_sha256(subset_ids) if subset_ids else None),
-               subset_ids)  # fmt: skip
+               subset_ids, missing_jobs, table, synthetic, synth_labels)  # fmt: skip
+
+
+def _read_ids(path: Path) -> list[str]:
+    return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+
+def _check_against_id_files(log: pl.DataFrame, jobs: list[JobSpec], manifest: dict | None, run_dir: Path | None, warnings: list[str]) -> list[str]:
+    """MANIFEST subset_ids_path / full_test_ids_path (relative to the run dir): their hashes must be the manifest's, and every subset
+    job must have run exactly the frozen subset (and every full_test job exactly the full test set)."""
+    out: list[str] = []
+    if not manifest or run_dir is None:
+        return out
+    for key, hkey, kind in (("subset_ids_path", "subset_sha256", "subset"), ("full_test_ids_path", "full_test_sha256", "full_test")):
+        rel = manifest.get(key)
+        if not rel:
+            continue
+        f = Path(rel) if Path(rel).is_absolute() else run_dir / rel
+        if not f.exists():
+            warnings.append(f"manifest {key} {rel} not found: the {kind} alert set could not be checked against the frozen ids")
+            continue
+        ids = _read_ids(f)
+        if manifest.get(hkey) and ids_sha256(ids) != manifest[hkey]:
+            out.append(f"{rel} does not hash to the manifest's {hkey} ({ids_sha256(ids)[:12]} vs {str(manifest[hkey])[:12]})")
+            continue
+        want = set(ids)
+        inj = set(log.filter(pl.col("injection_id").is_not_null())["_job"].unique().to_list()) if "injection_id" in log.columns else set()
+        for i, j in enumerate(jobs):
+            if j.alert_set != kind or i in inj:  # injection jobs run on their own attack items, not on test alerts
+                continue
+            got = set(log.filter((pl.col("_job") == i) & (pl.col("event") == "verdict"))["alert_id"].to_list())
+            if got != want:
+                out.append(f"job {i} ({j.job_id or j.system}): its {len(got)} alerts are not the frozen {kind} ids ({len(want)}): "
+                           f"{len(want - got)} missing, {len(got - want)} extra")  # fmt: skip
+    return out
 
 
 def _check_jobs(log: pl.DataFrame, jobs: list[JobSpec]) -> list[str]:
@@ -265,10 +341,9 @@ def _check_jobs(log: pl.DataFrame, jobs: list[JobSpec]) -> list[str]:
         if jv.is_empty():
             out.append(f"job {i} ({j.system}/{j.variant}): its run log has no verdict rows")
             continue
-        if j.system and j.system not in set(jv["system"].to_list()):
-            out.append(f"job {i}: expected system {j.system!r}, the log holds {sorted(set(jv['system'].to_list()))}")
-        if j.variant is not None and j.variant != "" and j.variant not in set(jv["variant"].to_list()):
-            out.append(f"job {i}: expected variant {j.variant!r}, the log holds {sorted(set(jv['variant'].to_list()))}")
+        # the manifest names are the plan's (e.g. system ours, variant compose); the logs' own columns are what is analysed
+        if j.n_alerts is not None and jv["alert_id"].n_unique() != int(j.n_alerts):
+            out.append(f"job {i} ({j.job_id or j.system}): manifest n_alerts {j.n_alerts} but the log has {jv['alert_id'].n_unique()} alerts with a verdict")
         if j.seeds is not None and set(j.seeds) != set(jv["seed"].to_list()):
             out.append(f"job {i} ({j.system}/{j.variant}): manifest seeds {sorted(j.seeds)} but the log has {sorted(set(jv['seed'].to_list()))}")
         # every (system, variant, seed) of the job must cover the same alerts
@@ -568,7 +643,7 @@ class Panel:
     def pick(self, sel: dict, label: str, prefer: str | None = None) -> Scores:
         found = select_keys(self.scores, sel)
         if not found:
-            raise Missing(f"role {label}: no run-log rows match {json.dumps(sel)}")
+            raise Missing(f"role {label}: no run-log rows match {json.dumps(sel)}{self._pending_hint(sel)}")
         combos = {(k.system, k.variant, k.mode) for k in found}
         if len(combos) > 1:
             raise Missing(f"role {label}: ambiguous, {json.dumps(sel)} matches {sorted('/'.join(c) for c in combos)}; narrow the selector in systems.yaml")
@@ -577,6 +652,18 @@ class Panel:
             if want in by_set:
                 return self.scores[by_set[want]]
         raise Missing(f"role {label}: no usable alert set among {sorted(by_set)}")
+
+    def _pending_hint(self, sel: dict) -> str:
+        """For a partial run: name the manifest jobs that are not done and could be this arm."""
+        miss = (self.run.missing_jobs if self.run else None) or []
+        if not miss:
+            return ""
+        pats = sel.get("system") if isinstance(sel.get("system"), list) else [sel.get("system")]
+        toks = [str(x).replace("*", "") for x in pats if x]
+        hits = [m for m in miss if not toks or any(t and t in f"{m.get('job_id')} {m.get('system')}" for t in toks)]
+        if not hits:
+            return ""
+        return " (pending arm: manifest job " + ", ".join(str(m.get("job_id") or m.get("system")) for m in hits[:4]) + " is not done yet)"
 
     def try_role(self, role: str, prefer: str | None = None) -> Scores | None:
         try:
@@ -641,7 +728,10 @@ def build_panel(run: Run, inputs: dict, systems: dict, fixed_path: str | Path | 
     try:
         alerts = load_alerts(inputs, split, "headline")
     except Missing as e:
-        raise AnalysisInputError(str(e)) from e
+        if run.synthetic and run.synth_labels is not None:  # a rehearsal run has no alert table: its labels sit in its own logs
+            alerts = run.synth_labels.with_columns(pl.lit(None).alias("attempt_id"), pl.lit(None).alias("src_id"), pl.lit(None).alias("dst_id")).sort("alert_id")
+        else:
+            raise AnalysisInputError(str(e)) from e
     fixed = load_fixed(fixed_path or inputs.get("fixed_on_val"))
     if split == "test" and not fixed:
         raise AnalysisInputError("--split test needs the values fixed on validation (fixed_on_val.json from a --split val run): "
