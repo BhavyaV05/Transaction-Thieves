@@ -1,0 +1,130 @@
+# Which run-log rows play which role in the pre-registered tests. Read by ftm/eval/final.py (scripts/final_analysis.py).
+# Owner: T4 (Shreyas).  Spec: prereg/hypotheses.yaml, prereg/external_list.yaml, plan.md 7.
+#
+# A selector matches the run-log columns `system`, `variant`, `mode` and the manifest's `alert_set` (subset | full_test).
+# Each field is a glob string or a list of globs; a missing field matches anything. A role must match exactly one
+# (system, variant, mode) combination in the run, otherwise the role is reported as missing/ambiguous and every
+# hypothesis that needs it is `not_run` with that reason (never skipped silently).
+# `{source: name}` means "not a run log": the per-alert probabilities come from `scores.<name>` in inputs.yaml.
+#
+# How the names are produced today (read off the code, 2026-10-25):
+#   ours / LLM ablations   scripts/run_llm_agent.py --system planner --mode <m>: system = ours_<m>
+#                          (ours_compose, ours_fixed_list, ours_act_only, ours_no_backtest, ours_llm_decides), variant = harness
+#   non-LLM planners       ftm/orchestrator/ablations.py: system = random | fixed | eig | learned | enumerator, variant = the arm
+#                          name of configs/experiments/ablations_nonllm.yaml (random, fixed_order, eig, learned_policy, enumerator,
+#                          eig_eps_0.5, eig_batched_2_1, ...)
+#   external agents        run_llm_agent.py --system <name>: system = the registry key (react, ..., debate, sharma_native, ...),
+#                          mode = native | ported, variant = harness
+# Names that no code writes yet (raw-share run-log system, eps variants of the LLM system, evidence views, injection
+# checker on/off) are ASSUMED here and listed as open questions in docs/t4_final_analysis.md.
+
+version: 1
+
+roles:
+  # ---- ours and its LLM-side ablations (Table 5b, H1-H4, H7)
+  ours_compose:   {system: ours_compose,     variant: [harness]}
+  llm_fixed_list: {system: ours_fixed_list,  variant: [harness]}
+  llm_act_only:   {system: ours_act_only,    variant: [harness]}
+  no_backtest:    {system: ours_no_backtest, variant: [harness]}
+  llm_decides:    {system: ours_llm_decides, variant: [harness]}
+  # ---- non-LLM planners (H3)
+  random:         {system: random,     variant: [random, harness]}
+  fixed_order:    {system: fixed,      variant: [fixed_order, harness]}
+  eig:            {system: eig,        variant: [eig, harness]}
+  learned:        {system: learned,    variant: [learned_policy, harness]}
+  enumerator:     {system: enumerator, variant: [enumerator, harness]}
+  # ---- the raw-sharing arm (H2): ASSUMED name, no code writes a run log for it yet
+  raw_share:      {system: raw_share,  variant: [raw_share, harness]}
+  # ---- upper limits and other score tables (per-alert probabilities from inputs.yaml)
+  gfp_see_everything:       {source: gfp_see_everything}
+  best_sota_see_everything: {source: best_sota_see_everything}
+  dp_fedavg:                {source: dp_fedavg}
+  # ---- E13 (H8), E8 (H6): arms of the same planner
+  async_sequential: {system: eig, variant: [eig]}
+  async_batched:    {system: eig, variant: [eig_batched_2_1]}
+  evidence_scorer_pcst: {system: ours_compose, variant: [harness_view_scorer_pcst]}   # ASSUMED
+  evidence_top40:       {system: ours_compose, variant: [harness_view_top40]}         # ASSUMED
+
+# the simple planners; best_simple_planner is the best of these on validation (fixed in fixed_on_val.json)
+simple_planners: [random, fixed_order, eig, learned]
+
+# Table 5b rows beyond the roles above. group -> report placeholder: planners/llm = planner_comparison, e16 = ft_planner,
+# e11 = library_shape, e14 = shuffled/robustness, fusion = fusion_calibration, backtest/views/switches = tab_5b only.
+table_5b:
+  - {group: reference, label: "One bank only",                      role: one_bank}
+  - {group: reference, label: "See everything (GFP)",               role: gfp_see_everything}
+  - {group: reference, label: "See everything (best SOTA)",         role: best_sota_see_everything}
+  - {group: raw,       label: "Share raw records (3 banks, no noise)", role: raw_share}
+  - {group: planners,  label: "Random planner",                     role: random}
+  - {group: planners,  label: "Fixed-order planner",                role: fixed_order}
+  - {group: planners,  label: "EIG planner",                        role: eig}
+  - {group: planners,  label: "Learned policy",                     role: learned}
+  - {group: planners,  label: "Enumerator (no LLM)",                role: enumerator}
+  - {group: llm,       label: "LLM, fixed list",                    role: llm_fixed_list}
+  - {group: llm,       label: "LLM, act only",                      role: llm_act_only}
+  - {group: llm,       label: "LLM, compose (ours, eps 2)",         role: ours_compose}
+  - {group: backtest,  label: "No back-testing",                    role: no_backtest}
+  - {group: backtest,  label: "LLM decides",                        role: llm_decides}
+  - {group: backtest,  label: "Realistic vs exact back-test LRs",   select: {system: eig, variant: [eig_exact_label_lrs]}}
+  - {group: views,     label: "Evidence view: top 40 by amount",    role: evidence_top40}
+  - {group: views,     label: "Evidence view: scorer + PCST",       role: evidence_scorer_pcst}
+  - {group: e16,       label: "Fine-tuned planner (E16)",           select: {system: ours_compose, variant: [harness_finetuned]}}          # ASSUMED
+  - {group: e16,       label: "Same model prompted (E16)",          select: {system: ours_compose, variant: [harness_prompted_student]}}   # ASSUMED
+  - {group: e16,       label: "Teacher (E16)",                      select: {system: ours_compose, variant: [harness_teacher]}}            # ASSUMED
+  - {group: e11,       label: "Library by shape, frozen",           select: {system: ours_compose, variant: [harness_lib_shape_frozen]}}   # ASSUMED
+  - {group: e11,       label: "Library by account",                select: {system: ours_compose, variant: [harness_lib_account]}}        # ASSUMED
+  - {group: e11,       label: "Library by shape, continual",        select: {system: ours_compose, variant: [harness_lib_shape_continual]}}  # ASSUMED
+  - {group: fusion,    label: "Summed log-LRs (naive fusion)",      select: {system: eig, variant: [eig]}}
+  - {group: fusion,    label: "Fitted fusion, shared weight",       select: {system: eig, variant: [eig_fusion_shared]}}
+  - {group: fusion,    label: "Fitted fusion, per family",          select: {system: eig, variant: [eig_fusion_per_family]}}
+  - {group: switches,  label: "Per-account cap 8",                  select: {system: eig, variant: [eig_cap_8]}}
+  - {group: switches,  label: "Per-account cap 2",                  select: {system: eig, variant: [eig_cap_2]}}
+  - {group: switches,  label: "Question repeated within family",    select: {system: eig, variant: [eig_repeat_family]}}
+  - {group: switches,  label: "Stop rule at 0.3",                   select: {system: eig, variant: [eig_stop_rule]}}
+  - {group: switches,  label: "Batched 2 then 1 (E13)",             role: async_batched}
+  - {group: switches,  label: "20% declines",                       select: {system: eig, variant: [eig_decline_20]}}
+  - {group: switches,  label: "50% declines",                       select: {system: eig, variant: [eig_decline_50]}}
+  - {group: switches,  label: "20% timeouts",                       select: {system: eig, variant: [eig_timeout_20]}}
+
+# E2: the privacy-detection curve. One list per arm; `eps` is the per-alert budget (inf = no noise).
+# ASSUMED names for the LLM system's eps variants.
+eps_curve:
+  ours:
+    - {eps: 0.5, select: {system: ours_compose, variant: [harness_eps0.5]}}
+    - {eps: 1.0, select: {system: ours_compose, variant: [harness_eps1]}}
+    - {eps: 2.0, role: ours_compose}
+    - {eps: 4.0, select: {system: ours_compose, variant: [harness_eps4]}}
+    - {eps: inf, select: {system: ours_compose, variant: [harness_eps_inf]}}
+  eig:
+    - {eps: 0.5, select: {system: eig, variant: [eig_eps_0.5]}}
+    - {eps: 1.0, select: {system: eig, variant: [eig_eps_1]}}
+    - {eps: 2.0, role: eig}
+    - {eps: 4.0, select: {system: eig, variant: [eig_eps_4]}}
+  raw_share:
+    - {eps: inf, role: raw_share}
+
+# External agents of prereg/external_list.yaml (Table 5a, H9). `native`/`ported` are selectors; `debate_autogen` runs as `debate`.
+externals:
+  torres:          {group: C, tier: core,      native: {system: torres_native},          ported: {system: torres_ported}}
+  sharma:          {group: C, tier: core,      native: {system: sharma_native},          ported: {system: sharma_ported}}
+  co_investigator: {group: C, tier: secondary, native: {system: co_investigator_native}, ported: {system: co_investigator_ported}}
+  finfre_rag:      {group: C, tier: secondary, native: {system: finfre_rag_native},      ported: {system: finfre_rag_ported}}
+  react:           {group: D, tier: core,      ported: {system: react}}
+  reflexion:       {group: D, tier: core,      ported: {system: reflexion}}
+  rewoo:           {group: D, tier: core,      ported: {system: rewoo}}
+  lats:            {group: D, tier: secondary, ported: {system: lats}}
+  llmcompiler:     {group: D, tier: secondary, ported: {system: llmcompiler}}
+  dspy_react:      {group: D, tier: secondary, ported: {system: dspy_react}}
+  debate_autogen:  {group: D, tier: secondary, ported: {system: debate}}
+  uot:             {group: D, tier: secondary, ported: {system: uot}}
+  bed_llm:         {group: D, tier: secondary, ported: {system: bed_llm}}
+
+# Variants that are never results (devtools = random answers, harness_mock = mock banks): refused on --split test.
+never_results: [devtools, harness_mock, synthetic]
+
+# E15: how injected-note runs are told apart and scored (ftm/safety/injection.py ids "<type>-<nnn>" / "benign-<nnn>").
+injection:
+  checker_on:  ["*_checker", "*with_checker*"]            # ASSUMED variant names
+  checker_off: ["*_nochecker", "*no_checker*", "*without_checker*"]
+  low_probability: 0.05            # clear / finish_low: verdict at most this AND below p0, with no question after the note
+  stop_reasons_for_stop: [finish, fast_clear, cannot_cross]   # stop goal: a voluntary stop right after the note
