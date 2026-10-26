@@ -25,7 +25,11 @@ class BudgetExceeded(RuntimeError):
 
 
 class PromptTooLong(ValueError):
-    """The prompt is over Limits.max_tokens."""
+    """The prompt is over Limits.max_tokens. `server_tokens`: the server's own count, when the call was made."""
+
+    def __init__(self, msg: str, server_tokens: int | None = None):
+        super().__init__(msg)
+        self.server_tokens = server_tokens
 
 
 def estimate_tokens(text: str) -> int:
@@ -73,5 +77,6 @@ class BudgetedClient:
         u.calls.append({"tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out, "latency_s": resp.latency_s})
         if resp.tokens_in > self.limits.max_tokens:
             # counted (the call happened) but refused, so no system profits from an over-long prompt
-            raise PromptTooLong(f"{self.tag}: server counted {resp.tokens_in} prompt tokens > cap {self.limits.max_tokens}")
+            raise PromptTooLong(f"{self.tag}: server counted {resp.tokens_in} prompt tokens > cap {self.limits.max_tokens}",
+                                server_tokens=resp.tokens_in)
         return resp

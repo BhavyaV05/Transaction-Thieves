@@ -315,11 +315,20 @@ def _output_spec(mode: Mode, state: PlannerState, dsl: DslAdapter) -> str:
     return "\n".join(lines)
 
 
-def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int) -> list[dict]:
+def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int,
+                   token_scale: float = 1.0) -> list[dict]:
     """The chat messages for one step, trimmed to fit `max_prompt_tokens` (Limits.max_tokens).
 
     Trimming order when over the cap: oldest evidence rows first, then strategies, then the question list tail.
     """
+    return build_messages_with_estimate(mode, state, dsl, max_prompt_tokens, token_scale)[0]
+
+
+def build_messages_with_estimate(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int,
+                                 token_scale: float = 1.0) -> tuple[list[dict], int]:
+    """`build_messages` plus the unscaled token estimate of what it returns. `token_scale` multiplies the estimate in
+    the trim loop: the planner sets it to (server count / estimate) after the server counts a prompt over the cap, since
+    the estimate is fitted on Qwen tokenizers and Gemma 4 counts about 5% more (docs/t3_e8.md)."""
     evidence = state.evidence_text.splitlines()
     strategies = list(state.strategies)
     questions = list(state.questions)
@@ -355,7 +364,7 @@ def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_
         return estimate_messages(msgs) + math.ceil(sum(len(r) + 1 for r in evidence) * EVIDENCE_EXTRA_TOKENS_PER_CHAR)
 
     msgs = render()
-    while tokens() > max_prompt_tokens:
+    while math.ceil(token_scale * tokens()) > max_prompt_tokens:
         if len(evidence) > 1:
             evidence = evidence[max(1, len(evidence) // 8):]  # drop the oldest ~1/8, keep the newest
             evidence[0] = "(older evidence rows omitted to fit the prompt cap)\n" + evidence[0]
@@ -366,7 +375,7 @@ def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_
         else:
             raise PlannerParseError(f"prompt cannot fit {max_prompt_tokens} tokens even after trimming")
         msgs = render()
-    return msgs
+    return msgs, tokens()
 
 
 def parse_action(text: str, mode: Mode, state: PlannerState) -> PlannerAction:
