@@ -86,6 +86,31 @@ def test_every_citation_has_a_reference():
     assert not problems, "citations without a references.md entry: " + "; ".join(problems)
 
 
+def test_every_citation_in_every_section_file_has_a_reference():
+    """Sections 3-11 and the abstract are written by several owners; every [n] they cite must resolve."""
+    known = set(_reference_numbers())
+    section_files = [
+        p for p in _report_files() if re.match(r"^(0[0-9]|1[01])_", p.name) and p.name != "00_outline.md"
+    ]
+    problems = []
+    for path in section_files:
+        used = set()
+        for m in CITE_RE.finditer(path.read_text(encoding="utf-8")):
+            used |= _expand(m.group(1))
+        missing = sorted(used - known)
+        if missing:
+            problems.append(f"{path.name}: {missing}")
+    assert not problems, "citations without a references.md entry: " + "; ".join(problems)
+
+
+def test_presentation_outline_exists_and_uses_known_placeholders():
+    path = REPORT.parent / "presentation" / "outline.md"
+    assert path.is_file()
+    ids = _numbers_table_ids()
+    unknown = {m.group(1) for m in PLACEHOLDER_RE.finditer(path.read_text(encoding="utf-8"))} - ids
+    assert not unknown, f"presentation placeholders missing from the numbers table: {sorted(unknown)}"
+
+
 def _numbers_table_ids() -> set[str]:
     """Ids defined in the 'Numbers and figures the report needs' table of 00_outline.md."""
     text = _read("00_outline.md")
