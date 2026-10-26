@@ -28,6 +28,7 @@ from pathlib import Path
 import polars as pl
 
 from ftm.eval.runlog import validate as validate_runlog_columns
+from ftm.final import t1
 from ftm.final.plan import FULL, SUBSET, Job
 
 MANIFEST_VERSION = 1
@@ -75,16 +76,19 @@ def git_commit(repo: Path) -> str:
 # -- the frozen alert sets ---------------------------------------------------------------------------------
 def build_subset(run_dir: Path, test_alerts: pl.DataFrame, rule: dict, draw: Callable[..., pl.DataFrame], *, data: str,
                  commit: str, synthetic: bool = False) -> dict:  # fmt: skip
-    """Draw the subset from `test_alerts` (columns alert_id, bank, p0; no labels needed) with `draw` (the stratified
-    rule: n, seed, strata), write subset.json and the id files. If subset.json already exists the new draw must hash
-    identically: a second machine (or a resumed run) can never silently use another subset."""
+    """Draw the subset from the bulk days of `test_alerts` (columns alert_id, bank, p0, test_tail; no labels needed) with `draw`
+    (the stratified rule: n, seed, strata), write subset.json and the id files. Decision 4 of docs/t4_decisions_week2.md: the
+    headline is the bulk days, so the pool is `alerts.filter(~pl.col("test_tail"))`; the full test set keeps the tail days (they are
+    reported separately). If subset.json already exists the new draw must hash identically: a second machine (or a resumed run)
+    can never silently use another subset."""
     full_ids = sorted(str(i) for i in test_alerts["alert_id"].to_list())
     if len(set(full_ids)) != len(full_ids):
         raise ValueError("test alert ids are not unique")
-    sub = draw(test_alerts.select("alert_id", "bank", "p0"), n=rule["n"], seed=rule["seed"], strata=rule["strata"])
+    pool = test_alerts.filter(~pl.col("test_tail")) if "test_tail" in test_alerts.columns else test_alerts
+    sub = draw(pool.select("alert_id", "bank", "p0"), n=rule["n"], seed=rule["seed"], strata=rule["strata"])
     sub_ids = sorted(str(i) for i in sub["alert_id"].to_list())
     info = {"version": 1, "synthetic": synthetic, "data": data, "rule": rule, "n_subset": len(sub_ids),
-            "subset_sha256": ids_sha256(sub_ids), "n_full_test": len(full_ids), "full_test_sha256": ids_sha256(full_ids),
+            "pool": "bulk days (~test_tail)", "n_pool": pool.height, "subset_sha256": ids_sha256(sub_ids), "n_full_test": len(full_ids), "full_test_sha256": ids_sha256(full_ids),
             "subset_ids": "subset_ids.txt", "full_test_ids": "full_test_ids.txt", "commit": commit}  # fmt: skip
     f = run_dir / "subset.json"
     if f.exists():
@@ -100,10 +104,14 @@ def build_subset(run_dir: Path, test_alerts: pl.DataFrame, rule: dict, draw: Cal
     return info
 
 
-def manifest_line(info: dict, run_id: str) -> str:
+def manifest_note(info: dict, run_id: str) -> str:
     r = info["rule"]
-    return (f"subset_sha256: {info['subset_sha256']}  # run {run_id}; n={info['n_subset']} seed={r['seed']} strata={r['strata']}; "
+    return (f"run {run_id}; n={info['n_subset']} seed={r['seed']} strata={r['strata']}; pool=bulk days; "
             f"test alerts={info['n_full_test']} full_test_sha256={info['full_test_sha256']}")
+
+
+def manifest_line(info: dict, run_id: str) -> str:
+    return f"subset_sha256: {info['subset_sha256']}  # {manifest_note(info, run_id)}"
 
 
 def alert_file(run_dir: Path, info: dict, alerts: str) -> tuple[Path, str]:
@@ -392,7 +400,8 @@ def check_parity(metas: dict[str, dict], allow_mixed_commits: bool = False) -> l
     return commits
 
 
-def write_manifest(run_dir: Path, jobs: list[Job], ctx: Ctx, *, name: str = "MANIFEST.json", allow_mixed_commits: bool = False) -> dict:
+def write_manifest(run_dir: Path, jobs: list[Job], ctx: Ctx, *, name: str = "MANIFEST.json", allow_mixed_commits: bool = False,
+                   t1_steps: list | None = None) -> dict:  # fmt: skip
     """MANIFEST.json (all jobs done) or MANIFEST.partial.json: every job, its run-log path (relative to the run dir) and
     its sha256. The analysis script loads exactly these files."""
     metas, rows, missing = {}, [], []
@@ -409,12 +418,17 @@ def write_manifest(run_dir: Path, jobs: list[Job], ctx: Ctx, *, name: str = "MAN
                      "runlog_sha256": m["runlog_sha256"], "n_alerts": m["counts"]["n_alerts_with_verdict"],
                      "n_expected": m["counts"]["n_expected"], "model": m.get("model"), "git_commit": m["git_commit"]})  # fmt: skip
     commits = check_parity(metas, allow_mixed_commits) if metas else []
+    t1_rows = t1.manifest_rows(run_dir, t1_steps or [])
+    missing += t1.missing_required(run_dir, t1_steps or [])
+    commits = sorted({*commits, *(r["git_commit"] for r in t1_rows if r["status"] == "done" and r["git_commit"])})
+    if len(commits) > 1 and not allow_mixed_commits:
+        raise ParityError(f"jobs and T1 steps ran at different commits {commits}; rerun them or pass --allow-mixed-commits")
     s = ctx.subset
     man = {"manifest_version": MANIFEST_VERSION, "run_id": ctx.run_id, "synthetic": ctx.synthetic, "complete": not missing,
-           "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "git_commits": commits, "freeze_sha256": ctx.freeze_sha256,
+           "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "git_commit": commits[0] if len(commits) == 1 else None, "git_commits": commits, "freeze_sha256": ctx.freeze_sha256,
            "data": ctx.data, "subset_sha256": s["subset_sha256"], "full_test_sha256": s["full_test_sha256"],
            "n_subset": s["n_subset"], "n_full_test": s["n_full_test"], "subset_ids_path": s["subset_ids"],
-           "full_test_ids_path": s["full_test_ids"], "missing": missing, "jobs": rows}  # fmt: skip
+           "full_test_ids_path": s["full_test_ids"], "missing": missing, "jobs": rows, "t1_steps": t1_rows}  # fmt: skip
     if name == "MANIFEST.json" and missing:
         raise RuntimeError(f"cannot write MANIFEST.json: {len(missing)} jobs are not done: {missing[:5]}")
     write_json(run_dir / name, man)

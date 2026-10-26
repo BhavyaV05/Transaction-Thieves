@@ -64,11 +64,25 @@ def check_hashes_match(p: Paths) -> list[str]:
     return problems
 
 
+def _only_subset_sha_changed(p: Paths, rel: str) -> bool:
+    """prereg/subset_manifest.txt differs from HEAD in its `subset_sha256:` line only (written by a run of this script)."""
+    try:
+        head = subprocess.check_output(["git", "show", f"HEAD:{rel}"], cwd=p.repo, stderr=subprocess.DEVNULL)
+        now = (p.repo / rel).read_bytes()
+    except Exception:  # noqa: BLE001
+        return False
+    return fz.normalized_bytes(fz.SUBSET_MANIFEST, head) == fz.normalized_bytes(fz.SUBSET_MANIFEST, now)
+
+
 def check_tree_clean(p: Paths) -> list[str]:
+    """No tracked change and no untracked file. The one tolerated change: the `subset_sha256:` line of subset_manifest.txt,
+    which a run fills in (it is not part of the freeze hash), so a resumed run is not refused for its own record."""
     try:
         out = fz.git(p.repo, "status", "--porcelain")
+        rel = (p.prereg.resolve().relative_to(p.repo.resolve()) / fz.SUBSET_MANIFEST).as_posix()
     except Exception as e:  # noqa: BLE001
         return [f"git status failed: {e}"]
+    out = "\n".join(ln for ln in out.splitlines() if not (ln.split(None, 1)[-1].strip() == rel and _only_subset_sha_changed(p, rel)))
     return [f"working tree is not clean ({len(out.splitlines())} paths): commit or remove them", *out.splitlines()[:10]] if out else []
 
 

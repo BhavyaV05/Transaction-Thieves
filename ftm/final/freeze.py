@@ -80,12 +80,43 @@ def write_freeze(repo: Path, prereg_dir: Path, ta_ack_hash: str | None = None) -
     """Create prereg/FREEZE.json for the current commit. Refuses a dirty tree (the commit must hold the frozen files);
     the only exception is FREEZE.json itself, which is what is being (re)written."""
     me = (Path(prereg_dir).resolve().relative_to(Path(repo).resolve()) / FREEZE_FILE).as_posix()
-    dirty = [ln for ln in git(repo, "status", "--porcelain").splitlines() if ln[3:].strip() != me]
+    dirty = [ln for ln in git(repo, "status", "--porcelain").splitlines() if ln.split(None, 1)[-1].strip() != me]  # git() strips the first line's leading space
     if dirty:
         raise RuntimeError("working tree is not clean; commit the prereg files first:\n" + "\n".join(dirty))
     fr = build_freeze(repo, prereg_dir, ta_ack_hash)
     (Path(prereg_dir) / FREEZE_FILE).write_text(json.dumps(fr, indent=2) + "\n", encoding="utf-8")
     return fr
+
+
+def subset_sha_line(prereg_dir: Path) -> str | None:
+    """The current `subset_sha256:` line of subset_manifest.txt, or None if there is none."""
+    f = Path(prereg_dir) / SUBSET_MANIFEST
+    for line in f.read_text(encoding="utf-8").splitlines() if f.exists() else []:
+        if _SUBSET_HASH_LINE.match(line):
+            return line
+    return None
+
+
+def write_subset_sha(prereg_dir: Path, sha: str, note: str) -> bool:
+    """Fill the `# subset_sha256:` line of prereg/subset_manifest.txt (T4's file) with the sha256 of the sorted subset ids. That line
+    is not part of the freeze hash, and no other line is touched (rule_commit stays as it is). A placeholder is replaced; the same
+    hash again is a no-op (returns False); a different hash already recorded raises, because the subset is frozen once."""
+    f = Path(prereg_dir) / SUBSET_MANIFEST
+    lines = f.read_text(encoding="utf-8").splitlines()
+    new = f"# subset_sha256: {sha}  # {note}"
+    for i, line in enumerate(lines):
+        if _SUBSET_HASH_LINE.match(line):
+            have = line.split(":", 1)[1].strip().split()[0] if line.split(":", 1)[1].strip() else ""
+            if re.fullmatch(r"[0-9a-f]{64}", have):
+                if have == sha:
+                    return False
+                raise RuntimeError(f"{f.name} already records subset_sha256 {have}; this run drew {sha}. The subset is frozen once")
+            lines[i] = new
+            break
+    else:
+        lines.append(new)
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
 
 
 def record_ta_hash(prereg_dir: Path, sent_hash: str) -> dict:

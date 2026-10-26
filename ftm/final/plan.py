@@ -40,7 +40,9 @@ DEFAULTS = {
             "endpoint": None, "model": None, "serving_stack": None},
     "ours": {"variants": list(OUR_VARIANTS), "extra_variants": []},
     "test_alerts": {"path": "data/alerts/{data}/test.parquet", "cmd": None},
-    "external_cmd": {"templates": {}, "commands": {}, "machine_class": {}, "est_hours": {}, "default_est_hours": 0.5},
+    "external_cmd": {"templates": {}, "commands": {}, "machine_class": {}, "est_hours": {}, "default_est_hours": 0.5,
+                     "detection_est_hours": 0.1},  # T1's models are computed by the t1_final steps; this job only writes their run log
+    "t1_final": {"steps": []},
     "extra_jobs": [],
 }
 
@@ -121,7 +123,8 @@ def build_plan(ext: dict, cfg: dict, ablations: dict | None, top_external: list[
         jid = f"{system}.{variant}.{alerts}"
         base = f"{system}.{variant}"
         mc = ec["machine_class"].get(jid) or ec["machine_class"].get(base) or default_machine
-        est = float(ec["est_hours"].get(jid, ec["est_hours"].get(base, ec["default_est_hours"])))
+        default = ec["detection_est_hours"] if template == "detection" else ec["default_est_hours"]
+        est = float(ec["est_hours"].get(jid, ec["est_hours"].get(base, default)))
         return Job(jid, system, variant, "external_cmd", alerts, seeds, mc, est, group=group, tier=tier, owner=owner,
                    cmd=cmd_for(jid, template))  # fmt: skip
 

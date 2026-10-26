@@ -20,6 +20,7 @@ from ftm.final import freeze as fz
 from ftm.final import plan as fp
 from ftm.final import preflight as pf
 from ftm.final import runner as rn
+from ftm.final import t1
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,8 +38,10 @@ freeze_script = load_script("freeze_prereg")
 
 @pytest.fixture(autouse=True)
 def lock_closed(monkeypatch):
-    """Whatever a test (or main()) sets, the environment is restored afterwards."""
+    """Whatever a test (or main()) sets, the environment is restored afterwards. T1's entry-point check needs the real data/ and
+    models/ (it is exercised in tests/test_t1_final_check.py); here it passes."""
     monkeypatch.setenv(guards.FINAL_RUN_ENV, "0")
+    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True: [])
     yield
     # monkeypatch undoes the setenv after this point; nothing else may leak
 
@@ -299,7 +302,8 @@ def test_job_commands_and_test_alert_source_checks(tmp_path):
 def write_test_alerts(path, n=300):
     path.parent.mkdir(parents=True, exist_ok=True)
     pl.DataFrame({"alert_id": [f"E{i:05d}" for i in range(n)], "bank": [i % 3 for i in range(n)],
-                  "p0": [((i * 37) % n) / n for i in range(n)], "label": [i % 2 for i in range(n)]}).write_parquet(path)
+                  "p0": [((i * 37) % n) / n for i in range(n)], "label": [i % 2 for i in range(n)],
+                  "test_tail": [i >= n * 9 // 10 for i in range(n)]}).write_parquet(path)  # the last tenth: sparse tail days
 
 
 WRITER = """
@@ -359,34 +363,44 @@ def test_lock_is_set_only_after_the_preflight_passes(world, tmp_path, capsys, mo
     run = tmp_path / "out" / "g5"
     info = json.loads((run / "subset.json").read_text())
     assert info["n_subset"] == 40 and info["n_full_test"] == 300 and info["rule"]["strata"] == "bank_p0_decile"
+    assert info["n_pool"] == 270  # the subset is drawn from the bulk days only
+    tail = {f"E{i:05d}" for i in range(270, 300)}
+    assert not tail & set(rn.read_ids(run / "subset_ids.txt")) and tail <= set(rn.read_ids(run / "full_test_ids.txt"))
     assert (run / "multi_gnn.one_bank.subset" / "done").exists()
     out = capsys.readouterr().out
-    assert "subset_sha256: " + info["subset_sha256"] in out and "brier" not in out.lower()
+    assert info["subset_sha256"] in out and "brier" not in out.lower()
+    # the sha256 is in prereg/subset_manifest.txt (its own line only), the freeze still holds, and a resumed run is not refused
+    text = (paths.prereg / "subset_manifest.txt").read_text()
+    assert f"# subset_sha256: {info['subset_sha256']}" in text and text.replace(
+        next(ln for ln in text.splitlines() if "subset_sha256" in ln), "# subset_sha256: (filled at G5)") == SUBSET_RULE
+    assert pf.check_hashes_match(paths) == [] and pf.check_tree_clean(paths) == []
+    assert run_final.main([*args, "--confirm-final", h]) == run_final.EXIT_OK  # resume: the record of the first start is not "dirty"
 
 
-def test_dry_run_never_sets_the_lock_or_writes_anything(world, tmp_path, capsys):
+def test_plan_never_sets_the_lock_or_writes_anything(world, tmp_path, capsys):
     paths, h = world
     alerts = tmp_path / "test.parquet"
     write_test_alerts(alerts)
     jobs_cfg = write_jobs_config(tmp_path, alerts)
     for extra in ([], ["--confirm-final", h], ["--confirm-final", "bad"]):
-        code = run_final.main([*final_args(world, tmp_path, jobs_cfg, "--dry-run"), *extra])
-        assert os.environ[guards.FINAL_RUN_ENV] == "0", "a dry run must never open the lock"
+        code = run_final.main([*final_args(world, tmp_path, jobs_cfg, "--plan"), *extra])
+        assert os.environ[guards.FINAL_RUN_ENV] == "0", "a plan must never open the lock"
         assert not (tmp_path / "out").exists()
         out = capsys.readouterr().out
-        assert "DRY RUN" in out and "job plan" in out and "ours.compose.subset" in out
+        assert "PLAN" in out and "job plan" in out and "ours.compose.subset" in out and "total est. hours" in out
         assert code == run_final.EXIT_FAILED  # the tmp world has no commands for the other jobs; the report says so
-    # a dry run reports problems instead of raising
+    # a plan reports problems instead of raising
     (paths.e18_dir / "stage2" / "decision.json").unlink()
-    assert run_final.main([*final_args(world, tmp_path, jobs_cfg, "--dry-run")]) == run_final.EXIT_FAILED
+    assert run_final.main([*final_args(world, tmp_path, jobs_cfg, "--plan")]) == run_final.EXIT_FAILED
     assert "E18 decision" in capsys.readouterr().out and os.environ[guards.FINAL_RUN_ENV] == "0"
 
 
-def test_dry_run_on_the_real_prereg_lists_the_open_problems(capsys):
-    assert run_final.main(["--dry-run"]) in (run_final.EXIT_OK, run_final.EXIT_FAILED)
+def test_plan_on_the_real_prereg_lists_the_open_problems_hours_and_machines(capsys):
+    assert run_final.main(["--plan"]) in (run_final.EXIT_OK, run_final.EXIT_FAILED)
     out = capsys.readouterr().out
-    assert "DRY RUN" in out and os.environ[guards.FINAL_RUN_ENV] == "0"
-    assert "ours.compose.full_test" in out
+    assert "PLAN" in out and os.environ[guards.FINAL_RUN_ENV] == "0"
+    assert "ours.compose.full_test" in out and "t1.gfp_one_bank" in out and "t1.layerwise" in out
+    assert "gpu_s3" in out and "gpu_s1" in out and "total est. hours by machine class, T1 steps included" in out
 
 
 # -- job plan --------------------------------------------------------------------------------------------------
@@ -655,12 +669,16 @@ def test_mock_run_end_to_end_writes_a_manifest(tmp_path, capsys):
     cfg = yaml.safe_load(jobs_cfg.read_text())
     writer = tmp_path / "writer.py"
     cfg["extra_jobs"] = [{"system": "simple", "variant": "arm", "cmd": f"{sys.executable} {writer} --alert-ids {{alert_ids}} --out {{out}} --system {{system}}"}]
+    sentinel = tmp_path / "t1_ran"
+    cfg["t1_final"] = {"steps": [{"id": "s", "row": 1, "phase": "post", "machine_class": "gpu_s1", "est_hours": 1,
+                                  "cmds": [f"{sys.executable} -c \"open({str(sentinel)!r}, 'w')\""]}]}
     jobs_cfg.write_text(yaml.safe_dump(cfg))
     out = tmp_path / "out"
-    args = ["--synthetic", "24", "--subset-n", "8", "--run-id", "mock", "--out-root", str(out), "--jobs-config", str(jobs_cfg),
+    args = ["--dry-run", "--synthetic", "24", "--subset-n", "8", "--run-id", "mock", "--out-root", str(out), "--jobs-config", str(jobs_cfg),
             "--prereg-dir", str(ext_dir), "--llm-config", str(ROOT / "configs" / "llm" / "default.yaml")]
     assert run_final.main(args) == run_final.EXIT_OK
     assert os.environ[guards.FINAL_RUN_ENV] == "0", "the rehearsal must not open the lock"
+    assert not sentinel.exists(), "the dry run must not run T1's commands"
     run = out / "mock"
     man = json.loads((run / "MANIFEST.json").read_text())
     assert man["synthetic"] is True and man["complete"] and man["missing"] == []
@@ -822,3 +840,174 @@ def test_a_job_whose_dependency_failed_is_blocked_not_run(tmp_path, capsys):
     flag.unlink()
     assert run_final.main(base) == run_final.EXIT_OK  # the failed job reruns, then its dependant
     assert (tmp_path / "out" / "dep" / "second.v.subset" / "done").exists()
+
+
+# -- T1's --final steps (docs/t1_final_run.md) ---------------------------------------------------------------------
+def step(sid, cmds, phase="post", **kw):
+    return {"id": sid, "row": kw.pop("row", 1), "phase": phase, "machine_class": "gpu_s1", "est_hours": 1, "cmds": cmds, **kw}
+
+
+def py(code):
+    return f'{sys.executable} -c "{code}"'
+
+
+def test_t1_steps_in_jobs_yaml_follow_the_t1_document():
+    steps = t1.load_steps(fp.load_jobs_config())
+    assert [s.row for s in steps] == list(range(1, 13)) and [s.phase for s in steps][:3] == ["pre"] * 3 and {s.phase for s in steps[3:]} == {"post"}
+    by = {s.id: s for s in steps}
+    # the alert set is built by GFP then the conformal intake, before the subset; everything else after it
+    assert by["intake"].depends_on == ["gfp_one_bank"] and by["intake"].cmds[1] == "python scripts/make_alerts.py --data hi_medium --final"
+    assert by["multi_gnn"].cmds[2] == "python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode see_everything"
+    assert by["layerwise"].cmds == ["python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2"]
+    assert by["explainers"].depends_on == ["intake", "multi_gnn", "edge_scorer"] and by["evidence_views"].depends_on == ["intake", "edge_scorer", "explainers"]
+    assert by["fraudgt"].env == {"T1_EVAL_TEST": "1"} and by["fraudgt"].machine_class == "gpu_s3" and not by["fraudgt"].cmds
+    assert not by["hi_medium_see_everything"].required
+    assert all("FTM_FINAL_RUN" not in s.env for s in steps)
+    assert round(sum(s.est_hours for s in steps if s.machine_class == "gpu_s1"), 1) == 17.6  # T1's "about 18 hours" for steps 1-10
+
+
+def test_every_t1_command_exists_and_is_one_t1_listed():
+    """Each command of jobs.yaml names a script that exists with the flags it uses, and is a `final_entry` command of
+    configs/t1_final/*.yaml for hi_small or hi_medium (so nothing was invented or re-tuned here)."""
+    t1check = t1.load_t1_check()
+    listed = set()
+    for f in sorted((ROOT / "configs" / "t1_final").glob("*.yaml")):
+        for _, entry in t1check._finals(yaml.safe_load(f.read_text()), f.stem):
+            for c in entry.get("commands", []):
+                listed |= {c.replace("<ds>", ds) for ds in ("hi_small", "hi_medium")}
+    for s in t1.load_steps(fp.load_jobs_config()):
+        for cmd in s.cmds:
+            target, flags = t1check.parse_command(cmd)
+            src = ROOT / (target[3:].replace(".", "/") + ".py" if target.startswith("-m ") else target)
+            assert src.exists(), f"{s.id}: {src}"
+            text = src.read_text()
+            assert all(f in text for f in flags), f"{s.id}: {cmd}"
+            assert cmd in listed, f"{s.id}: {cmd} is not a final_entry command of configs/t1_final"
+
+
+def test_t1_step_config_is_validated():
+    ok = {"t1_final": {"steps": [step("a", ["echo"], "pre"), step("b", ["echo"], depends_on=["a"])]}}
+    assert [s.id for s in t1.load_steps(ok)] == ["a", "b"]
+    for bad in ({"t1_final": {"steps": [step("a", [], phase="later")]}},
+                {"t1_final": {"steps": [step("a", []), step("a", [])]}},
+                {"t1_final": {"steps": [step("a", [], depends_on=["zz"])]}},
+                {"t1_final": {"steps": [step("a", [], depends_on=["b"]), step("b", [])]}},
+                {"t1_final": {"steps": [step("a", []), step("b", [], "pre")]}},
+                {"t1_final": {"steps": [step("a", [], env={"FTM_FINAL_RUN": "1"})]}}):
+        with pytest.raises(ValueError):
+            t1.load_steps(bad)
+
+
+def test_t1_step_selection_by_machine_and_only():
+    steps = t1.load_steps(fp.load_jobs_config())
+    assert {s.machine_class for s in t1.select_steps(steps, machine_class="gpu_s3")} == {"gpu_s3"}
+    assert [s.id for s in t1.select_steps(steps, ["t1.intake", "ours.compose.subset"])] == ["intake"]
+    assert t1.select_steps(steps, ["ours.compose.subset"]) == []  # an --only that names no T1 step selects none
+    assert len(t1.select_steps(steps, ["t1.*"])) == len(steps)
+
+
+def test_t1_stage_order_env_and_blocking(world, tmp_path, monkeypatch):
+    """pre steps build the test alert set before the subset exists; post steps run after it, one process at a time, each with the
+    lock open; a failing step blocks its dependants and the detection jobs, which read its scores."""
+    paths, h = world
+    alerts = tmp_path / "data" / "test.parquet"
+    write_test_alerts(tmp_path / "template.parquet")
+    log = tmp_path / "order.log"
+    run = tmp_path / "out" / "g5"
+    mark = ("import os, sys; open({log!r}, 'a').write(sys.argv[1] + ' lock=' + os.environ.get('FTM_FINAL_RUN', '-') + ' t1=' + "
+            "os.environ.get('T1_EVAL_TEST', '-') + ' subset=' + str(os.path.exists({sub!r})) + chr(10))")
+    mark = mark.format(log=str(log), sub=str(run / "subset.json"))
+    build = (f"import shutil, os; os.makedirs(os.path.dirname({str(alerts)!r}), exist_ok=True); shutil.copy({str(tmp_path / 'template.parquet')!r}, {str(alerts)!r}); "
+             + mark)
+    steps = [step("gfp", [f'{sys.executable} -c "{mark}" gfp'], "pre", row=1),
+             step("intake", [f'{sys.executable} -c "{build}" intake'], "pre", row=3, depends_on=["gfp"]),
+             step("gnn", [f'{sys.executable} -c "{mark}" gnn1', f'{sys.executable} -c "{mark}" gnn2'], row=4),
+             step("bad", [py("import sys; sys.exit(7)")], row=5),
+             step("later", [f'{sys.executable} -c "{mark}" later'], row=6, depends_on=["bad"]),
+             step("fgt", [f'{sys.executable} -c "{mark}" fgt'], row=11, env={"T1_EVAL_TEST": "1"}, machine_class="gpu_s3")]
+    cfg_file = write_jobs_config(tmp_path, alerts, t1_final={"steps": steps})
+    args = final_args(world, tmp_path, cfg_file, "--run-id", "g5", "--only", "t1.*", "multi_gnn.one_bank.subset", "--confirm-final", h)
+    assert run_final.main(args) == run_final.EXIT_FAILED  # `bad` failed
+    lines = log.read_text().splitlines()
+    assert lines == ["gfp lock=1 t1=- subset=False", "intake lock=1 t1=- subset=False", "gnn1 lock=1 t1=- subset=True",
+                     "gnn2 lock=1 t1=- subset=True", "fgt lock=1 t1=1 subset=True"], lines  # `later` was blocked
+    man = json.loads((run / "MANIFEST.partial.json").read_text())
+    st = {r["step_id"]: r["status"] for r in man["t1_steps"]}
+    assert st["t1.bad"] == "failed" and st["t1.later"] == "missing" and st["t1.gnn"] == "done" and not (run / "MANIFEST.json").exists()
+    assert "t1.bad" in man["missing"] and "t1.later" in man["missing"]
+    # the detection job (Group A) was blocked by the failed T1 step: no run log
+    assert not (run / "multi_gnn.one_bank.subset" / "done").exists()
+    assert "stderr-0.log" in {p.name for p in (run / "t1" / "bad").iterdir()}
+    # a rerun skips the finished commands and steps, and reruns only the failed one
+    log.unlink()
+    assert run_final.main(args) == run_final.EXIT_FAILED
+    assert not log.exists()
+
+
+def test_failed_pre_step_stops_before_the_subset(world, tmp_path):
+    paths, h = world
+    cfg_file = write_jobs_config(tmp_path, tmp_path / "none.parquet", t1_final={"steps": [step("gfp", [py("import sys; sys.exit(2)")], "pre")]})
+    args = final_args(world, tmp_path, cfg_file, "--run-id", "g5", "--only", "t1.*", "--confirm-final", h)
+    assert run_final.main(args) == run_final.EXIT_FATAL
+    assert not (tmp_path / "out" / "g5" / "subset.json").exists()
+
+
+def test_manifest_only_runs_no_t1_step(world, tmp_path):
+    paths, h = world
+    alerts = tmp_path / "test.parquet"
+    write_test_alerts(alerts)
+    sentinel = tmp_path / "ran"
+    cfg_file = write_jobs_config(tmp_path, alerts, t1_final={"steps": [step("s", [py(f"open({str(sentinel)!r}, 'w')")], "pre")]})
+    args = final_args(world, tmp_path, cfg_file, "--run-id", "g5", "--only", "t1.*", "--manifest-only", "--confirm-final", h)
+    run_final.main(args)
+    assert not sentinel.exists()
+
+
+def test_plan_and_preflight_flag_t1_steps_without_a_command(world, tmp_path, capsys):
+    paths, h = world
+    alerts = tmp_path / "test.parquet"
+    cfg_file = write_jobs_config(tmp_path, alerts, t1_final={"steps": [step("pre1", ["echo hi"], "pre"), step("fgt", [], row=11),
+                                                                        step("opt", [], row=12, required=False)]})
+    assert run_final.main(final_args(world, tmp_path, cfg_file, "--plan", "--only", "t1.*")) == run_final.EXIT_FAILED
+    out = capsys.readouterr().out
+    assert "T1: no command in configs/final/jobs.yaml for t1.fgt" in out and "t1.opt" in out.split("T1 --final steps")[1]
+    assert "t1.opt" not in out.split("T1: no command")[1].split("\n")[0]  # an optional step does not stop the run
+    assert "[ok] test alert set" in out  # a T1 pre step stands in for the missing file
+
+
+def test_t1_entry_point_problems_refuse_the_run(world, tmp_path, monkeypatch, capsys):
+    paths, h = world
+    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True: ["t1_final_check: gfp: artefact x does not exist"])
+    alerts = tmp_path / "test.parquet"
+    write_test_alerts(alerts)
+    cfg_file = write_jobs_config(tmp_path, alerts)
+    assert run_final.main(final_args(world, tmp_path, cfg_file, "--run-id", "g5", "--confirm-final", h)) == run_final.EXIT_REFUSED
+    assert "T1 entry points" in capsys.readouterr().out and os.environ[guards.FINAL_RUN_ENV] == "0"
+
+
+def test_t1_entry_point_check_never_runs_with_the_lock_open(monkeypatch):
+    monkeypatch.setenv(guards.FINAL_RUN_ENV, "1")
+    with pytest.raises(SystemExit, match="FTM_FINAL_RUN"):  # T1's own check; the autouse fixture stubs the wrapper
+        t1.load_t1_check().check(artefacts=False, run_help=False)
+
+
+def test_subset_sha_line_is_written_once_and_touches_nothing_else(tmp_path):
+    f = tmp_path / "subset_manifest.txt"
+    f.write_text("# rule_commit: abc\n# subset_sha256: (filled at G5)\n")
+    sha = "a" * 64
+    assert fz.write_subset_sha(tmp_path, sha, "run g5") is True
+    assert f.read_text() == f"# rule_commit: abc\n# subset_sha256: {sha}  # run g5\n"
+    assert fz.write_subset_sha(tmp_path, sha, "run g5") is False  # same hash: no-op (the second machine)
+    with pytest.raises(RuntimeError, match="frozen once"):
+        fz.write_subset_sha(tmp_path, "b" * 64, "run g6")
+
+
+def test_a_second_machine_with_another_subset_is_fatal(world, tmp_path, capsys):
+    paths, h = world
+    alerts = tmp_path / "test.parquet"
+    write_test_alerts(alerts)
+    cfg_file = write_jobs_config(tmp_path, alerts)
+    args = final_args(world, tmp_path, cfg_file, "--run-id", "g5", "--only", "multi_gnn.one_bank.subset", "--confirm-final", h)
+    assert run_final.main(args) == run_final.EXIT_OK
+    assert run_final.main([*args, "--expect-subset-sha", "0" * 64]) == run_final.EXIT_FATAL
+    assert "FATAL" in capsys.readouterr().out

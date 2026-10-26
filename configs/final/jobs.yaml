@@ -67,6 +67,119 @@ external_cmd:
   machine_class: {}                       # overrides: {"fraudgt.see_everything": gpu_s3}
   est_hours: {}                           # {"multi_gnn.see_everything": 3.0}
   default_est_hours: 0.5
+  detection_est_hours: 0.1                # T1 groups A/B: the models are computed by the t1_final steps below; this job writes their run log
+
+# T1's own final-run commands (docs/t1_final_run.md, "What scripts/run_final.py (T4) must call for T1"): the `--final` modes of
+# T1's scripts, rows 1-10 of its table, in its order, each command a separate process (GPU jobs one at a time), FTM_FINAL_RUN=1 in the
+# environment (set by run_final.py only). They train and tune nothing: every command reuses the validation hyper-parameters and checks
+# inside the same pass that the val numbers are reproduced; if it exits non-zero its test scores must not be used (the step fails and the
+# detection jobs that read them are blocked). Outputs go to data/scores/<ds>/final/, data/retrieval/<ds>/final/, data/runs/final_*.json.
+#   phase: pre   runs BEFORE the frozen subset is drawn (they build the test alert set: GFP p0, then the conformal intake)
+#          post  runs after the subset is frozen and hashed
+#   cmds: no shell; a leading `python` is replaced by the interpreter that runs run_final.py. env: extra variables for the step's commands.
+#   required: false steps may have no command yet (their absence does not stop the run or the manifest).
+t1_final:
+  steps:
+    - id: gfp_one_bank          # row 1
+      row: 1
+      phase: pre
+      machine_class: gpu_s1     # CPU-bound LightGBM on the 3070 Ti laptop; HI-Medium bank 70 alone took 2 h on val
+      est_hours: 2.7
+      cmds:
+        - python scripts/train_gfp.py --data hi_small --mode one_bank --final
+        - python scripts/train_gfp.py --data hi_medium --mode one_bank --final
+    - id: gfp_see_everything    # row 2
+      row: 2
+      phase: pre
+      machine_class: gpu_s1
+      est_hours: 0.3
+      cmds:
+        - python scripts/train_gfp.py --data hi_small --mode see_everything --final
+    - id: intake                # row 3: the test alert sets (alert_id F..., test_tail column); T1: t_alert fixed on val cal, not on test
+      row: 3
+      phase: pre
+      machine_class: gpu_s1
+      est_hours: 0.1
+      depends_on: [gfp_one_bank]
+      cmds:
+        - python scripts/make_alerts.py --data hi_small --final
+        - python scripts/make_alerts.py --data hi_medium --final
+    - id: multi_gnn             # row 4: the val checkpoints re-scored, nothing trained
+      row: 4
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 3.4
+      cmds:
+        - python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode one_bank
+        - python scripts/train_gnn.py --final --model multi_gnn --data hi_medium --mode one_bank
+        - python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode see_everything
+    - id: mega_gnn              # row 5
+      row: 5
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 3.4
+      cmds:
+        - python scripts/train_gnn.py --final --model mega_gnn --data hi_small --mode one_bank
+        - python scripts/train_gnn.py --final --model mega_gnn --data hi_medium --mode one_bank
+        - python scripts/train_gnn.py --final --model mega_gnn --data hi_small --mode see_everything
+    - id: edge_scorer           # row 6
+      row: 6
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 0.4
+      cmds:
+        - python -m ftm.retrieval.edge_scorer --data hi_small --final
+        - python -m ftm.retrieval.edge_scorer --data hi_medium --final
+    - id: explainers            # row 7 (CPU; GNNExplainer 1.4 s per alert)
+      row: 7
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 2.6
+      depends_on: [intake, multi_gnn, edge_scorer]
+      cmds:
+        - python scripts/run_explainers.py --data hi_small --final
+        - python scripts/run_explainers.py --data hi_medium --final
+    - id: evidence_views        # row 8 (CPU)
+      row: 8
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 0.9
+      depends_on: [intake, edge_scorer, explainers]
+      cmds:
+        - python -m ftm.retrieval.evidence_views --data hi_small --final --explainers gnnexplainer pgexplainer
+        - python -m ftm.retrieval.evidence_views --data hi_medium --final --explainers gnnexplainer pgexplainer
+    - id: federated             # row 9 (CPU): client-level arms are a fresh seeded noise draw (docs/t1_federated_eps.md)
+      row: 9
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 2.3
+      cmds:
+        - python scripts/train_federated.py --final --data hi_small --unit client --eps 1 2 4 8 16 --seeds 0 1 2
+        - python scripts/train_federated.py --final --data hi_small --unit edge --eps 1 2 4 8 --seeds 0 1 2
+        - python scripts/train_federated.py --final --data hi_medium --unit client --eps 1 2 4 8 16 --seeds 0 1 2
+        - python scripts/train_federated.py --final --data hi_medium --unit edge --eps 1 2 4 8 --seeds 0 1 2
+    - id: layerwise             # row 10 (GPU, HI-Small only; HI-Medium is BLOCKED-COMPUTE)
+      row: 10
+      phase: post
+      machine_class: gpu_s1
+      est_hours: 1.5
+      cmds:
+        - python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
+    - id: fraudgt               # row 11: T1 has not written the final entry point (full 500-epoch run + prediction dump), 5070 Ti only
+      row: 11
+      phase: post
+      machine_class: gpu_s3
+      est_hours: 6
+      required: true
+      env: {T1_EVAL_TEST: "1"}  # per docs/t1_final_run.md: set by run_final.py only
+      cmds: []                  # T1: put the command here
+    - id: hi_medium_see_everything   # row 12: needs val runs first (BLOCKED-COMPUTE); optional until they exist
+      row: 12
+      phase: post
+      machine_class: gpu_s3
+      est_hours: 3
+      required: false
+      cmds: []
 
 # Anything else that belongs in the final run (one bank only, GFP see-everything, raw sharing, ...):
 extra_jobs: []

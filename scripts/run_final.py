@@ -1,26 +1,29 @@
 """THE final-run script. The only place that may set FTM_FINAL_RUN=1 (G5).
 
 Owner: T4 (Shreyas).  Spec: plan.md 8 and 13 (G5: one final test run, all systems, same code path), tracks.md 6.7 and 8,
-docs/schedule_nov10.md (phase C).  Runbook: docs/t4_final_run.md.  Run from the repo root.
+docs/schedule_nov10.md (phase C), docs/t1_final_run.md (T1's commands).  Runbook: docs/t4_final_run.md.  Run from the repo root.
 
-    # 1. what would happen (preflight in report mode, job plan, estimated hours); sets nothing, reads no test data
+    # 1. what would run: the job list with hours and machines, and the preflight in report mode. Sets nothing, reads no data
+    python scripts/run_final.py --plan
+    # 2. dry run: the whole script on the synthetic world, mock LLM, dev toolbox. Sets nothing, writes outputs/final_synthetic/
     python scripts/run_final.py --dry-run
-    # 2. the real run, per machine (same --run-id and the same checkpoint on S3 and S1; resumable after any crash)
+    # 3. the real run, per machine (same --run-id and the same checkpoint on S3 and S1; resumable after any crash)
+    python scripts/run_final.py --run-id g5 --confirm-final <combined hash> --machine s1
     python scripts/run_final.py --run-id g5 --confirm-final <combined hash> --machine s3 --endpoint http://localhost:8000/v1
-    python scripts/run_final.py --run-id g5 --confirm-final <combined hash> --machine s1 --endpoint http://localhost:8000/v1
     python scripts/run_final.py --run-id g5 --confirm-final <combined hash> --machine cpu
-    # 3. gather the job directories of all machines into one run dir, then
+    # 4. gather the job directories of all machines into one run dir, then
     python scripts/run_final.py --run-id g5 --confirm-final <combined hash> --manifest-only
-    # offline rehearsal on synthetic alerts, mock LLM, dev toolbox: sets nothing, never a result
-    python scripts/run_final.py --synthetic 40 --only ours.compose
 
 Before anything runs (and before FTM_FINAL_RUN=1 is set, which happens in main() and nowhere else) the preflight
 requires: prereg/FREEZE.json whose hashes match the files, a clean working tree, the freeze commit in HEAD's history,
 the hash the TA was sent, the E18 decision and the matching backbone, no `fix_on_val` left, the G4 top-2-3 file, a
-readable subset rule, and `--confirm-final` equal to the combined prereg hash. Then the test alert set is built, the
-1,000-alert subset is drawn FIRST (prereg/subset_manifest.txt rule) and its hash recorded; every job uses those id files
-and refuses to start if their hash differs. Jobs are resumable. The runner never prints or logs a label or a Brier
-score; scripts/final_analysis.py does that, after the run, from MANIFEST.json.
+readable subset rule, T1's own check (scripts/t1_final_check.py), and `--confirm-final` equal to the combined prereg hash.
+Then, in this order: T1's `--final` steps that build the test alert set (GFP, conformal intake; docs/t1_final_run.md rows 1-3),
+the frozen 1,000-alert subset (drawn FIRST, before any other system touches the test alerts, from the bulk days; its sha256 goes to
+prereg/subset_manifest.txt and subset.json), T1's remaining `--final` steps (rows 4-12, one process at a time), then the jobs
+(our system, ablations, external agents, detection run logs). Every job uses the frozen id files and refuses to start if their hash
+differs. Jobs are resumable. The runner never prints or logs a label or a Brier score; the analysis (a later
+script, from MANIFEST.json only) does that after the run.
 """
 
 from __future__ import annotations
@@ -47,6 +50,7 @@ from ftm.final import freeze as fz  # noqa: E402
 from ftm.final import plan as fp  # noqa: E402
 from ftm.final import preflight as pf  # noqa: E402
 from ftm.final import runner as rn  # noqa: E402
+from ftm.final import t1  # noqa: E402
 from ftm.intake import alerts as intake  # noqa: E402
 
 OUT_ROOT = ROOT / "outputs" / "final"
@@ -70,7 +74,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-id", default=None, help="run directory name under outputs/final/ (required for a real run; resumable)")
     ap.add_argument("--confirm-final", default=None, help="the combined prereg hash (scripts/freeze_prereg.py prints it)")
-    ap.add_argument("--dry-run", action="store_true", help="preflight in report mode + job plan; sets and writes nothing")
+    ap.add_argument("--plan", action="store_true", help="print the job list with hours and machines and the preflight report; sets nothing, writes nothing, reads no data")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="rehearsal of the whole script on the synthetic world: mock LLM, dev toolbox, no T1 command, FTM_FINAL_RUN untouched; "
+                         "writes outputs/final_synthetic/ (same as --synthetic 40)")
     ap.add_argument("--machine", default=None, choices=["s3", "s1", "cpu"], help="only jobs of this machine class")
     ap.add_argument("--shard", default=None, help="i/n: this machine's share of the selected jobs (balanced by est_hours)")
     ap.add_argument("--only", nargs="+", default=None, help="job ids, system names, system.variant or fnmatch patterns")
@@ -81,7 +88,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--endpoint", default=None, help="OpenAI-compatible base URL of this machine's server (default: FTM_LLM_ENDPOINT)")
     ap.add_argument("--machine-name", default=None, help="run-log `machine` column (default: by --machine class)")
     ap.add_argument("--synthetic", type=int, default=None, metavar="N",
-                    help="rehearsal: N synthetic alerts, mock LLM, dev toolbox. Sets nothing, skips the preflight, writes "
+                    help="dry-run with N synthetic alerts (default 40). Sets nothing, skips the preflight, writes "
                          "outputs/final_synthetic/, MANIFEST has synthetic=true")
     ap.add_argument("--subset-n", type=int, default=None, help="synthetic only: subset size (the real one is n=1000 from prereg)")
     ap.add_argument("--jobs-config", type=Path, default=fp.JOBS_CONFIG)
@@ -131,29 +138,31 @@ def check_endpoint(endpoint: str | None, want_model: str | None) -> tuple[str, s
 
 
 def load_test_alerts(a: argparse.Namespace, cfg: dict, log=say) -> pl.DataFrame:
-    """The test alert set (alert_id, bank, p0; labels are not read). Built by T1's command if the file is missing.
+    """The test alert set (alert_id, bank, p0, test_tail; labels are not read), written by T1's `make_alerts.py --final` (a `pre` step).
     Locked: only after the preflight, with FTM_FINAL_RUN=1 set."""
     guards.require_final_run("the test alert set")
     path = ROOT / cfg["test_alerts"]["path"].format(data=cfg["data"])
     if not path.exists():
         cmd = cfg["test_alerts"].get("cmd")
         if not cmd:
-            raise SystemExit(f"{path} does not exist and test_alerts.cmd is not set")
+            raise SystemExit(f"{path} does not exist: the T1 `pre` steps (t1.gfp_one_bank, t1.intake) build it, run them on this "
+                             "machine (--machine s1 or --only t1.*) or copy the file from the machine that did")
         log(f"building the test alert set: {cmd}")
         rc = subprocess.run(shlex.split(cmd.format(data=cfg["data"], out=str(path))), cwd=ROOT).returncode
         if rc != 0 or not path.exists():
             raise SystemExit(f"test_alerts.cmd failed (exit {rc}) or did not write {path}")
-    df = pl.read_parquet(path, columns=["alert_id", "bank", "p0"])  # time-guard: not transactions; the label column is not read
-    if df.height == 0 or df["alert_id"].null_count() or df["p0"].null_count():
-        raise SystemExit(f"{path}: empty, or null alert_id / p0")
+    df = pl.read_parquet(path, columns=["alert_id", "bank", "p0", "test_tail"])  # time-guard: not transactions; no label column is read
+    if df.height == 0 or df["alert_id"].null_count() or df["p0"].null_count() or df["test_tail"].null_count():
+        raise SystemExit(f"{path}: empty, or null alert_id / p0 / test_tail")
     return df.with_columns(pl.col("alert_id").cast(pl.Utf8))
 
 
 def synthetic_test_alerts(n: int, seed: int) -> pl.DataFrame:
     agent = agent_module()
     alerts = agent.synthetic_alerts(n, seed)
+    n_bulk = max(1, int(len(alerts) * 0.9))  # the last tenth plays the sparse tail days, so the bulk-only draw is exercised
     return pl.DataFrame({"alert_id": [c.alert_id for c, _ in alerts], "bank": [int(c.home_bank) for c, _ in alerts],
-                         "p0": [c.p0 for c, _ in alerts]})  # fmt: skip
+                         "p0": [c.p0 for c, _ in alerts], "test_tail": [i >= n_bulk for i in range(len(alerts))]})  # fmt: skip
 
 
 def print_header(title: str) -> None:
@@ -161,18 +170,33 @@ def print_header(title: str) -> None:
 
 
 def selection(a: argparse.Namespace, jobs: list[fp.Job]) -> list[fp.Job]:
-    return fp.select_jobs(jobs, a.only, a.machine, a.shard, a.max_jobs)
+    """--machine / --only / --shard / --max-jobs. `--only t1.*` entries name T1 steps, not jobs (no job is selected then)."""
+    only = [o for o in (a.only or []) if not (o == "t1" or o.startswith("t1."))]
+    if a.only and not only:
+        return []
+    return fp.select_jobs(jobs, only or None, a.machine, a.shard, a.max_jobs)
 
 
-def execute(a: argparse.Namespace, ctx: rn.Ctx, plan_jobs: list[fp.Job], chosen: list[fp.Job]) -> int:
-    """Run the selected jobs in dependency order, then write MANIFEST.json (all jobs done) or MANIFEST.partial.json."""
+def t1_selection(a: argparse.Namespace, steps: list[t1.T1Step]) -> list[t1.T1Step]:
+    """The T1 steps of this invocation. --shard and --max-jobs apply to the jobs only: the T1 steps are a fixed ordered list."""
+    return t1.select_steps(steps, a.only, fp.MACHINE_ALIASES.get(a.machine) if a.machine else None)
+
+
+def execute(a: argparse.Namespace, ctx: rn.Ctx, plan_jobs: list[fp.Job], chosen: list[fp.Job], t1_all: list[t1.T1Step],
+            t1_results: dict[str, str]) -> int:
+    """Run the selected jobs in dependency order, then write MANIFEST.json (all jobs and T1 steps done) or MANIFEST.partial.json.
+    `t1_results`: what the T1 stage did in this invocation; jobs of Groups A/B (they read T1's test scores) are blocked if a T1
+    step failed."""
     by_id = {j.job_id: j for j in plan_jobs}
     wanted = {j.job_id for j in chosen}
     order = [j for j in fp.order_jobs(plan_jobs) if j.job_id in wanted]
+    t1_failed = sorted(k for k, v in t1_results.items() if v in ("failed", "blocked"))
     results: dict[str, str] = {}
     endpoint_checked = False
     for job in order:
         blocked = [d for d in job.depends_on if rn.read_job_meta(ctx.run_dir, by_id[d]) is None]
+        if job.group in ("A", "B") and t1_failed:
+            blocked += t1_failed
         if blocked:
             ctx.log(f"{job.job_id}: blocked, waiting for {blocked}")
             results[job.job_id] = "blocked"
@@ -188,21 +212,24 @@ def execute(a: argparse.Namespace, ctx: rn.Ctx, plan_jobs: list[fp.Job], chosen:
             return EXIT_FATAL
     counts = {k: sum(1 for v in results.values() if v == k) for k in ("done", "skipped", "failed", "blocked")}
     say(f"\njobs: {json.dumps(counts)}")
+    t1_counts = {k: sum(1 for v in t1_results.values() if v == k) for k in ("done", "skipped", "failed", "blocked")}
+    if t1_results:
+        say(f"T1 steps: {json.dumps(t1_counts)}")
     try:
-        complete = all(rn.read_job_meta(ctx.run_dir, j) is not None for j in plan_jobs)
-        man = rn.write_manifest(ctx.run_dir, plan_jobs, ctx, name="MANIFEST.json" if complete else "MANIFEST.partial.json",
-                                allow_mixed_commits=a.allow_mixed_commits)
-        say(f"wrote {'MANIFEST.json' if complete else 'MANIFEST.partial.json'} ({len(man['missing'])} jobs missing)")
+        complete = all(rn.read_job_meta(ctx.run_dir, j) is not None for j in plan_jobs) and not t1.missing_required(ctx.run_dir, t1_all)
+        name = "MANIFEST.json" if complete else "MANIFEST.partial.json"
+        man = rn.write_manifest(ctx.run_dir, plan_jobs, ctx, name=name, allow_mixed_commits=a.allow_mixed_commits, t1_steps=t1_all)
+        say(f"wrote {name} ({len(man['missing'])} jobs or T1 steps missing)")
     except rn.ParityError as e:
         say(f"PARITY ERROR: {e}")
         return EXIT_FAILED
-    return EXIT_FAILED if counts["failed"] else EXIT_OK
+    return EXIT_FAILED if counts["failed"] or t1_counts["failed"] else EXIT_OK
 
 
-def check_plan_file(run_dir: Path, plan_jobs: list[fp.Job]) -> None:
+def check_plan_file(run_dir: Path, plan_jobs: list[fp.Job], t1_steps: list[t1.T1Step] | None = None) -> None:
     """plan.json fixes the machine classes at the first start; every later start (resume, the other machine) must agree."""
     f = run_dir / "plan.json"
-    mine = {j.job_id: j.machine_class for j in plan_jobs}
+    mine = {j.job_id: j.machine_class for j in plan_jobs} | {s.job_id: s.machine_class for s in t1_steps or []}
     if f.exists():
         old = json.loads(f.read_text(encoding="utf-8"))["machine_class"]
         if old != mine:
@@ -211,16 +238,21 @@ def check_plan_file(run_dir: Path, plan_jobs: list[fp.Job]) -> None:
                              "the config or the test alert counts changed since the run dir was created")
         return
     rn.write_json(f, {"created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "machine_class": mine,
-                      "jobs": [j.as_dict() for j in plan_jobs]})  # fmt: skip
+                      "jobs": [j.as_dict() for j in plan_jobs], "t1_steps": [s.as_dict() for s in t1_steps or []]})  # fmt: skip
 
 
 def run_synthetic(a: argparse.Namespace, cfg: dict, ext: dict, abl: dict, p: pf.Paths) -> int:
-    say("SYNTHETIC REHEARSAL: mock LLM, dev toolbox, synthetic alerts. Sets nothing; never a result.")
+    say("DRY RUN on the synthetic world: mock LLM, dev toolbox, synthetic alerts. Sets nothing; never a result.")
     jobs = fp.build_plan(ext, cfg, abl, None)
     skipped = [j.job_id for j in jobs if j.kind == "external_cmd" and not j.cmd]
     jobs = [j for j in jobs if j.job_id not in set(skipped)]
     if skipped:
         say(f"({len(skipped)} external_cmd jobs without a command left out of the rehearsal)")
+    steps = t1.load_steps(cfg)
+    say(f"T1 stage: {len(steps)} steps listed, none run (they need the real data and the lock); entry-point check (no data read):")
+    problems = t1.check_t1_entry_points(artefacts=False, run_help=False)
+    say("\n".join(f"  - {x}" for x in problems) if problems else "  ok")
+    say(t1.format_steps(t1_selection(a, steps)))
     run_id = a.run_id or time.strftime("synthetic-%Y%m%d-%H%M%S")
     run_dir = (a.out_root or ROOT / "outputs" / "final_synthetic") / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -233,48 +265,62 @@ def run_synthetic(a: argparse.Namespace, cfg: dict, ext: dict, abl: dict, p: pf.
                  freeze_sha256=None, synthetic=True, data="synthetic", limits=llm["limits"], backbone="mock",
                  thinking=False, n_alerts={fp.SUBSET: info["n_subset"], fp.FULL: info["n_full_test"]},
                  agent=agent_module(), llm_common_args=cfg["llm"]["common_args"])  # fmt: skip
-    check_plan_file(run_dir, jobs)
+    check_plan_file(run_dir, jobs, steps)
     chosen = selection(a, jobs)
     say(f"run dir {run_dir}; {len(chosen)} of {len(jobs)} jobs selected")
     if a.manifest_only:
         chosen = []
-    return execute(a, ctx, jobs, chosen)
+    return execute(a, ctx, jobs, chosen, [], {})
 
 
 def main(argv: list[str] | None = None) -> int:
     a = parse_args(argv)
+    if a.plan and (a.dry_run or a.synthetic):
+        raise SystemExit("--plan prints the plan; --dry-run rehearses it: pick one")
+    if a.dry_run or a.synthetic:
+        a.synthetic = a.synthetic or 40
+        if a.confirm_final:
+            raise SystemExit("--dry-run is a rehearsal: no --confirm-final")
     cfg = fp.load_jobs_config(a.jobs_config)
     ext = yaml.safe_load((a.prereg_dir / "external_list.yaml").read_text(encoding="utf-8"))
     abl = yaml.safe_load(fp.ABLATIONS.read_text(encoding="utf-8"))
     p = build_paths(a)
     if a.synthetic:
-        if a.dry_run or a.confirm_final:
-            raise SystemExit("--synthetic is a rehearsal: no --dry-run, no --confirm-final")
         return run_synthetic(a, cfg, ext, abl, p)
 
     # ---- plan and preflight (report only; nothing is set or written) ----
     top, top_problems = pf.load_top_external(p.top_external, fp.external_agents(ext))
     jobs = fp.build_plan(ext, cfg, abl, top if not top_problems else None)
     chosen = selection(a, jobs)
+    t1_all = t1.load_steps(cfg)
+    t1_chosen = t1_selection(a, t1_all)
     report = pf.run_preflight(p, a.confirm_final, fp.external_agents(ext))
-    if a.dry_run and not a.confirm_final:
+    if a.plan and not a.confirm_final:
         report["--confirm-final"] = []  # not needed to look
-    report["commands for the selected jobs"] = pf.check_job_commands(chosen)
+    report["commands for the selected jobs"] = pf.check_job_commands(chosen) + t1.check_commands(t1_chosen)
+    report["T1 entry points (scripts/t1_final_check.py)"] = t1.check_t1_entry_points(artefacts=True, run_help=not a.plan)
+    builders = [s for s in t1_all if s.phase == "pre" and s.cmds]
     report["test alert set"] = pf.check_test_alert_source(ROOT / cfg["test_alerts"]["path"].format(data=cfg["data"]),
-                                                           cfg["test_alerts"].get("cmd"))
-    if not a.dry_run and not a.run_id:
+                                                           cfg["test_alerts"].get("cmd") or (builders[0].job_id if builders else None))  # fmt: skip
+    if not a.plan and not a.run_id:
         report["--run-id"] = ["--run-id is required (the run directory name; reuse it to resume)"]
     ok = not any(report.values())
 
-    if a.dry_run:
-        print_header("DRY RUN: nothing is set, nothing is written")
+    if a.plan:
+        print_header("PLAN: nothing is set, nothing is written")
         say(f"{guards.FINAL_RUN_ENV} is {'SET' if guards.final_run_enabled() else 'not set'} and stays so\n\npreflight:")
         say(pf.format_report(report))
         rule, _ = pf.parse_subset_rule(p.prereg / fz.SUBSET_MANIFEST)
         say(f"\nsubset rule (prereg/subset_manifest.txt): {rule or 'unreadable'}")
         say(f"G4 top external agents: {top or 'not available'}")
+        print_header(f"T1 --final steps (docs/t1_final_run.md): {len(t1_chosen)} of {len(t1_all)} selected")
+        say(t1.format_steps(t1_chosen))
         print_header(f"job plan: {len(chosen)} of {len(jobs)} jobs selected")
         say(fp.format_plan(chosen))
+        total = fp.plan_totals(chosen)["est_hours_by_machine_class"]
+        for s in t1_chosen:
+            total[s.machine_class] = round(total.get(s.machine_class, 0.0) + s.est_hours, 2)
+        say(f"  total est. hours by machine class, T1 steps included: {json.dumps(dict(sorted(total.items())))}")
         return EXIT_OK if ok else EXIT_FAILED
     if not ok:
         print_header("REFUSED: the preflight failed, FTM_FINAL_RUN is not set")
@@ -297,20 +343,35 @@ def main(argv: list[str] | None = None) -> int:
     else:
         rn.write_json(run_json, {**sig, "run_id": a.run_id, "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "first_commit": commit})
 
-    # subset FIRST, before any system touches the test alerts
+    # T1 pre stage: the steps that build the test alert set (GFP p0, conformal intake). They run before the subset exists,
+    # because the subset is drawn from their output; no external system runs yet.
+    t1_results: dict[str, str] = {}
+    with contextlib.suppress(KeyboardInterrupt):
+        t1_pre = [] if a.manifest_only else [s for s in t1_chosen if s.phase == "pre"]
+        t1_results = t1.run_steps(t1_pre, t1_all, run_dir, a.repo, commit, say)
+    if any(v in ("failed", "blocked") for v in t1_results.values()):
+        say("FATAL: a T1 step that builds the test alert set failed; no subset is drawn, nothing else runs")
+        return EXIT_FATAL
+
+    # subset FIRST, before any other system touches the test alerts
     rule, _ = pf.parse_subset_rule(p.prereg / fz.SUBSET_MANIFEST)
     tests = load_test_alerts(a, cfg)
     info = rn.build_subset(run_dir, tests, rule, intake.stratified_subset, data=cfg["data"], commit=commit)
     if a.expect_subset_sha and a.expect_subset_sha != info["subset_sha256"]:
         say(f"FATAL: subset sha256 {info['subset_sha256']} != --expect-subset-sha {a.expect_subset_sha}")
         return EXIT_FATAL
-    say(f"test alerts: {info['n_full_test']}, subset: {info['n_subset']}, subset sha256: {info['subset_sha256']}")
-    say("append to prereg/subset_manifest.txt (after the run, as its own commit):")
-    say("  " + rn.manifest_line(info, a.run_id))
+    say(f"test alerts: {info['n_full_test']}, subset: {info['n_subset']} (of {info['n_pool']} bulk-day alerts), "
+        f"subset sha256: {info['subset_sha256']}")
+    try:
+        wrote = fz.write_subset_sha(p.prereg, info["subset_sha256"], rn.manifest_note(info, a.run_id))
+    except RuntimeError as e:
+        say(f"FATAL: {e}")
+        return EXIT_FATAL
+    say(f"{'wrote' if wrote else 'already in'} prereg/subset_manifest.txt (subset_sha256 line only; commit it after the run)")
 
     counts = {fp.SUBSET: info["n_subset"], fp.FULL: info["n_full_test"]}
     jobs = fp.build_plan(ext, cfg, abl, top, counts)  # real counts for est_hours (the machine classes stay deterministic)
-    check_plan_file(run_dir, jobs)
+    check_plan_file(run_dir, jobs, t1_all)
     chosen = selection(a, jobs)
 
     llm = llm_settings(p)
@@ -325,11 +386,14 @@ def main(argv: list[str] | None = None) -> int:
                  serving_stack=cfg["llm"]["serving_stack"] or choice.get("stack"), llm_common_args=cfg["llm"]["common_args"],
                  toolbox=cfg["llm"]["toolbox"], n_alerts=counts, agent=agent_module() if any(
                      j.kind == "llm_agent" for j in chosen) else None)  # fmt: skip
-    say(f"\nrun dir {run_dir}; {len(chosen)} of {len(jobs)} jobs selected on this machine ({ctx.machine_name})")
+    say(f"\nrun dir {run_dir}; {len(t1_chosen)} T1 steps and {len(chosen)} of {len(jobs)} jobs selected on this machine ({ctx.machine_name})")
     if a.manifest_only:
-        chosen = []
+        chosen, t1_post = [], []
+    else:
+        t1_post = [s for s in t1_chosen if s.phase == "post"]
     with contextlib.suppress(KeyboardInterrupt):
-        return execute(a, ctx, jobs, chosen)
+        t1_results |= t1.run_steps(t1_post, t1_all, run_dir, a.repo, commit, say)
+        return execute(a, ctx, jobs, chosen, t1_all, t1_results)
     say("interrupted; rerun the same command to resume (an unfinished job is deleted and rerun)")
     return EXIT_FAILED
 
