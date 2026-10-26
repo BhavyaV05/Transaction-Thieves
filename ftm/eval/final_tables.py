@@ -904,6 +904,13 @@ ELSEWHERE = {
     "heldout_cycles": "scripts/heldout_report.py (T1)",
     "gate_rag": "tests/test_compliance_gate.py, scripts/rag_eval.py (T4, CPU)",
     "three_way": "E17 FCAC port: not part of this pipeline",
+    "g2_decision": "team decision, written by hand (docs/schedule_nov10.md rule 6)",
+    "fusion_setting": "prereg/ (fusion setting fixed before G3)",
+    "fusion_diagnostics": "docs/t4_fusion_findings.md section 6 (val, scripts/fusion_diagnostics.py)",
+    "equiv_margin": "fixed on val (the prereg fix_on_val values)",
+    "hub_cap": "fixed on val (the prereg fix_on_val values)",
+    "n_askable_test": "T1 make_alerts.py --final (test alert set)",
+    "cut_items": "written by hand when the report is assembled",
 }
 TABLE_IDS = {  # id -> table stem (Writer.tables)
     "tab_5a": "table_5a", "tab_5b": "table_5b", "tab_baselines": "table_baselines", "n_alerts": "n_alerts", "typology_breakdown": "breakdown_typology",
