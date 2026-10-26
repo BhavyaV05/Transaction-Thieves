@@ -15,6 +15,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ftm import guards
 from ftm.backtest.engine import BtAlert
 from ftm.banks.binding import bind_alert
 from ftm.banks.partner import BankConfig, PartnerBank
@@ -40,8 +41,12 @@ class RealWorld:
 def load_world(data: str, split: str = "train", seed: int = 0, bank_config: BankConfig | None = None,
                max_alerts: int | None = None, only_keep: bool = False, root: str | Path = ".",
                heldout_cycles: bool = False) -> RealWorld:  # fmt: skip
-    if split not in ("train", "val"):
-        raise ValueError("back-testing runs on train or val alerts only; the test split is locked")
+    if split == "test":
+        # only the final run (scripts/run_final.py, FTM_FINAL_RUN=1) builds the test world; the readers below check the lock too
+        if not guards.final_run_enabled():
+            raise ValueError("the test split is locked until G5 (FTM_FINAL_RUN=1, scripts/run_final.py only)")
+    elif split not in ("train", "val"):
+        raise ValueError("back-testing runs on train, val (or, at G5, test) alerts only")
     root = Path(root)
     cfg = io.load_config(data)
     pq, views = root / cfg["parquet_dir"], root / cfg["views_dir"]
