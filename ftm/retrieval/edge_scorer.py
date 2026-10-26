@@ -339,6 +339,59 @@ def train_scorer_streaming(data: str = "hi_medium", seed: int = 0, epochs: int =
             "seconds": time.time() - t0, "stages": stages, "history": hist}  # fmt: skip
 
 
+def score_final(data: str, threads: int = 6) -> dict:
+    """Week 14: score the TEST edges with the val run's model (`models/edge_scorer_<data>.pt`; nothing is trained or tuned).
+
+    Features are the past-only `FEATURES2` over the train+val+test timeline, one day at a time (`chunked_timeline_features`, equal to the
+    whole-frame values), with the category codes, mean and sd stored in the checkpoint (so appended test rows cannot shift them). The val
+    edges of the same pass must reproduce `data/retrieval/<data>/edge_scores.parquet` (max difference recorded; must be below 1e-5).
+    Writes data/retrieval/<data>/final/edge_scores_test.parquet (tx_id, score, split) and data/runs/final_edge_scorer_<data>.json.
+    Locked: needs FTM_FINAL_RUN=1 (scripts/run_final.py)."""
+    import time
+    from pathlib import Path
+
+    import torch
+
+    from ftm import guards
+
+    guards.require_final_run("the test edges of the edge scorer")
+    t0 = time.time()
+    torch.set_num_threads(threads)
+    ck = torch.load(f"models/edge_scorer_{data}.pt", weights_only=False)
+    cfg = io.load_config(data)
+    scan = io.scan_transactions(cfg["parquet_dir"], split=["train", "val", "test"], columns=COLS + ["split", "day"])
+    mx = scan.select(pl.max_horizontal(pl.col("src_id").max(), pl.col("dst_id").max())).collect().item()
+    net = torch.nn.Sequential(torch.nn.Linear(len(ck["features"]), 128), torch.nn.ReLU(), torch.nn.Linear(128, 128), torch.nn.ReLU(), torch.nn.Linear(128, 1))
+    net.load_state_dict(ck["state"])
+    net.eval()
+    mu, sd = ck["mu"], ck["sd"]
+    frames = []
+    for d, feats in chunked_timeline_features(scan, ck["codes"], int(mx) + 1):
+        m = scan.filter(pl.col("day") == d).select("tx_id", "split").collect().sort("tx_id")
+        assert m["tx_id"].to_list() == feats["tx_id"].to_list()
+        sp = np.array(m["split"].to_list(), dtype="U5")
+        keep = sp != "train"  # val rows are only a regression check; train rows are not scored again
+        if not keep.any():
+            continue
+        X = feats.select(FEATURES2).to_numpy().astype("f4")[keep]
+        X = np.sign(X) * np.log1p(np.abs(X))
+        with torch.no_grad():
+            z = net(torch.tensor(((X - mu) / sd).astype("f4"))).squeeze(1).numpy()
+        frames.append(pl.DataFrame({"tx_id": m["tx_id"].to_numpy()[keep], "score": 1 / (1 + np.exp(-z.astype("f8"))), "split": sp[keep]}))
+    new = pl.concat(frames).sort("tx_id")
+    old = pl.read_parquet(Path("data/retrieval") / data / "edge_scores.parquet").filter(pl.col("split") == "val")  # time-guard: not transactions
+    j = old.join(new.filter(pl.col("split") == "val"), on="tx_id", suffix="_new")
+    diff = float((j["score"] - j["score_new"]).abs().max())
+    out = Path("data/retrieval") / data / "final"
+    out.mkdir(parents=True, exist_ok=True)
+    new.filter(pl.col("split") == "test").write_parquet(out / "edge_scores_test.parquet")
+    rec = {"data": data, "test_edges": int((new["split"] == "test").sum()), "val_edges_compared": j.height, "max_abs_val_score_diff": diff, "seconds": time.time() - t0}
+    Path(f"data/runs/final_edge_scorer_{data}.json").write_text(json.dumps(rec, indent=1))
+    if j.height != old.height or diff > 1e-5:
+        raise SystemExit(f"the final pass does not reproduce the stored val scores ({rec}): do not use these test scores")
+    return rec
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
@@ -347,8 +400,11 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=int, default=120)
     ap.add_argument("--streaming", action="store_true", help="day-by-day features and streamed negative subsampling (HI-Medium)")
     ap.add_argument("--suffix", default="", help="output file name suffix (streaming only; use it for checks)")
+    ap.add_argument("--final", action="store_true", help="week 14: score the TEST edges with the val run's model (needs FTM_FINAL_RUN=1)")
     a = ap.parse_args()
-    if a.train and a.streaming:
+    if a.final:
+        print(json.dumps(score_final(a.data), indent=1))
+    elif a.train and a.streaming:
         res = train_scorer_streaming(a.data, epochs=a.epochs, device=a.device, suffix=a.suffix)
     else:
         res = train_scorer(a.data, epochs=a.epochs, device=a.device) if a.train else baseline(a.data)

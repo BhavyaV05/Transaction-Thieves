@@ -115,7 +115,7 @@ COLS = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amoun
         "receiving_currency", "payment_currency", "payment_format", "is_laundering", "split"]  # fmt: skip
 
 
-def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_frac: float = 1.0, tag: str = "", exclude=()) -> None:
+def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_frac: float = 1.0, tag: str = "", exclude=(), final: bool = False) -> None:
     from ftm.data import io
 
     cfg = io.load_config(ds)
@@ -128,12 +128,13 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
     out_dir.mkdir(parents=True, exist_ok=True)
     Path("data/runs").mkdir(parents=True, exist_ok=True)
     cm = commit()
+    splits = ["train", "val", "test"] if final else ["train", "val"]  # final: the test rows are appended AFTER val (guarded: needs FTM_FINAL_RUN=1)
     meta = {"dataset": ds, "heldout_cycles": held, "mode": mode, "commit": cm, "seed": SEED, "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}}
     parts = []
     t0 = time.time()
     if mode == "see_everything":
-        frame = io.scan_transactions(pq, split=["train", "val"], columns=COLS, heldout_cycles=held).sort(["timestamp", "tx_id"]).collect()
-        codes = g.category_codes(frame)
+        frame = io.scan_transactions(pq, split=splits, columns=COLS, heldout_cycles=held).sort(["timestamp", "tx_id"]).collect()
+        codes = g.category_codes(frame.filter(pl.col("split") != "test"))  # codes from train/val rows only, as in the val run
         frame = g.encode_categoricals(frame, codes)  # memory: strings -> Int16
         res = g.score_graph(frame, codes, cut, seed=SEED, threads=threads, neg_frac=neg_frac, presorted=True)
         meta["graphs"]["all"] = res["meta"] | {"importances": res.get("importances")}
@@ -142,13 +143,15 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
     else:
         todo = [b for b in (banks or io.read_banks(cfg["views_dir"])["bank"].to_list()) if b not in exclude]
         for b in todo:
-            frame = io.scan_view(cfg["views_dir"], b, split=["train", "val"], columns=COLS, heldout_cycles=held, parquet_dir=pq).collect()
+            frame = io.scan_view(cfg["views_dir"], b, split=splits, columns=COLS, heldout_cycles=held, parquet_dir=pq).collect()
             frame = frame.with_columns((pl.col("from_bank") == b).cast(pl.Int8).alias("out"))  # bank knows its direction
-            res = g.score_graph(frame, g.category_codes(frame), cut, seed=SEED, threads=threads, extra_cols=["out"])
+            res = g.score_graph(frame, g.category_codes(frame.filter(pl.col("split") != "test")), cut, seed=SEED, threads=threads, extra_cols=["out"])
             meta["graphs"][str(b)] = res["meta"]
             parts.append(g.p0_table(res, mode, b, cm))
             print(f"bank {b}: {res['meta'].get('status')} {time.time() - t0:.0f}s", flush=True)
     df = pl.concat(parts)
+    if final:
+        return write_final(ds, mode, df, cm, time.time() - t0)
     sfx = f"__{tag}" if tag else ""
     df.write_parquet(out_dir / f"p0_{mode}{sfx}.parquet")
     meta["seconds"] = time.time() - t0
@@ -156,6 +159,25 @@ def run_dataset(ds: str, mode: str, threads: int, banks: list[int] | None, neg_f
     print("done", ds, mode, f"{time.time() - t0:.0f}s", flush=True)
     if not tag:
         combine(ds)
+
+
+def write_final(ds: str, mode: str, df: pl.DataFrame, cm: str, seconds: float) -> None:
+    """Final run: the test rows go to data/scores/<ds>/final/p0_<mode>.parquet (read them with `read_p0(ds, split="test")`, guarded). The
+    train and val rows of the same pass must equal the stored val-run p0 (features of earlier rows never see the later test rows, the
+    model and the calibrator are refit on the same data with the same seed): the maximum difference is recorded and must be 0."""
+    old = pl.read_parquet(Path("data/scores") / ds / f"p0_{mode}.parquet", columns=["tx_id", "bank", "p0", "split"])  # time-guard: not transactions
+    new = df.filter(pl.col("split") != "test").select("tx_id", "bank", pl.col("p0").alias("p0_new"))
+    j = old.join(new, on=["tx_id", "bank"], how="inner", nulls_equal=True)
+    both = j.filter(pl.col("p0").is_not_null() & pl.col("p0_new").is_not_null())
+    diff = float((both["p0"] - both["p0_new"]).abs().max()) if both.height else None
+    rec = {"dataset": ds, "mode": mode, "commit": cm, "seconds": seconds, "rows_compared": both.height, "rows_stored": old.height,
+           "null_mismatch": int((j["p0"].is_null() != j["p0_new"].is_null()).sum()), "max_abs_p0_diff_train_val": diff, "test_rows": int((df["split"] == "test").sum())}  # fmt: skip
+    (Path("data/scores") / ds / "final").mkdir(parents=True, exist_ok=True)
+    df.filter(pl.col("split") == "test").write_parquet(Path("data/scores") / ds / "final" / f"p0_{mode}.parquet")
+    Path(f"data/runs/final_p0_{ds}_{mode}.json").write_text(json.dumps(rec, indent=1))
+    print("final", json.dumps(rec), flush=True)
+    if diff is None or diff > 1e-9 or rec["null_mismatch"]:
+        raise SystemExit(f"final run does not reproduce the stored train/val p0 (max diff {diff}, null mismatches {rec['null_mismatch']}): do not use these test scores")
 
 
 def recalibrate(ds: str) -> None:
@@ -278,6 +300,7 @@ def main() -> None:
     ap.add_argument("--combine", action="store_true")
     ap.add_argument("--recalibrate", action="store_true", help="refit calibrators from stored raw scores")
     ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
+    ap.add_argument("--final", action="store_true", help="week 14: also score the TEST rows (needs FTM_FINAL_RUN=1, set by scripts/run_final.py only)")
     a = ap.parse_args()
     if a.repro:
         repro(a.csv, a.out, a.threads)
@@ -288,7 +311,7 @@ def main() -> None:
     elif a.report and a.data:
         report(a.data)
     elif a.data and a.mode:
-        run_dataset(a.data, a.mode, a.threads, a.banks, a.neg_frac, a.tag, a.exclude)
+        run_dataset(a.data, a.mode, a.threads, a.banks, a.neg_frac, a.tag, a.exclude, a.final)
     else:
         raise SystemExit("give --repro, or --data hi_small --mode one_bank|see_everything")
 

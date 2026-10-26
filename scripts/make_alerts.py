@@ -4,7 +4,8 @@ Owner: T1 (Abhishek).  Run from the repo root, e.g. python scripts/make_alerts.p
 
 Reads data/scores/<ds>/p0_one_bank.parquet (scripts/train_gfp.py), writes data/alerts/<ds>/{train,val}.parquet
 and data/runs/alerts_<ds>.json (miss rates vs targets, sweep, ablation, test-count projection).
-The test alert set and the 1,000-alert subset are NOT built: they need the test split (G3/G5 decision).
+The test alert set (`--final`, week 14, needs FTM_FINAL_RUN=1 and the test p0 of `scripts/train_gfp.py --final`) and the 1,000-alert subset (T4's run_final.py,
+`ftm.intake.alerts.stratified_subset`) are not built here.
 """
 
 from __future__ import annotations
@@ -65,13 +66,48 @@ def part_report(df: pl.DataFrame, th: dict, a_l: float, a_c: float) -> dict:
             "laundering_tx": pos_tx, "laundering_tx_alerted": hit_tx, "intake_miss_tx": 1 - hit_tx / max(pos_tx, 1)}  # fmt: skip
 
 
+def final_run(ds: str, cfg: dict) -> None:
+    """Week 14: the TEST alert set = the frozen val threshold applied to the test one-bank p0 (data/scores/<ds>/final/, written by
+    `scripts/train_gfp.py --final`). Locked: needs FTM_FINAL_RUN=1 (scripts/run_final.py). Nothing is calibrated or tuned on test.
+    Writes data/alerts/<ds>/test.parquet (schema of train/val, `val_part` null, plus `test_tail`: the sparse days after the bulk, to be
+    reported separately, decision 4) and data/runs/alerts_<ds>_test.json (counts, threshold, the val projection for comparison)."""
+    from ftm import guards
+    from ftm.baselines import gfp_gbt as g
+
+    guards.require_final_run("the test alert set")
+    dcfg = io.load_config(ds)
+    pq = dcfg["parquet_dir"]
+    val_run = json.loads(Path(f"data/runs/alerts_{ds}.json").read_text())
+    t_alert = val_run["thresholds"]["t_alert"]
+    p0 = g.read_p0(ds, mode="one_bank", split="test").filter(pl.col("p0").is_not_null() & pl.col("p0").is_not_nan())
+    tx = io.scan_transactions(pq, split="test", columns=["tx_id", "timestamp", "day", "from_bank", "to_bank"]).collect()
+    pat = io.scan_patterns(pq, split="test").select("tx_id", "attempt_id", "typology").collect()
+    att = io.scan_attempts(pq, split="test").select("attempt_id", "spans_split").collect()
+    d = al.frozen_alerts(p0.join(tx, on="tx_id"), t_alert).join(pat, on="tx_id", how="left")
+    d = al.test_alert_ids(d)
+    d = al.add_direction(al.add_span_flag(d, att)).with_columns((pl.col("day") > cfg["bulk_days"][ds]).alias("test_tail"))
+    cols = ["alert_id", "tx_id", "bank", "timestamp", "p0", "label", "attempt_id", "typology", "split", "val_part", "spans_split", "direction", "counterparty_bank", "test_tail"]
+    d = d.with_columns(pl.col("val_part").cast(pl.Utf8))  # null for test rows
+    adir = Path(dcfg["alerts_dir"])
+    d.select(cols).write_parquet(adir / "test.parquet")
+    bulk = d.filter(~pl.col("test_tail"))
+    out = {"dataset": ds, "t_alert_from_val": t_alert, "alpha_launder": val_run["alpha_launder_used"], "alerts": d.height, "positives": int(d["label"].sum()),
+           "bulk_alerts": bulk.height, "bulk_positives": int(bulk["label"].sum()), "tail_alerts": d.height - bulk.height, "unique_tx": d["tx_id"].n_unique(),
+           "projection_from_val": next(s for s in val_run["sweep"] if s["alpha_launder"] == val_run["alpha_launder_used"])["proj_test_alerts"], "targets": cfg["targets"]}  # fmt: skip
+    Path(f"data/runs/alerts_{ds}_test.json").write_text(json.dumps(out, indent=1, default=str))
+    print(json.dumps(out, indent=1, default=str))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--config", default="configs/intake/conformal.yaml")
     ap.add_argument("--alpha-launder", type=float, default=None)
+    ap.add_argument("--final", action="store_true", help="week 14: the test alert set from the frozen val threshold (needs FTM_FINAL_RUN=1)")
     a = ap.parse_args()
     cfg = yaml.safe_load(Path(a.config).read_text())
+    if a.final:
+        return final_run(a.data, cfg)
     a_l = a.alpha_launder if a.alpha_launder is not None else cfg["alpha_launder"][a.data]
     a_c = cfg["alpha_clean"]
     dcfg = io.load_config(a.data)

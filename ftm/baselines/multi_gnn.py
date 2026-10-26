@@ -22,6 +22,8 @@ from types import SimpleNamespace
 import numpy as np
 import polars as pl
 
+from ftm import guards
+
 MULTI_GNN_COMMIT = "252b0252afca109d1d216c411c59ff70753b25fc"
 # Multi-PNA with edge updates (EU), reverse message passing, ego IDs and port numbering = the paper's best HI-Small model.
 PNA_EU_ARGS = ["--model", "pna", "--emlps", "--reverse_mp", "--ego", "--ports"]
@@ -51,10 +53,12 @@ def edge_arrays(frame: pl.DataFrame, codes: dict | None = None):
 
     Returns (edge_index [2,E] int64, edge_attr [E,4] float32, y [E] int64, tx_id, n_nodes, codes). `codes` from the train graph.
     """
-    if (frame["split"] == "test").any():
-        raise ValueError("Multi-GNN input must not contain test rows")
-    if codes is None:
-        codes = {c: {v: i for i, v in enumerate(sorted(frame[c].unique().to_list()))} for c in ("receiving_currency", "payment_format")}
+    has_test = (frame["split"] == "test").any()
+    if has_test:
+        guards.require_final_run("test rows in the Multi-GNN input")  # raises TestSplitLocked unless FTM_FINAL_RUN=1
+    if codes is None:  # the codes come from the train/val rows only, so appending test rows (final run) cannot shift them
+        known = frame.filter(pl.col("split") != "test")
+        codes = {c: {v: i for i, v in enumerate(sorted(known[c].unique().to_list()))} for c in ("receiving_currency", "payment_format")}
     nodes = np.unique(np.concatenate([frame["src_id"].to_numpy(), frame["dst_id"].to_numpy()]))
     ei = np.stack([np.searchsorted(nodes, frame["src_id"].to_numpy()), np.searchsorted(nodes, frame["dst_id"].to_numpy())])
     ts = (frame["timestamp"].dt.epoch("s") - frame["timestamp"].dt.epoch("s").min()).to_numpy()
@@ -80,7 +84,7 @@ def _hetero(ei, ea, y, n_nodes, ns, mean=None, std=None):
 
 
 def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epochs: int, fit_mask: np.ndarray,
-                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False) -> dict:  # fmt: skip
+                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False, score_splits: tuple = ("val",)) -> dict:  # fmt: skip
     """Train Multi-PNA+EU on the train rows of `frame` (time-sorted, split in {train, val}), pick the epoch by AP on
     the val `fit` rows, return raw P(laundering) for every val row.
 
@@ -109,7 +113,7 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     cfg = SimpleNamespace(**json.loads((clone / "model_settings.json").read_text())["pna"]["params"])
     sp = frame["split"].to_numpy()
     ntr = int((sp == "train").sum())
-    assert (sp[:ntr] == "train").all() and (sp[ntr:] == "val").all(), "frame must be time-sorted with all train rows first"
+    assert (sp[:ntr] == "train").all() and np.isin(sp[ntr:], ["val", "test"]).all(), "frame must be time-sorted with all train rows first"
     ei, ea, y, txid, n_nodes, _ = edge_arrays(frame)
     t0 = time.time()
     tr, mean, std = _hetero(ei[:, :ntr], ea[:ntr], y[:ntr], n_nodes, ns)
@@ -156,7 +160,7 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
         return out
 
     rng = np.random.default_rng(seed)
-    vpos = np.arange(ntr, len(y))
+    vpos = np.flatnonzero(np.isin(sp, score_splits))  # val rows (the val run) or test rows (`score_splits=("test",)`, final run, resume=True, max_epochs=0)
     fpos = np.flatnonzero(fit_mask)
     sel = fpos[(y[fpos] == 1) | (rng.random(len(fpos)) < 0.1)]
     sw = np.where(y[sel] == 1, 1.0, 10.0)

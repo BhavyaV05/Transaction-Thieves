@@ -1,0 +1,110 @@
+diff --git a/data_config.json b/data_config.json
+index 728f324..7dd65b5 100644
+--- a/data_config.json
++++ b/data_config.json
+@@ -1,7 +1,7 @@
+ {
+     "paths": {
+-      "aml_data": "/path/to/data", 
+-      "model_to_load": "/path/to/model_you_want_to_load (e.g for inference or fine-tuning)",
+-      "model_to_save": "/path/to/model_save_location (where you want to store the model you are going to train)"
++      "aml_data": "/home/abhishekg/Documents/Transaction-Thieves/data/multignn", 
++      "model_to_load": "/home/abhishekg/Documents/Transaction-Thieves/data/mega_gnn/models",
++      "model_to_save": "/home/abhishekg/Documents/Transaction-Thieves/data/mega_gnn/models"
+     }
+   }
+\ No newline at end of file
+diff --git a/models.py b/models.py
+index 40dba34..0a13a05 100644
+--- a/models.py
++++ b/models.py
+@@ -486,7 +486,7 @@ class GnnHelper(torch.nn.Module):
+                     n_edge_index, n_edge_attr, inverse_indices  = self.edge_aggrs[i](edge_index, edge_attr, simp_edge_batch, times)
+                     x = (x + F.relu(self.batch_norms[i](self.convs[i](x, n_edge_index, n_edge_attr)))) / 2
+                     if self.edge_updates: 
+-                        remapped_edge_attr = torch.index_select(n_edge_attr, 0, inverse_indices) # artificall node attributes 
++                        remapped_edge_attr = n_edge_attr[inverse_indices] # artificall node attributes 
+                         edge_attr = edge_attr + self.emlps[i](torch.cat([x[src], remapped_edge_attr, edge_attr], dim=-1)) / 2
+                 else:
+                     x = (x + F.relu(self.batch_norms[i](self.convs[i](x, edge_index, edge_attr)))) / 2
+diff --git a/train_util.py b/train_util.py
+index e13cead..537365c 100644
+--- a/train_util.py
++++ b/train_util.py
+@@ -18,7 +18,7 @@ class AddEgoIds(BaseTransform):
+     def __init__(self):
+         pass
+ 
+-    def __call__(self, data: Union[Data, HeteroData]):
++    def forward(self, data: Union[Data, HeteroData]):
+         x = data.x if not isinstance(data, HeteroData) else data['node'].x
+         device = x.device
+         ids = torch.zeros((x.shape[0], 1), device=device)
+diff --git a/training.py b/training.py
+index e3912c1..e71e4be 100644
+--- a/training.py
++++ b/training.py
+@@ -16,6 +16,7 @@ from torch_scatter import scatter
+ import numpy as np
+ import os
+ import time
++import json
+ 
+ def lp_loss_fn(input1, input2):
+     return -torch.log(input1 + 1e-7).mean() - torch.log(1 - input2 + 1e-7).mean()
+@@ -23,6 +24,8 @@ def lp_loss_fn(input1, input2):
+ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, model, optimizer, loss_fn, args, config, device, val_data, te_data, data_config):
+     #training
+     best_val_f1 = 0
++    t_start = time.time()
++    budget = float(os.environ.get('T1_BUDGET_S', '1e18'))
+     for epoch in range(config.epochs):
+         total_loss = total_examples = 0
+         preds = []
+@@ -98,6 +101,8 @@ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, mod
+         logging.info(f'Test Auc: {te_auc:.4f}')
+ 
+         wandb.log({"Loss": total_loss/total_examples}, step=epoch)
++        with open(os.environ.get('T1_METRICS', 'metrics.jsonl'), 'a') as fh:
++            fh.write(json.dumps({'epoch': epoch, 'train_f1': f1, 'val_f1': val_f1, 'te_f1': te_f1, 'elapsed_s': time.time() - t_start}) + '\n')
+ 
+         if epoch == 0:
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+@@ -106,12 +111,17 @@ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, mod
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+             if args.save_model:
+                 save_model(model, optimizer, epoch, args, data_config)
++        if time.time() - t_start > budget:
++            logging.info('T1 time budget reached, stopping')
++            break
+     
+     return model
+ 
+ def train_hetero(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, model, optimizer, loss_fn, args, config, device, val_data, te_data, data_config):
+     #training
+     best_val_f1 = 0
++    t_start = time.time()
++    budget = float(os.environ.get('T1_BUDGET_S', '1e18'))
+     for epoch in range(config.epochs):
+         logging.info(f"---------- Epoch {epoch} ----------")
+         total_loss = total_examples = 0
+@@ -193,7 +203,8 @@ def train_hetero(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, m
+         logging.info(f'Test Auc: {te_auc:.4f}')
+ 
+         wandb.log({"Loss": total_loss/total_examples}, step=epoch)
+-
++        with open(os.environ.get('T1_METRICS', 'metrics.jsonl'), 'a') as fh:
++            fh.write(json.dumps({'epoch': epoch, 'train_f1': f1, 'val_f1': val_f1, 'te_f1': te_f1, 'elapsed_s': time.time() - t_start}) + '\n')
+ 
+         if epoch == 0:
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+@@ -202,6 +213,9 @@ def train_hetero(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, m
+             wandb.log({"best_test_f1": te_f1}, step=epoch)
+             if args.save_model:
+                 save_model(model, optimizer, epoch, args, data_config)
++        if time.time() - t_start > budget:
++            logging.info('T1 time budget reached, stopping')
++            break
+         
+     return model
+ 

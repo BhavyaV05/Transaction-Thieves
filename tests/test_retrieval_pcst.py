@@ -104,7 +104,7 @@ def test_select_views_k_alert_included_and_aliased(tmp_path):
     })  # fmt: skip
     i = n - 1
     masks = ev.select_views(cand, i, rng.random(n) ** 3, k=40)
-    assert set(masks) == set(ev.VIEWS)
+    assert set(masks) == set(ev.VIEWS) - set(ev.EXPLAINER_VIEWS)  # the explainer views need their scores (`explain=`)
     t = cand["timestamp"].dt.epoch("s").to_numpy().astype("f8")
     for name, m in masks.items():
         assert m[i] and (m.sum() <= 40 or name == "long_prompt") and (t[m] <= t[i]).all(), name
