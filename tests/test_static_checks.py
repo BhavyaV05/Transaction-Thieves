@@ -101,3 +101,55 @@ def test_harness_cannot_bypass_gate_or_accountant():
         except (GateBlocked, BudgetRefused):
             pass
     assert tools.eps_spent <= 2.0 + 1e-9 and acc.alert_spent["A1"] <= 2.0 + 1e-9
+
+
+def test_only_run_final_main_may_set_the_final_run_lock():
+    """T4: FTM_FINAL_RUN is assigned exactly once in ftm/ and scripts/, inside scripts/run_final.py::main (G5, after the
+    preflight). Any other write (os.environ[...] = ..., putenv, setdefault, update, a dict or env= handed to a child) fails.
+    Tests may set it (monkeypatch); they are not scanned."""
+    repo = Path(__file__).resolve().parents[1]
+
+    def names_lock(node):
+        return any(
+            (isinstance(c, ast.Constant) and c.value == "FTM_FINAL_RUN")
+            or (isinstance(c, ast.Name) and c.id == "FINAL_RUN_ENV")
+            or (isinstance(c, ast.Attribute) and c.attr == "FINAL_RUN_ENV")
+            for c in ast.walk(node)
+        )
+
+    class Finder(ast.NodeVisitor):
+        def __init__(self, rel):
+            self.rel, self.stack, self.hits = rel, ["<module>"], []
+
+        def visit_FunctionDef(self, node):
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def hit(self, node):
+            self.hits.append((self.rel, self.stack[-1], node.lineno))
+
+        def visit_Assign(self, node):
+            if any(isinstance(t, ast.Subscript) and names_lock(t) for t in node.targets):
+                self.hit(node)
+            self.generic_visit(node)
+
+        def visit_Call(self, node):
+            args = [*node.args, *(k.value for k in node.keywords)]
+            setters = {"putenv", "setdefault", "update", "setenv"}
+            if isinstance(node.func, ast.Attribute) and node.func.attr in setters and any(names_lock(a) for a in args):
+                self.hit(node)
+            self.generic_visit(node)
+
+        def visit_Dict(self, node):
+            if any(k is not None and names_lock(k) for k in node.keys):
+                self.hit(node)  # {"FTM_FINAL_RUN": "1"} built anywhere
+            self.generic_visit(node)
+
+    hits = []
+    for base in ("ftm", "scripts"):
+        for path in sorted((repo / base).rglob("*.py")):
+            finder = Finder(path.relative_to(repo).as_posix())
+            finder.visit(ast.parse(path.read_text()))
+            hits += finder.hits
+    assert [(f, fn) for f, fn, _ in hits] == [("scripts/run_final.py", "main")], hits

@@ -1,0 +1,74 @@
+# Final run (G5) job settings, read by ftm/final/plan.py and scripts/run_final.py (T4). Docs: docs/t4_final_run.md.
+# Owners fill in their commands below; everything else has a working default. Nothing here touches prereg/.
+#
+# An external_cmd job runs `cmd` (split with shlex, NO shell) from the repo root. It must write
+#   {out}/runlog.parquet   a run-log v1 file (ftm/eval/runlog.py): one `verdict` row per alert in {alert_ids}, with
+#                          system, variant, seed, split, alert_id, probability, p0 and the cost columns it has;
+#                          the `label` column must stay EMPTY (the analysis fills labels in; a run log with labels fails the job)
+# Placeholders: {out} {alert_ids} {alerts} {run_dir} {data} {seed} {system} {variant} {job_id} {machine} {run_id} {commit}
+# FTM_FINAL_RUN=1 is set in the environment of the command. Its stdout/stderr go to files in the job directory.
+
+data: hi_medium                  # headline dataset (HI-Medium test days 13-16 plus the tail, reported separately)
+seeds: [0]                       # one seed for every job (temperature 0); add seeds here for all jobs at once
+
+# Only for est_hours in the dry run, until the real test alert set is built (plan.md 6.3 projects 2,500-4,000).
+n_alerts_estimate: {full_test: 3000, subset: 1000}
+
+machines:
+  gpu_s3: {speed: 1.0}                    # RTX 5070 Ti, the reference machine (timing counts only from here)
+  gpu_s1: {speed: 0.5, enabled: true}     # RTX 3070 Ti, about half the speed; enabled: false if the backbone does not fit 8 GB
+  cpu: {}
+
+llm:
+  toolbox: harness                        # the real gate, accountant and clock in front of every bank
+  endpoint: null                          # null: --endpoint on the command line, else FTM_LLM_ENDPOINT
+  model: null                             # served model name; null: the chosen E18 candidate's served_model
+  serving_stack: null                     # vllm | llama.cpp, recorded in summary.json
+  # Extra scripts/run_llm_agent.py arguments for EVERY LLM job (T3/T4 fill in before 31 Oct), e.g.
+  #   ["--backtest", "data/backtest/hi_medium/<ns>/lr_table.jsonl", "--fusion-params", "outputs/fusion/params.json",
+  #    "--library", "outputs/library/frozen.json"]
+  common_args: []
+  # seconds per alert on the reference machine (estimates for scheduling only; replace with the val-run medians)
+  s_per_alert:
+    default: 7.5                          # docs/t3_first_runs.md, Qwen3-8B
+    ours: 7.5
+    react: 8
+    reflexion: 20
+    rewoo: 6
+    lats: 30
+    llmcompiler: 8
+    dspy_react: 8
+    debate_autogen: 25
+    uot: 10
+    bed_llm: 14
+    torres: 10
+    sharma: 12
+    co_investigator: 15
+    finfre_rag: 8
+  pin_gpu_s3: ["ours.compose.*"]          # job ids (fnmatch) that must run on the reference machine; the rest is balanced
+
+ours:
+  variants: [compose, fixed_list, act_only, no_backtest, llm_decides]   # planner modes (E3, E4, E9)
+  extra_variants: []                      # e.g. [batched_2_1, library] (E11, E13); give their args in variant_args
+  variant_args: {}                        # {batched_2_1: ["--batch-schedule", "2,1"], library: ["--library", "<frozen json>"]}
+
+# T1: the command that writes data/alerts/{data}/test.parquet (alert-set schema of ftm/intake/README.md, split=test).
+# Needed only if the file does not exist yet. It runs with FTM_FINAL_RUN=1, after the preflight.
+test_alerts:
+  path: data/alerts/{data}/test.parquet
+  cmd: null
+
+external_cmd:
+  # One command template per family, or one command per job (key: "system.variant" for both sets, or the full job id).
+  templates:
+    detection: null                       # T1: Groups A/B (e.g. "python scripts/final_detection.py --system {system} --mode {variant} --alert-ids {alert_ids} --out {out}")
+    non_llm_arm: null                     # T2: the non-LLM planners and ablation arms (variant = the arm name in configs/experiments/ablations_nonllm.yaml)
+  commands: {}                            # {"multi_gnn.see_everything": "python scripts/...", "nonllm.eig.subset": "..."}
+  machine_class: {}                       # overrides: {"fraudgt.see_everything": gpu_s3}
+  est_hours: {}                           # {"multi_gnn.see_everything": 3.0}
+  default_est_hours: 0.5
+
+# Anything else that belongs in the final run (one bank only, GFP see-everything, raw sharing, ...):
+extra_jobs: []
+#  - {system: gfp, variant: one_bank, alerts: [subset, full_test], machine_class: cpu, est_hours: 0.3, owner: T1, tier: core,
+#     cmd: "python scripts/...", depends_on: []}

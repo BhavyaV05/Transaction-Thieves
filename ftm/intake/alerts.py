@@ -58,18 +58,25 @@ def stratified_subset(alerts: pl.DataFrame, n: int = 1000, seed: int = 0, strata
     per non-empty stratum while the budget allows; draws are seeded.
     """
     guards.require_final_run("the stratified external 1,000-alert subset (built from test alerts)")
+    return stratify(alerts, n, seed, strata)
+
+
+def stratify(alerts: pl.DataFrame, n: int = 1000, seed: int = 0, strata: str = "bank_p0_decile") -> pl.DataFrame:
+    """The sampling rule of `stratified_subset` without the test lock: a pure function of the frame it is given.
+    Real runs go through `stratified_subset` (locked, scripts/run_final.py); this exists so the final-run script can be
+    rehearsed on synthetic alerts, which hold no test data."""
     keys = STRATA[strata]
     work = alerts.sort("alert_id")
     if strata == "bank_p0_decile":
         work = work.with_columns((pl.col("p0").rank("ordinal") * 10 // (pl.len() + 1)).cast(pl.Int32).alias("p0_decile"))
     else:
         work = work.with_columns(pl.col("typology").fill_null("none"))
-    g = work.group_by(keys).len()
+    g = work.group_by(keys, maintain_order=True).len().sort(keys)  # a fixed stratum order: the same ids on every machine
     size = g["len"].to_numpy().astype("f8")
     raw = size / size.sum() * n
     alloc = np.maximum(np.floor(raw).astype(int), 1)
     # trim / top up to exactly n, by remainder
-    order = np.argsort(-(raw - np.floor(raw)))
+    order = np.argsort(-(raw - np.floor(raw)), kind="stable")
     i = 0
     while alloc.sum() < n and i < 10 * len(alloc):
         alloc[order[i % len(alloc)]] += 1
