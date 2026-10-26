@@ -7,5 +7,5 @@
 #   when:   first step of scripts/run_final.py at G5, before any system runs on test
 #   record: the sha256 of the sorted alert_id list is written below and to the G5 run log
 #
-# rule_commit: (filled at G3)
+# rule_commit: 84c15b7 (configs/t1_final/subset_rule.yaml, sha256 8b060b3f9b8ac6a9...; the code path is ftm.intake.alerts.stratified_subset, T1 code commit 2edfe4f)
 # subset_sha256: (filled at G5)
