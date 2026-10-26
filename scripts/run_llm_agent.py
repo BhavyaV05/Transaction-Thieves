@@ -142,11 +142,13 @@ def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: 
 
 
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
-                only_ids: set[str] | None = None, offset: int = 0) -> list[tuple[AlertContext, int | None]]:
+                only_ids: set[str] | None = None, offset: int = 0,
+                evidence_view: str | None = None) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
-    Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`."""
+    Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`.
+    `evidence_view` (E8 / H6): replace the week-2 stub's trail with T1's `evidence_views.view(alert, name, k)` text."""
     from ftm.data import alias, io
-    from ftm.retrieval import views
+    from ftm.retrieval import evidence_views, views
 
     if split == "test":
         guards.require_final_run("test alerts")
@@ -163,6 +165,8 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
         _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
+        if evidence_view is not None:  # same aliases (seed 0); the stub call above still sets home_bank for alert_summary
+            trail = evidence_views.view(a, evidence_view, k, data=data).text
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
         edges = receiver_edges(cfg["views_dir"], a["bank"], row["dst_id"], row["timestamp"])  # not the evidence view
@@ -293,6 +297,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")
     ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
+    ap.add_argument("--evidence-view", default=None,
+                    help="E8 / H6: amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (T1's view(); "
+                         "default: the week-2 stub)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
     ap.add_argument("--record", type=Path, default=None, help="record LLM calls to this cassette")
     ap.add_argument("--replay", type=Path, default=None, help="replay a cassette (implies --llm mock, strict)")
@@ -387,7 +394,7 @@ def main(argv: list[str] | None = None) -> int:
         if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
-        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset)
+        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset, a.evidence_view)
         if variant == "harness":  # offer only banks the harness can answer for (the first run offered 29, the world has 27)
             world = modelled_banks(tools)
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
@@ -435,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
-               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking,
+               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view,
                "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,
                "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
                "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
