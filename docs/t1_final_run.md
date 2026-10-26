@@ -38,7 +38,7 @@ Hours are for the stated machine; the 3070 Ti numbers are measured on the valida
 | 11 | FraudGT full run + prediction dump | 5070 Ti | ~6 (val: 97 s per epoch on the laptop, 13.5 h for 500 epochs) | patch update |
 | 12 | HI-Medium see-everything: **val runs first** (GFP: `train_gfp.py --data hi_medium --mode see_everything --neg-frac 0.1 --threads 16`, Multi-GNN and MEGA: `train_gnn.py --our-split --data hi_medium --mode see_everything --budget-s 28800`), then `--final` | 5070 Ti | val runs several hours each (GFP > 2 h on the laptop without finishing; GNNs need 24 GB RAM), final ~1 each | none of the above |
 
-Total on the laptop for steps 0 to 10: about 13 hours, of which 5 to 6 are GPU (4, 5, 10) and the rest CPU, so the CPU steps (1, 3, 7, 8, 9) can overlap the GPU steps. Steps 11 and 12 are the 5070 Ti's. Half of the LLM investigations on the laptop (tracks 3.9) would need the GPU free for the hours of the LLM server; the schedule above leaves it free after step 10.
+Total on the laptop for steps 0 to 10: about 18 hours, of which about 8 are GPU (4, 5, 10) and the rest CPU, so the CPU steps (1, 3, 7, 8, 9) can overlap the GPU steps. Steps 11 and 12 are the 5070 Ti's. Half of the LLM investigations on the laptop (tracks 3.9) would need the GPU free for the hours of the LLM server; the schedule above leaves it free after step 10.
 
 ## What `scripts/run_final.py` (T4) must call for T1
 
