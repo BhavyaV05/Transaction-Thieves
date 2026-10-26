@@ -292,7 +292,7 @@ def make_toolbox(seed: int = 0, mode: str = "mock", n_banks: int = 30, data: str
 
     mode "mock": random typed answers from banks 1..n_banks, through the real gate and accountant (offline dev).
     mode "world": the real partner banks and alerts of `data` ("hi_small"): replies come from the ledgers with real
-    noise. `split` is train or val; the test split cannot be loaded.
+    noise. `split` is train or val (test only under the G5 lock, FTM_FINAL_RUN=1).
     """
     with open(PRIVACY_CONFIG, encoding="utf-8") as f:
         acc = PrivacyAccountant.from_config(yaml.safe_load(f))
