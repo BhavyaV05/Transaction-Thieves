@@ -182,6 +182,10 @@ The long prompt of the same alert holds only the newest 57 of the 12,860 edges (
 
 **V000940**: 3 pattern edges among 31,550 candidates; the top-40 by amount and the scorer alone hold none of them, scorer + PCST holds all 3 inside a 40-edge trail (about 2,700 tokens). **V000935**: a false alert with no pattern edge; the trail is 2 edges (about 130 tokens) against 40 large unrelated payments (about 2,800 tokens): "nothing connected to this payment in the window" is also information. Rerun the command for the full output.
 
+## Final-run modes (weeks 12-13)
+
+`python -m ftm.retrieval.edge_scorer --data <ds> --final` scores the test edges with the val run's model (the val edges of the same pass must reproduce `edge_scores.parquet`), `python scripts/run_explainers.py --data <ds> --final` explains the test alerts, and `python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer` evaluates the views on the test alert set (`data/alerts/<ds>/test.parquet`); `view("F000123", ...)` on a test alert reads edges of train, val and test up to its time. All need `FTM_FINAL_RUN=1`, are unit-tested on synthetic data and have not been run on real test data (`docs/t1_final_run.md`).
+
 ## Files
 
 - `edge_scorer.py`: features (`edge_features`, `timeline_features`), `train_scorer` (M3), a tiny sklearn baseline.

@@ -71,11 +71,18 @@ def gnn(model: str, ds: str, mode: str) -> dict:
         return {"status": "blocked_compute" if ds == "hi_medium" and mode == "see_everything" else "not_run",
                 "val_command": f"python scripts/train_gnn.py --our-split --model {model} --data {ds} --mode {mode} --max-epochs 100 --budget-s 28800"}  # fmt: skip
     per = {}
+    tab = Path("data/scores") / ds / f"p0_{model}__{mode}.parquet"
+    commits = {}
+    if tab.exists():  # the commit that produced each graph's rows (bank 1 of HI-Small was retrained after an accidental overwrite, week 10)
+        import polars as pl
+
+        c = pl.read_parquet(tab, columns=["bank", "commit"]).unique()  # time-guard: not transactions
+        commits = {("all" if b is None else str(b)): cm for b, cm in c.iter_rows()}
     for k, g in d["graphs"].items():
         hist = g["history"]
         best = max(hist, key=lambda h: h["fit_ap"]) if hist else None
         per[k] = {"epochs_run": len(hist), "best_epoch_by_val_fit_ap": best["epoch"] if best else None, "best_val_fit_ap": g["best_fit_ap"],
-                  "calibration": g["calibration"], "train_edges": g["train_edges"], "train_pos": g["train_pos"]}  # fmt: skip
+                  "calibration": g["calibration"], "train_edges": g["train_edges"], "train_pos": g["train_pos"], "commit": commits.get(k)}  # fmt: skip
     return {"status": "val_done", "seed": d["seed"], "commit": d["commit"], "batch_size": d["batch_size"], "neighbours": d["neighbours"], "val_cut": d["val_cut"],
             "skipped": d.get("skipped", {}), "models": per if mode == "one_bank" else per.get("all", per),
             "val_command": f"python scripts/train_gnn.py --our-split --model {model} --data {ds} --mode {mode} --max-epochs 100",

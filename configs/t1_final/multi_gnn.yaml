@@ -28,6 +28,7 @@ hi_small:
         calibration: 'skipped: no val-fit positives'
         train_edges: 18446
         train_pos: 10
+        commit: 4c13ffe
       '119':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 17
@@ -35,6 +36,7 @@ hi_small:
         calibration: platt
         train_edges: 18377
         train_pos: 56
+        commit: 4c13ffe
       '1674':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 0
@@ -42,6 +44,7 @@ hi_small:
         calibration: 'skipped: no val-fit positives'
         train_edges: 18152
         train_pos: 15
+        commit: 4c13ffe
       '1588':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 76
@@ -49,6 +52,7 @@ hi_small:
         calibration: platt
         train_edges: 18062
         train_pos: 15
+        commit: 4c13ffe
       '70':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 74
@@ -56,6 +60,7 @@ hi_small:
         calibration: isotonic
         train_edges: 271928
         train_pos: 390
+        commit: 4c13ffe
       '10':
         epochs_run: 74
         best_epoch_by_val_fit_ap: 63
@@ -63,6 +68,7 @@ hi_small:
         calibration: platt
         train_edges: 70319
         train_pos: 52
+        commit: 4c13ffe
       '12':
         epochs_run: 76
         best_epoch_by_val_fit_ap: 52
@@ -70,6 +76,7 @@ hi_small:
         calibration: platt
         train_edges: 69805
         train_pos: 78
+        commit: 4c13ffe
       '1':
         epochs_run: 90
         best_epoch_by_val_fit_ap: 29
@@ -77,6 +84,7 @@ hi_small:
         calibration: platt
         train_edges: 52520
         train_pos: 37
+        commit: f40e51a
       '15':
         epochs_run: 95
         best_epoch_by_val_fit_ap: 73
@@ -84,6 +92,7 @@ hi_small:
         calibration: platt
         train_edges: 48847
         train_pos: 34
+        commit: 4c13ffe
       '220':
         epochs_run: 98
         best_epoch_by_val_fit_ap: 31
@@ -91,6 +100,7 @@ hi_small:
         calibration: platt
         train_edges: 46712
         train_pos: 16
+        commit: 4c13ffe
       '20':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 27
@@ -98,6 +108,7 @@ hi_small:
         calibration: platt
         train_edges: 35769
         train_pos: 44
+        commit: 4c13ffe
       '3':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 32
@@ -105,6 +116,7 @@ hi_small:
         calibration: platt
         train_edges: 35066
         train_pos: 13
+        commit: 4c13ffe
       '7':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 13
@@ -112,6 +124,7 @@ hi_small:
         calibration: platt
         train_edges: 30798
         train_pos: 14
+        commit: 4c13ffe
       '211':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 78
@@ -119,6 +132,7 @@ hi_small:
         calibration: platt
         train_edges: 28870
         train_pos: 38
+        commit: 4c13ffe
       '28':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 29
@@ -126,6 +140,7 @@ hi_small:
         calibration: platt
         train_edges: 28160
         train_pos: 16
+        commit: 4c13ffe
       '1665':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 1
@@ -133,6 +148,7 @@ hi_small:
         calibration: platt
         train_edges: 27858
         train_pos: 21
+        commit: 4c13ffe
       '116':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 4
@@ -140,6 +156,7 @@ hi_small:
         calibration: platt
         train_edges: 27930
         train_pos: 27
+        commit: 4c13ffe
       '11':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 72
@@ -147,6 +164,7 @@ hi_small:
         calibration: platt
         train_edges: 24945
         train_pos: 33
+        commit: 4c13ffe
       '22':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 60
@@ -154,6 +172,7 @@ hi_small:
         calibration: platt
         train_edges: 24669
         train_pos: 24
+        commit: 4c13ffe
       '1292':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 9
@@ -161,6 +180,7 @@ hi_small:
         calibration: platt
         train_edges: 23683
         train_pos: 12
+        commit: 4c13ffe
       '118':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 85
@@ -168,6 +188,7 @@ hi_small:
         calibration: platt
         train_edges: 23429
         train_pos: 17
+        commit: 4c13ffe
       '23':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 21
@@ -175,6 +196,7 @@ hi_small:
         calibration: platt
         train_edges: 23145
         train_pos: 25
+        commit: 4c13ffe
       '14':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 34
@@ -182,6 +204,7 @@ hi_small:
         calibration: platt
         train_edges: 22081
         train_pos: 11
+        commit: 4c13ffe
       '1362':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 59
@@ -189,6 +212,7 @@ hi_small:
         calibration: platt
         train_edges: 21972
         train_pos: 24
+        commit: 4c13ffe
       '6':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 18
@@ -196,6 +220,7 @@ hi_small:
         calibration: platt
         train_edges: 21984
         train_pos: 5
+        commit: 4c13ffe
       '4':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 38
@@ -203,6 +228,7 @@ hi_small:
         calibration: platt
         train_edges: 21170
         train_pos: 19
+        commit: 4c13ffe
       '214':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 13
@@ -210,6 +236,7 @@ hi_small:
         calibration: platt
         train_edges: 20351
         train_pos: 16
+        commit: 4c13ffe
       '1420':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 10
@@ -217,6 +244,7 @@ hi_small:
         calibration: platt
         train_edges: 19675
         train_pos: 27
+        commit: 4c13ffe
       '213':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 9
@@ -224,6 +252,7 @@ hi_small:
         calibration: platt
         train_edges: 19623
         train_pos: 23
+        commit: 4c13ffe
       '410':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 71
@@ -231,6 +260,7 @@ hi_small:
         calibration: platt
         train_edges: 19440
         train_pos: 21
+        commit: 4c13ffe
     val_command: python scripts/train_gnn.py --our-split --model multi_gnn --data hi_small --mode one_bank --max-epochs 100
     inputs:
     - data/parquet/hi_small/transactions.parquet
@@ -255,6 +285,7 @@ hi_small:
       calibration: isotonic
       train_edges: 3248921
       train_pos: 2530
+      commit: 620d08c
     val_command: python scripts/train_gnn.py --our-split --model multi_gnn --data hi_small --mode see_everything --max-epochs 100
     inputs:
     - data/parquet/hi_small/transactions.parquet
@@ -281,6 +312,7 @@ hi_medium:
         calibration: platt
         train_edges: 1734608
         train_pos: 2437
+        commit: '4424491'
       '12':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 92
@@ -288,6 +320,7 @@ hi_medium:
         calibration: isotonic
         train_edges: 133445
         train_pos: 159
+        commit: '4424491'
       '11':
         epochs_run: 93
         best_epoch_by_val_fit_ap: 76
@@ -295,6 +328,7 @@ hi_medium:
         calibration: isotonic
         train_edges: 133018
         train_pos: 219
+        commit: '4424491'
       '27':
         epochs_run: 91
         best_epoch_by_val_fit_ap: 90
@@ -302,6 +336,7 @@ hi_medium:
         calibration: isotonic
         train_edges: 128086
         train_pos: 96
+        commit: '4424491'
       '0':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 53
@@ -309,6 +344,7 @@ hi_medium:
         calibration: isotonic
         train_edges: 123353
         train_pos: 230
+        commit: '4424491'
       '20':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 8
@@ -316,6 +352,7 @@ hi_medium:
         calibration: isotonic
         train_edges: 121014
         train_pos: 267
+        commit: '4424491'
       '112':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 32
@@ -323,6 +360,7 @@ hi_medium:
         calibration: platt
         train_edges: 84554
         train_pos: 27
+        commit: '4424491'
       '29':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 5
@@ -330,6 +368,7 @@ hi_medium:
         calibration: platt
         train_edges: 78705
         train_pos: 69
+        commit: '4424491'
       '14':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 11
@@ -337,6 +376,7 @@ hi_medium:
         calibration: platt
         train_edges: 76474
         train_pos: 105
+        commit: '4424491'
       '15':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 19
@@ -344,6 +384,7 @@ hi_medium:
         calibration: platt
         train_edges: 74108
         train_pos: 69
+        commit: '4424491'
       '4':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 21
@@ -351,6 +392,7 @@ hi_medium:
         calibration: platt
         train_edges: 73879
         train_pos: 67
+        commit: '4424491'
       '25':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 9
@@ -358,6 +400,7 @@ hi_medium:
         calibration: platt
         train_edges: 71520
         train_pos: 65
+        commit: '4424491'
       '114':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 91
@@ -365,6 +408,7 @@ hi_medium:
         calibration: platt
         train_edges: 69932
         train_pos: 18
+        commit: '4424491'
       '3':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 24
@@ -372,6 +416,7 @@ hi_medium:
         calibration: platt
         train_edges: 69507
         train_pos: 116
+        commit: '4424491'
       '6':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 18
@@ -379,6 +424,7 @@ hi_medium:
         calibration: isotonic
         train_edges: 65227
         train_pos: 111
+        commit: '4424491'
       '2310':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 71
@@ -386,6 +432,7 @@ hi_medium:
         calibration: platt
         train_edges: 61510
         train_pos: 114
+        commit: '4424491'
       '111':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 17
@@ -393,6 +440,7 @@ hi_medium:
         calibration: platt
         train_edges: 61580
         train_pos: 42
+        commit: '4424491'
       '214':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 84
@@ -400,6 +448,7 @@ hi_medium:
         calibration: platt
         train_edges: 60022
         train_pos: 95
+        commit: '4424491'
       '113':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 7
@@ -407,6 +456,7 @@ hi_medium:
         calibration: platt
         train_edges: 59623
         train_pos: 16
+        commit: '4424491'
       '1208':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 62
@@ -414,6 +464,7 @@ hi_medium:
         calibration: platt
         train_edges: 59501
         train_pos: 111
+        commit: '4424491'
       '2597':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 37
@@ -421,6 +472,7 @@ hi_medium:
         calibration: platt
         train_edges: 55820
         train_pos: 78
+        commit: '4424491'
       '28':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 11
@@ -428,6 +480,7 @@ hi_medium:
         calibration: platt
         train_edges: 52767
         train_pos: 21
+        commit: '4424491'
       '544':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 17
@@ -435,6 +488,7 @@ hi_medium:
         calibration: platt
         train_edges: 52302
         train_pos: 73
+        commit: '4424491'
       '210':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 22
@@ -442,6 +496,7 @@ hi_medium:
         calibration: platt
         train_edges: 51557
         train_pos: 10
+        commit: '4424491'
       '741':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 57
@@ -449,6 +504,7 @@ hi_medium:
         calibration: platt
         train_edges: 50411
         train_pos: 85
+        commit: '4424491'
       '1818':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 24
@@ -456,6 +512,7 @@ hi_medium:
         calibration: platt
         train_edges: 50302
         train_pos: 66
+        commit: '4424491'
       '1601':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 81
@@ -463,6 +520,7 @@ hi_medium:
         calibration: platt
         train_edges: 48749
         train_pos: 77
+        commit: '4424491'
       '1046':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 21
@@ -470,6 +528,7 @@ hi_medium:
         calibration: platt
         train_edges: 48500
         train_pos: 46
+        commit: '4424491'
       '26':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 24
@@ -477,6 +536,7 @@ hi_medium:
         calibration: platt
         train_edges: 48590
         train_pos: 37
+        commit: '4424491'
       '2776':
         epochs_run: 100
         best_epoch_by_val_fit_ap: 17
@@ -484,6 +544,7 @@ hi_medium:
         calibration: platt
         train_edges: 48010
         train_pos: 64
+        commit: '4424491'
     val_command: python scripts/train_gnn.py --our-split --model multi_gnn --data hi_medium --mode one_bank --max-epochs 100
     inputs:
     - data/parquet/hi_medium/transactions.parquet
