@@ -1,0 +1,49 @@
+# Inputs of scripts/final_analysis.py that are not run logs. Owner: T4 (Shreyas).  Read by ftm/eval/final.py.
+# Paths are relative to the repo root (or absolute); null = not provided, and whatever needs it is reported `not_run`
+# with the reason. Labels come only from the alert table below, never from a run log.
+# `{split}` in a path is replaced by val or test. Nothing here is read before the run logs are loaded and validated.
+#
+# A score table is a parquet with the columns `key` (they must also exist in the alert table) and `value` (a probability);
+# `filter` keeps the rows with those column values (T1's p0 files hold both modes: filter {mode: see_everything}).
+
+alerts:
+  # One row per alert: alert_id, label (0/1), attempt_id (null if none), the two account columns, and optionally
+  # home_bank, typology, p0 (the one-bank score), tx_id, test_part (bulk | tail), val_part, spans_split, day.
+  # T1's data/alerts/<ds>/{val,test}.parquet has everything but the two account ids, which come from the transactions:
+  # build the table once with `python scripts/final_analysis.py --build-alert-table` (see docs/t4_final_analysis.md).
+  path: null                        # e.g. outputs/analysis/inputs/alerts_{split}.parquet
+  account_cols: [src_id, dst_id]
+  headline: {val: {val_part: [eval]}, test: {test_part: [bulk]}}   # the rows of every headline number
+  tail: {val: {}, test: {test_part: [tail]}}                       # reported separately, never pooled
+  cluster_hub_cap: null             # overridden by fixed_on_val.json; prereg: set if the largest cluster share passes 0.2
+
+# per-alert probabilities from outside the run logs
+scores:
+  one_bank:                 {path: null, key: [alert_id], value: p0, filter: {}}   # null: the p0 column of the alert table
+  gfp_see_everything:       {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything, model: gfp_lgbm}}
+  best_sota_see_everything: {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}}   # e.g. T1's p0_multi_gnn.parquet
+  dp_fedavg:                {path: null, key: [alert_id], value: p0, filter: {}, eps_label: null}         # T1; training-time eps, other unit than per-question eps
+  # Group A detection models for Table 5a / tab_baselines (one-bank and see-everything of each); optional
+  multi_gnn_one_bank:       {path: null, key: [tx_id, bank], value: p0, filter: {mode: one_bank},       group: A, label: "Multi-GNN, one bank"}
+  multi_gnn_see_everything: {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "Multi-GNN, see everything"}
+  fraudgt_one_bank:         {path: null, key: [tx_id, bank], value: p0, filter: {mode: one_bank},       group: A, label: "FraudGT, one bank"}
+  fraudgt_see_everything:   {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "FraudGT, see everything"}
+  mega_gnn_one_bank:        {path: null, key: [tx_id, bank], value: p0, filter: {mode: one_bank},       group: A, label: "MEGA-GNN, one bank"}
+  mega_gnn_see_everything:  {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "MEGA-GNN, see everything"}
+  layerwise_exchange:       {path: null, key: [alert_id], value: p0, filter: {}, group: B, label: "Layer-wise exchange (AML federated)"}
+
+# all rows of the headline period, for "end-to-end over all rows with the intake miss rate beside it".
+# columns: label, p0 (one bank), alert_id (null for auto-cleared rows), attempt_id, src_id, dst_id, optional spans_split,
+# optional p_<score name> (the upper limits on every row).
+rows:
+  path: null
+
+fusion:
+  params: null                      # JSON from Fusion.params(): the fusion used for the questions-only score (null = naive)
+
+# values fixed on validation: written by `--split val` to <outdir>/fixed_on_val.json; `--split test` needs that file
+fixed_on_val: null                  # path to fixed_on_val.json
+
+e18: {summary_csv: null}            # outputs/e18/stage2/summary.csv (T3's E18 table)
+fast_model: {path: null}            # JSON with {"decision_types": [{name, alpha, error_marginal, kept, speedup, brier_delta}]}
+evidence_edges: {path: null}        # parquet: view, alert_id, pattern_edge_share (H6; T1's retrieval views)
