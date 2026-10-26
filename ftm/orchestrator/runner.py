@@ -20,26 +20,36 @@ from ftm.dsl.expert import expert_programs, expert_ranking
 from ftm.dsl.parser import gate_validator
 from ftm.harness.runlog_rows import verdict_rows
 from ftm.harness.toolbox import Harness
+from ftm.planners.learned import LearnedPolicyPlanner
 from ftm.planners.pool import QuestionPool
 from ftm.planners.simple import EIGPlanner, EnumeratorPlanner, FixedOrderPlanner, RandomPlanner
 from ftm.privacy.accountant import PrivacyAccountant
 from ftm.types import Limits
 
-SYSTEMS = ("random", "fixed", "eig", "enumerator")
+SYSTEMS = ("random", "fixed", "eig", "enumerator")  # need nothing but the pool
+ALL_SYSTEMS = (*SYSTEMS, "learned")  # the learned policy also needs a fitted `LearnedPolicy` (scripts/train_policy.py)
 
 
 def build_planner(system: str, pool: QuestionPool, seed: int = 0, eps: float = 1.0, threshold: float | None = None,
-                  ranking: Sequence[str] | None = None, max_size: int = 4, waves: tuple[int, ...] | None = None):  # fmt: skip
-    """`waves`: batched mode (E13), e.g. (2, 1) = two questions asked together, then one more."""
+                  ranking: Sequence[str] | None = None, max_size: int = 4, waves: tuple[int, ...] | None = None,
+                  policy=None, fusion=None, one_per_family: bool = True):  # fmt: skip
+    """`waves`: batched mode (E13), e.g. (2, 1) = two questions asked together, then one more. `policy`: the fitted
+    `LearnedPolicy` for system "learned". `fusion`: T4's fitted `Fusion` (None: summed log-LRs). `one_per_family=False`
+    lets a template be asked more than once per alert (an ablation)."""
+    kw = {"threshold": threshold, "waves": waves, "fusion": fusion, "one_per_family": one_per_family}
+    if system == "learned":
+        if policy is None:
+            raise ValueError("system 'learned' needs policy= (train it with scripts/train_policy.py)")
+        return LearnedPolicyPlanner(pool, policy=policy, **kw)
     if system == "random":
-        return RandomPlanner(pool, threshold=threshold, waves=waves, seed=seed)
+        return RandomPlanner(pool, seed=seed, **kw)
     if system == "fixed":
-        return FixedOrderPlanner(pool, threshold=threshold, waves=waves, ranking=tuple(ranking or expert_ranking()), eps=eps)
+        return FixedOrderPlanner(pool, ranking=tuple(ranking or expert_ranking()), eps=eps, **kw)
     if system == "eig":
-        return EIGPlanner(pool, threshold=threshold, waves=waves)
+        return EIGPlanner(pool, **kw)
     if system == "enumerator":
-        return EnumeratorPlanner(pool, threshold=threshold, waves=waves, max_size=max_size)
-    raise ValueError(f"system must be one of {SYSTEMS}")
+        return EnumeratorPlanner(pool, max_size=max_size, **kw)
+    raise ValueError(f"system must be one of {ALL_SYSTEMS}")
 
 
 @dataclass

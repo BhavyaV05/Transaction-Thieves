@@ -12,6 +12,15 @@ Modes:
 Fitted modes are fit jointly on validation alerts, so overlapping questions and the base score are not
 double-counted. A family not seen in fitting gets the shared prior weight (1 after shrinkage).
 
+v1 (week 10): `prior`. The ridge pulls a toward 1 in both cases; it pulls the weights w toward `prior`:
+- "naive" (default, unchanged): w -> 1, "trust the back-tested LR unless validation says otherwise".
+- "zero":  w -> 0, "ignore the evidence unless validation supports it". The right prior if naive fusion hurts
+           (G2 on real data: docs/t4_fusion_findings.md). With a huge ridge the model is p0 up to the free intercept c.
+`fit_cv` picks (ridge, prior) by cluster-grouped cross-validated Brier inside the fit set. The grid runs from weak to
+strong shrinkage under both priors; its strongest ridge is close to naive fusion under "naive" and close to p0 under
+"zero", so the choice is "use the evidence, partly use it, or leave p0 alone". The hyperparameters are chosen on validation only (never
+test), and the chosen setting must be pre-registered in prereg/ before G3.
+
 Input format for answers (proposal for hand-off #9 with T2): one row per answered question,
 (alert_id, family, log_lr), where log_lr = log LR_f(answer) from the back-test table, already clipped at the
 privacy ceiling. Declines and timeouts contribute nothing (no row).
@@ -26,6 +35,8 @@ import numpy as np
 from scipy.optimize import minimize
 
 P_CLIP = 1e-6
+PRIORS = ("naive", "zero")
+RIDGES = (1.0, 10.0, 100.0, 1000.0)  # pseudo-observations: the ridge is divided by n like the data term
 
 
 def logit(p) -> np.ndarray:
@@ -79,6 +90,7 @@ class Fusion:
     c: float = 0.0
     ridge: float = 1.0
     fitted: bool = False
+    prior: str = "naive"  # where the ridge pulls the weights w: "naive" (1) or "zero" (0)
 
     def _check(self, p0, X):
         p0 = _numeric(p0, "p0")
@@ -99,9 +111,12 @@ class Fusion:
         return self.w
 
     def fit(self, p0, X, y, sample_weight=None) -> Fusion:
-        """Penalised log-loss fit of (a, w, c). Ridge pulls a and w toward 1 (naive Bayes); c is free."""
+        """Penalised log-loss fit of (a, w, c). Ridge pulls a toward 1 and w toward 1 (prior "naive", Bayes) or
+        0 (prior "zero", ignore the evidence); c is free."""
         p0, X = self._check(p0, X)
         y = _numeric(y, "y")
+        if self.prior not in PRIORS:
+            raise ValueError(f"prior must be one of {PRIORS}, got {self.prior!r}")
         if self.mode == "naive":
             self.fitted = True
             return self
@@ -111,7 +126,7 @@ class Fusion:
         z0 = logit(p0)
         F = X.sum(axis=1, keepdims=True) if self.mode == "shared" else X
         D = np.column_stack([z0, F, np.ones(len(y))])  # columns: a, w..., c
-        prior = np.r_[1.0, np.ones(F.shape[1]), 0.0]
+        prior = np.r_[1.0, np.full(F.shape[1], 1.0 if self.prior == "naive" else 0.0), 0.0]
         pen = np.r_[np.ones(1 + F.shape[1]), 0.0] * self.ridge
         n = sw.sum()
 
@@ -137,7 +152,7 @@ class Fusion:
     def params(self) -> dict:
         w = [1.0] if self.mode == "naive" or not self.fitted else self.w.tolist()
         return {"mode": self.mode, "families": list(self.families), "a": self.a, "w": w, "c": self.c,
-                "ridge": self.ridge, "fitted": self.fitted}  # fmt: skip
+                "ridge": self.ridge, "prior": self.prior, "fitted": self.fitted}  # fmt: skip
 
 
 def posterior(p0: float, log_lrs_by_family: dict, model: Fusion | None = None) -> float:
@@ -175,3 +190,45 @@ def shuffled_answers_test(p0, X, y, mode: str = "shared", folds=None, n_folds: i
             pred[te] = m.predict(p0[te], feats[te])
         out[f"gain_{name}"] = float(np.mean((p0 - y) ** 2) - np.mean((pred - y) ** 2))
     return out
+
+
+def fold_labels(clusters, n_folds: int, seed: int) -> np.ndarray:
+    """A fold per alert, with every cluster whole in one fold (related alerts are never split between fit and score)."""
+    clusters = np.asarray(clusters)
+    uniq = np.unique(clusters)
+    k = max(1, min(n_folds, len(uniq)))
+    fold_of = dict(zip(np.random.default_rng(seed).permutation(uniq), np.arange(len(uniq)) % k, strict=True))
+    return np.array([fold_of[c] for c in clusters])
+
+
+def fit_cv(p0, X, y, clusters, mode: str = "per_family", ridges: Sequence[float] = RIDGES,
+           priors: Sequence[str] = PRIORS, n_folds: int = 5, seed: int = 0, families: Sequence | None = None,
+           ) -> tuple[Fusion, dict]:  # fmt: skip
+    """Fit `mode` fusion with (ridge, prior) chosen by cluster-grouped cross-validated Brier inside the fit set.
+
+    Every (prior, ridge) of the grid is fitted on k-1 folds of whole clusters and scored on the held-out fold;
+    the pair with the lowest pooled held-out Brier wins (ties go to the earlier pair of the grid, so list the
+    cautious setting first), and is then refitted on all the rows given. The rows given are the only data used,
+    so call it on validation alerts only: never on test, and never with the rows it will be scored on (for an
+    honest score on validation, wrap it in an outer cross-fit: `ftm.eval.g2.crossfit_posterior(select="cv")`).
+    The chosen setting must be pre-registered in prereg/ before G3.
+
+    Returns (fitted Fusion, info) with info = {"ridge", "prior", "n_folds", "cv_brier": {"prior/ridge": Brier}}.
+    """
+    p0, X, y = _numeric(p0, "p0"), _numeric(X, "X"), _numeric(y, "y")
+    X = X[:, None] if X.ndim == 1 else X
+    folds = fold_labels(clusters, n_folds, seed)
+    nf = len(np.unique(folds))
+    if nf < 2:
+        raise ValueError("fit_cv needs at least two clusters")
+    grid = [(pr, r) for pr in priors for r in ridges]
+    scores: dict[str, float] = {}
+    for pr, r in grid:
+        pred = np.empty(len(y))
+        for f in np.unique(folds):
+            tr, te = folds != f, folds == f
+            pred[te] = Fusion(mode, ridge=r, prior=pr).fit(p0[tr], X[tr], y[tr]).predict(p0[te], X[te])
+        scores[f"{pr}/{r:g}"] = float(np.mean((pred - y) ** 2))
+    best_pr, best_r = min(grid, key=lambda g: scores[f"{g[0]}/{g[1]:g}"])  # min keeps the first of equal scores
+    model = Fusion(mode, families=list(families or []), ridge=best_r, prior=best_pr).fit(p0, X, y)
+    return model, {"ridge": float(best_r), "prior": best_pr, "n_folds": nf, "cv_brier": scores}

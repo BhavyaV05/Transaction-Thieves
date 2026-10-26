@@ -112,6 +112,11 @@ class PartnerBank:
     def __repr__(self) -> str:
         return f"PartnerBank({self.bank}, {self._ledger.height} tx)"
 
+    def _with_config(self, config: BankConfig) -> PartnerBank:
+        """The same bank (ledger, seed, entities, note function) under another config, e.g. more declines (E14). Private: the
+        public surface of a bank stays as `test_banks` pins it."""
+        return PartnerBank(self.bank, self._ledger, config, self.seed, self._entity_of, self._note_fn)
+
     def _rng(self, question: Question, canon: str, purpose: str) -> np.random.Generator:
         key = (self.seed, self.bank, question.alert.alert_id, canon, question.eps, purpose)
         return np.random.default_rng(_seed(*key))

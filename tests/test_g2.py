@@ -99,3 +99,16 @@ def test_the_script_exits_2_when_the_real_data_is_not_there(tmp_path):
     out = tmp_path / "g2.json"
     assert mod.main(["--world", "real", "--data", "no_such_dataset", "--out", str(out)]) == mod.NOT_RUN
     assert not out.exists()
+
+
+def test_per_family_fusion_can_select_its_ridge_and_prior_by_inner_cv(good):
+    banks, entries, val = good
+    r = g2.run_g2(banks, entries, val, fusion="per_family", fusion_select="cv", ask_eps=1.0, eps_levels=EPS, n_boot=100)
+    assert r["fusion_select"] == "cv" and len(r["fusion_chosen"]) >= 2  # one choice per outer fold
+    assert all(c["prior"] in ("naive", "zero") and c["ridge"] > 0 for c in r["fusion_chosen"])
+    assert r["fusion_chosen_all"]["prior"] in ("naive", "zero") and r["fusion_chosen_all"]["cv_brier"]
+    fixed = g2.run_g2(banks, entries, val, fusion="per_family", ask_eps=1.0, eps_levels=EPS, n_boot=100)
+    assert fixed["fusion_select"] == "fixed" and fixed["fusion_chosen"] == [] and fixed["fusion_chosen_all"] is None
+    assert r["gain_naive"] == pytest.approx(fixed["gain_naive"])  # the naive reference does not move
+    with pytest.raises(ValueError):
+        g2.run_g2(banks, entries, val, fusion="per_family", fusion_select="nope", ask_eps=1.0, eps_levels=EPS)
