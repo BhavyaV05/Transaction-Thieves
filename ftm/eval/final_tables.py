@@ -347,21 +347,25 @@ def breakdown(panel: Panel, w: Writer, column: str, stem: str, title: str) -> li
         vec = {"ob": np.where(g, ob, np.nan), "o": np.where(g, ours.se_e2e, np.nan)}
         if up is not None:
             vec["u"] = np.where(g, up.se_e2e, np.nan)
-        if ext is not None:
-            vec["x"] = np.where(g, ext.se_e2e, np.nan)
         try:
             B = panel.boot(vec, n_boot=min(panel.n_boot, 2000))
         except Missing:
             continue
+        Bx = None  # the external agent ran on the subset only: its own bootstrap, so n of the ours columns is not cut to the subset
+        if ext is not None and up is not None:
+            try:
+                Bx = panel.boot({"ob": vec["ob"], "x": np.where(g, ext.se_e2e, np.nan), "u": vec["u"]}, n_boot=min(panel.n_boot, 2000))
+            except Missing:
+                Bx = None
         d = fn.diff_stat(B, "o", "ob")
         row = {column: v, "n": B["n"], "n_pos": B["n_pos"], "brier one bank": B["point"]["ob"], "brier ours": B["point"]["o"],
                "ours minus one bank": f"{_fmt(d['point'], 4)} {_fci(d['ci'], 4)}"}  # fmt: skip
         if up is not None:
             gg = fn.gap_stat(B, "ob", "o", "u")
             row["gap closed ours (gfp)"] = _gc((gg["point"], gg["ci"])) if B["n_pos"] >= 3 else "n/a (fewer than 3 positives)"
-            if "x" in B["point"]:
-                gx = fn.gap_stat(B, "ob", "x", "u")
-                row[f"gap closed {name} (gfp)"] = _gc((gx["point"], gx["ci"])) if B["n_pos"] >= 3 else "n/a (fewer than 3 positives)"
+            if Bx is not None:
+                gx = fn.gap_stat(Bx, "ob", "x", "u")
+                row[f"gap closed {name} (gfp, subset only)"] = _gc((gx["point"], gx["ci"])) if Bx["n_pos"] >= 3 else "n/a (fewer than 3 positives)"
         rows.append(row)
     cols = [column, "n", "n_pos", "brier one bank", "brier ours", "ours minus one bank"] + [c for c in (rows[0] if rows else {}) if c.startswith("gap closed")]
     w.table(stem, rows, cols, title)
