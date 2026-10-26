@@ -84,7 +84,6 @@ Each row is one marker in the file named in the first column. Resolve it from th
 
 | File | Where | Open question |
 |---|---|---|
-| 05_4_gate_fusion_decision.md | section 5.4.4 | the CV-chosen fusion gains (+0.0007 HI-Small, +0.0053 HI-Medium) and the diagnostic example (claimed LR 0.49 against validation LR 1.15 for `dormant(ALERT.receiver, days=3)`) were supplied by T4 on 27 Oct and are not yet in `docs/t4_fusion_findings.md` or `docs/t1_handoffs.md`; record the run output there and cite it, or delete the rows |
 | 02_related_work.md | section 2.1 | the same document could not confirm whether ExSTraQt's decision threshold was tuned on test or what the FraudGT split ratios are; verify both in the paper before quoting these numbers |
 | 02_related_work.md | section 2.2 | describe what Aurora actually evaluated, from the report itself; the repo only characterises it, in Table 1 of the proposal, among the "federated AML" work in which banks train jointly or compute on pooled data |
 | 02_related_work.md | section 2.2 | add references for federated averaging, DP-SGD, Flower and Opacus; none of them is in the proposal or in plan.md section 18 |
