@@ -95,3 +95,45 @@ def test_plan_marks_remote_and_unowned_nodes():
     for g, p in zip(parts, plan, strict=True):
         assert set(p["remote"]) == set(np.flatnonzero(~g.owned))
         assert len(p["pos"]) == len(p["rows"]) and len(p["unowned"]) == 0  # both clients cover all nodes here
+
+
+def _toy_views(with_test: bool, seed=0, n=240):
+    """Two bank views of a toy graph: time-sorted rows, split train/val(/test), the columns `lw.run` reads."""
+    import polars as pl
+
+    rng = np.random.default_rng(seed)
+    nodes = np.arange(20)
+    bank_of = np.where(nodes < 10, 1, 2)
+    src, dst = rng.integers(0, 20, n), rng.integers(0, 20, n)
+    split = np.where(np.arange(n) < 120, "train", np.where(np.arange(n) < 180, "val", "test"))
+    y = (rng.random(n) < 0.3).astype("f4")
+    x = rng.normal(size=(n, lw.EDGE_FEATURES)).astype("f4")
+    frames, xs = {}, {}
+    for b in (1, 2):
+        keep = (bank_of[src] == b) | (bank_of[dst] == b)
+        if not with_test:
+            keep &= split != "test"
+        frames[b] = pl.DataFrame({"tx_id": np.flatnonzero(keep), "src_id": src[keep], "dst_id": dst[keep], "from_bank": bank_of[src][keep], "to_bank": bank_of[dst][keep],
+                                  "split": split[keep], "is_laundering": y[keep].astype(bool)})  # fmt: skip
+        xs[b] = x[keep]
+    return frames, xs
+
+
+def test_final_run_scores_test_rows_at_a_fixed_step_and_leaves_val_scores_alone():
+    """Week 14: `fixed_step` trains to that step only; the val rows are scored on the train+val graph as in the val run, the test rows on the
+    graph with the test edges, by the same network."""
+    import polars as pl
+
+    frames, x = _toy_views(False)
+    frames_te, x_te = _toy_views(True)
+    parts = {b: np.where(np.arange((f["split"] == "val").sum()) % 2 == 0, "fit", "eval") for b, f in frames.items()}
+    kw = dict(sync="sync_sgd", exchange="bwd", steps=12, local_steps=2, parts=parts, batch=64, lr=5e-3, seed=1, device="cpu", log=lambda s: None)
+    sel = lw.run(frames, x, eval_every=4, **kw)  # the val run: step chosen by val fit AP
+    fin = lw.run(frames, x, fixed_step=sel["best_step"], frames_test=frames_te, x_edge_test=x_te, **kw)
+    assert fin["best_step"] == sel["best_step"] and sel["raw_test"] is None
+    for a, b in zip(sel["raw"], fin["raw"], strict=True):
+        np.testing.assert_allclose(a, b, atol=1e-6)  # same weights at that step, same val graph
+    n_test = [int((f["split"] == "test").sum()) for f in frames_te.values()]
+    assert [len(r) for r in fin["raw_test"]] == n_test and all(((r >= 0) & (r <= 1)).all() for r in fin["raw_test"])
+    assert [len(t) for t in fin["test_idx_tx"]] == n_test
+    assert all((frames_te[b].filter(pl.col("tx_id").is_in(t.tolist()))["split"] == "test").all() for b, t in zip(frames_te, fin["test_idx_tx"], strict=True))

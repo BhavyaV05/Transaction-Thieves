@@ -22,7 +22,7 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 | OS | Pop!_OS 22.04 LTS (Linux 6.16.3) | Windows 11 Pro (build 26200) | Fedora Linux 43 (kernel 7.2.10); dual boot on the same PC as the Windows 11 reference install, so timings are the same | Ubuntu 26.04.1 LTS (Linux 7.0.0) |
 | WSL2 works? | n/a (native Linux) | WSL2 installed (Ubuntu 26.04 and Ubuntu, both stopped); not tested with a GPU workload | Not used: vLLM runs natively on Linux (Windows side has Docker Desktop 29.6.2 / WSL2) | n/a (native Linux) |
 | Python version | 3.12.13 (system, user site; no venv) | 3.12.10 (system, no venv) | 3.12.12 (`.venv`, uv); vLLM in a separate uv venv | 3.12 venv via uv (system Python is 3.14) |
-| Benchmark tokens/s (see 4) | pending T3 benchmark script (ollama Q4_K_M proxy: 62 tok/s generation, not comparable) | pending: needs T3's vLLM reference run and a small model on this machine | (reference) qwen3-8b, vLLM 0.31.0: prefill 5,138, decode 117.4, batch 112.6 tok/s | n/a |
+| Benchmark tokens/s (see 4) | official factor open (T3's reference JSON is not on this machine, vLLM not installed); indicative only: ollama Q4_K_M proxy `bench_llm.py` decode 78.0 tok/s = 0.664 of the vLLM reference, not comparable (`docs/t1_bench.md`) | pending: needs T3's vLLM reference run and a small model on this machine | (reference) qwen3-8b, vLLM 0.31.0: prefill 5,138, decode 117.4, batch 112.6 tok/s | n/a |
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 

@@ -101,9 +101,13 @@ def ctx_features(frame: pl.DataFrame, codes: dict) -> np.ndarray:
     return np.column_stack([tx_features(frame, codes), c]).astype("f4")
 
 
-def load_clients(ds: str, feature_set: str, banks: list[int] | None = None, min_train_pos: int = 5, log=print) -> tuple[list[dict], dict]:
+def load_clients(ds: str, feature_set: str, banks: list[int] | None = None, min_train_pos: int = 5, log=print, final: bool = False) -> tuple[list[dict], dict]:
     """One dict per usable bank view: X/y/tx_id of its train rows and its val rows (val_part fit/cal/eval). Reads through ftm.data.io
-    (train and val only). A bank with fewer than `min_train_pos` train positives is skipped (as in the GFP one-bank table)."""
+    (train and val only). A bank with fewer than `min_train_pos` train positives is skipped (as in the GFP one-bank table).
+
+    `final=True` (week 14, needs FTM_FINAL_RUN=1) also reads the TEST rows of every view and adds `Xte`, `yte`, `tx_te` to each client. The
+    features of a row use earlier rows of the bank's view only and the category codes come from the train/val rows, so the train and val
+    arrays are identical to those of the val run; the test rows never enter training."""
     from ftm.baselines.gfp_gbt import val_parts
     from ftm.data import io
 
@@ -115,8 +119,9 @@ def load_clients(ds: str, feature_set: str, banks: list[int] | None = None, min_
     cut = (v["a"][0], v["b"][0])
     cols = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amount_received", "amount_paid", "receiving_currency",
             "payment_currency", "payment_format", "is_laundering", "split"]  # fmt: skip
-    frames = {b: io.scan_view(cfg["views_dir"], b, split=["train", "val"], columns=cols).collect().sort(["timestamp", "tx_id"]) for b in todo}
-    codes = category_codes(list(frames.values()))
+    splits = ["train", "val", "test"] if final else ["train", "val"]
+    frames = {b: io.scan_view(cfg["views_dir"], b, split=splits, columns=cols).collect().sort(["timestamp", "tx_id"]) for b in todo}
+    codes = category_codes([f.filter(pl.col("split") != "test") for f in frames.values()])
     clients, skipped = [], {}
     for b, f in frames.items():
         tr = (f["split"] == "train").to_numpy()
@@ -127,9 +132,14 @@ def load_clients(ds: str, feature_set: str, banks: list[int] | None = None, min_
             continue
         X = (ctx_features if feature_set == "ctx" else tx_features)(f, codes)
         y = f["is_laundering"].cast(pl.Float32).to_numpy()
+        va = (f["split"] == "val").to_numpy()
         vp = np.full(f.height, "", dtype="U4")
-        vp[~tr] = val_parts(f["timestamp"].filter(pl.Series(~tr)), *cut)
-        clients.append({"bank": b, "Xtr": X[tr], "ytr": y[tr], "Xva": X[~tr], "yva": y[~tr], "tx_va": f["tx_id"].to_numpy()[~tr], "part_va": vp[~tr]})
+        vp[va] = val_parts(f["timestamp"].filter(pl.Series(va)), *cut)
+        c = {"bank": b, "Xtr": X[tr], "ytr": y[tr], "Xva": X[va], "yva": y[va], "tx_va": f["tx_id"].to_numpy()[va], "part_va": vp[va]}
+        if final:
+            te = (f["split"] == "test").to_numpy()
+            c |= {"Xte": X[te], "yte": y[te], "tx_te": f["tx_id"].to_numpy()[te]}
+        clients.append(c)
     return clients, {"skipped": skipped, "n_features": clients[0]["Xtr"].shape[1], "cut": [str(cut[0]), str(cut[1])]}
 
 
@@ -201,6 +211,7 @@ def run_federated(clients: list[dict], unit: str, eps: float | None, *, rounds: 
     )
 
     torch.manual_seed(seed)
+    np.random.seed(seed)  # Flower's add_gaussian_noise_inplace draws from numpy's global RNG: seeded since week 10 (the runs before it, client-level private arms, are not bit-reproducible)
     rng = np.random.default_rng(seed)
     K, d = len(clients), clients[0]["Xtr"].shape[1]
     steps_total = rounds * local_steps
@@ -242,7 +253,8 @@ def run_federated(clients: list[dict], unit: str, eps: float | None, *, rounds: 
     _set(glob, w_glob)
     with torch.no_grad():
         raw = [torch.sigmoid(glob(torch.as_tensor(c["Xva"])).squeeze(1)).numpy().astype("f8") for c in clients]
-    return {"raw": raw, "sigma": sigma, "epsilon": spent, "delta": DELTA if private else None, "unit": unit, "rounds": rounds,
+        raw_test = [torch.sigmoid(glob(torch.as_tensor(c["Xte"])).squeeze(1)).numpy().astype("f8") for c in clients] if "Xte" in clients[0] else None
+    return {"raw": raw, "raw_test": raw_test, "sigma": sigma, "epsilon": spent, "delta": DELTA if private else None, "unit": unit, "rounds": rounds,
             "local_steps": local_steps, "q": q if unit == "edge" else 1.0, "clip": clip if private else None, "n_clients": K,
             "seed": seed}  # fmt: skip
 
@@ -264,3 +276,15 @@ def evaluate(clients: list[dict], raw: list[np.ndarray], return_p0: bool = False
     out = {k: m.get(k) for k in ("n", "n_pos", "brier", "pr_auc", "f1")} | {
         "brier_const": brier_const, "brier_skill": 1 - m["brier"] / brier_const}  # fmt: skip
     return out | {"p0": p} if return_p0 else out  # p0: calibrated probability of every val row, clients concatenated
+
+
+def test_p0(clients: list[dict], raw_val: list[np.ndarray], raw_test: list[np.ndarray]) -> np.ndarray:
+    """Final run: p0 of every test row (clients concatenated). The Platt calibrator is the one of `evaluate`: fit on the pooled val `fit` rows
+    of the same model, then applied to the test raw scores; nothing is fit on test."""
+    from ftm.baselines import gfp_gbt as g
+
+    part = np.concatenate([c["part_va"] for c in clients])
+    y, p_raw = np.concatenate([c["yva"] for c in clients]), np.concatenate(raw_val)
+    fit = part == "fit"
+    cal, _ = g.fit_calibrator(p_raw[fit], y[fit], has_signal=False)
+    return cal(np.concatenate(raw_test))
