@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shlex
 import shutil
 import subprocess
 import time
@@ -262,7 +261,7 @@ def command_for(job: Job, ctx: Ctx, d: Path, ids_file: Path, seed: int) -> list[
               "data": ctx.data, "seed": str(seed), "system": job.system, "variant": job.variant, "job_id": job.job_id,
               "machine": ctx.machine_name, "run_id": ctx.run_id, "commit": ctx.commit}  # fmt: skip
     try:
-        return shlex.split(job.cmd.format(**fields))
+        return t1._cmd_argv(job.cmd.format(**fields))  # a leading `python` is this interpreter, as for the T1 steps (`python` was 3.10 without polars on S1)
     except KeyError as e:
         raise JobFailed(f"command template of {job.job_id} uses unknown placeholder {e}") from e
 
