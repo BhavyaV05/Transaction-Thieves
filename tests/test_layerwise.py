@@ -137,3 +137,82 @@ def test_final_run_scores_test_rows_at_a_fixed_step_and_leaves_val_scores_alone(
     assert [len(r) for r in fin["raw_test"]] == n_test and all(((r >= 0) & (r <= 1)).all() for r in fin["raw_test"])
     assert [len(t) for t in fin["test_idx_tx"]] == n_test
     assert all((frames_te[b].filter(pl.col("tx_id").is_in(t.tolist()))["split"] == "test").all() for b, t in zip(frames_te, fin["test_idx_tx"], strict=True))
+
+
+def _sampled_logits(parts, net, picks, mode, fanout):
+    sm = lw.Sampler(parts, fanout)
+    subs, plan = sm.sample([np.asarray(p) for p in picks], np.random.default_rng(0), mode != "none")
+    gt, pt, pos = sm.to_device(subs, plan, "cpu")
+    return lw.forward([net] * len(parts), gt, pt, mode, "cpu", pos), subs
+
+
+@pytest.mark.parametrize("mode", ["bwd", "fwd", "none"])
+def test_sampled_with_all_neighbours_equals_full_batch(mode):
+    """Fan-out = every neighbour: the seed logits and the gradient of their loss equal the full-batch computation, for any subset of seeds."""
+    _, _, y, parts, _ = _setup(seed=3)
+    net = _net(parts)
+    rng = np.random.default_rng(1)
+    picks = [np.sort(rng.choice(len(p.src), 9, replace=False)) for p in parts]  # seeds need not be the sender's edges here
+    full = _logits(parts, mode, lambda c: net, [torch.as_tensor(p) for p in picks])
+    smp, subs = _sampled_logits(parts, net, picks, mode, None)
+    assert all(torch.allclose(a, b, atol=1e-5) for a, b in zip(full, smp, strict=True))
+    assert all(len(s["edges"]) <= len(p.src) for s, p in zip(subs, parts, strict=True))
+
+    def grad(out):
+        loss = sum(out_c.sum() for out_c in out)
+        net.zero_grad()
+        loss.backward()
+        return torch.cat([p.grad.flatten() for p in net.parameters() if p.grad is not None])
+
+    assert torch.allclose(grad(full), grad(smp), atol=1e-4, rtol=1e-3)
+
+
+def test_sampled_subgraph_is_smaller_and_the_exchange_finds_every_remote_node():
+    """A finite fan-out caps the neighbours drawn per node and hop; every remote node that has an owner is found in the owner's subgraph."""
+    rng = np.random.default_rng(0)
+    n, m = 60, 900
+    src, dst = rng.integers(0, n, m), rng.integers(0, n, m)
+    x = rng.normal(size=(m, lw.EDGE_FEATURES)).astype("f4")
+    owners = {i: i % 3 for i in range(n)}
+    parts = [_graph(np.array([i for i in range(n) if owners[i] == c]), None, src, dst, x, owners, c) for c in range(3)]
+    net = _net(parts)
+    picks = [np.sort(rng.choice(len(p.src), 8, replace=False)) for p in parts]
+    out_all, subs_all = _sampled_logits(parts, net, picks, "bwd", None)
+    out_cap, subs_cap = _sampled_logits(parts, net, picks, "bwd", 3)
+    assert sum(len(s["edges"]) for s in subs_cap) < sum(len(s["edges"]) for s in subs_all)
+    assert all(torch.isfinite(o).all() for o in out_cap)
+    for c, s in enumerate(subs_cap):  # the seeds themselves are always present
+        assert set(picks[c]) <= set(s["edges"])
+
+
+def test_sampled_run_trains_scores_and_reproduces_its_val_scores_at_the_fixed_step():
+    """`lw.run(sampled=True)` on the toy views: scores every val and test row, and the final-run mode at the chosen step gives the same val scores."""
+    frames, x = _toy_views(False)
+    frames_te, x_te = _toy_views(True)
+    parts = {b: np.where(np.arange((f["split"] == "val").sum()) % 2 == 0, "fit", "eval") for b, f in frames.items()}
+    kw = dict(sync="sync_sgd", exchange="bwd", steps=12, local_steps=2, parts=parts, batch=40, lr=5e-3, seed=1, device="cpu", log=lambda s: None,
+              sampled=True, fanout=4, eval_batch=16)  # fmt: skip
+    sel = lw.run(frames, x, eval_every=4, **kw)
+    fin = lw.run(frames, x, fixed_step=sel["best_step"], frames_test=frames_te, x_edge_test=x_te, **kw)
+    assert sel["sampled"] and sel["fanout"] == 4
+    assert [len(r) for r in sel["raw"]] == [int((f["split"] == "val").sum()) for f in frames.values()]
+    for a, b in zip(sel["raw"], fin["raw"], strict=True):
+        np.testing.assert_allclose(a, b, atol=1e-6)
+    assert [len(r) for r in fin["raw_test"]] == [int((f["split"] == "test").sum()) for f in frames_te.values()]
+
+
+@pytest.mark.parametrize("mode", ["bwd", "none"])
+def test_sampled_equals_full_batch_with_three_owners_and_unowned_nodes(mode):
+    """Three bank-like owners on a denser graph, only two of them are clients (the third's accounts have no owner): the same equality."""
+    rng = np.random.default_rng(5)
+    n, m = 40, 400
+    src, dst = rng.integers(0, n, m), rng.integers(0, n, m)
+    x = rng.normal(size=(m, lw.EDGE_FEATURES)).astype("f4")
+    owners = {i: i % 3 for i in range(n) if i % 3 < 2}  # nodes with i % 3 == 2 have no owner
+    parts = [_graph(np.array([i for i in range(n) if i % 3 == c]), None, src, dst, x, owners, c) for c in (0, 1)]
+    assert any((p.owner < 0).any() for p in parts)
+    net = _net(parts)
+    picks = [np.sort(rng.choice(len(p.src), 25, replace=False)) for p in parts]
+    full = _logits(parts, mode, lambda c: net, [torch.as_tensor(p) for p in picks])
+    smp, _ = _sampled_logits(parts, net, picks, mode, None)
+    assert all(torch.allclose(a, b, atol=1e-5) for a, b in zip(full, smp, strict=True))

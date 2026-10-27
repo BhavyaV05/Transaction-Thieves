@@ -209,7 +209,7 @@ def final_run(a) -> None:
     d.mkdir(parents=True, exist_ok=True)
     pl.concat(parts).write_parquet(d / f"p0_{a.model}__{a.mode}.parquet")
     bad = [r for r in recs if (r.get("val_p0_max_abs_diff") or 0) > 1e-9]
-    RUNS / f"final_p0_{a.data}_{a.model}_{a.mode}.json".write_text(json.dumps({"commit": cm, "seconds": time.time() - t0, "graphs": recs}, indent=1, default=str))
+    (RUNS / f"final_p0_{a.data}_{a.model}_{a.mode}.json").write_text(json.dumps({"commit": cm, "seconds": time.time() - t0, "graphs": recs}, indent=1, default=str))
     if bad:
         raise SystemExit(f"the calibrator does not reproduce the stored val p0 for {[r['graph'] for r in bad]}: do not use these test scores")
     log(f"final {a.model} {a.mode} done {time.time() - t0:.0f}s")
@@ -220,6 +220,13 @@ def combine(ds: str, name: str = "multi_gnn") -> None:
     d = SCORES / ds
     fs = [d / f"p0_{name}__{m}.parquet" for m in ("one_bank", "see_everything") if (d / f"p0_{name}__{m}.parquet").exists()]
     pl.concat([pl.read_parquet(f) for f in fs]).write_parquet(d / f"p0_{name}.parquet")  # time-guard: not transactions
+
+
+def read_multi_gnn(d: Path) -> pl.DataFrame:
+    """Multi-GNN p0 of every mode: the per-mode files if there are any (HI-Medium see-everything arrives as its own file from the 5070 Ti, after the
+    one-bank run's combined `p0_multi_gnn.parquet` was written here), else the combined file."""
+    fs = sorted(d.glob("p0_multi_gnn__*.parquet"))
+    return pl.concat([pl.read_parquet(f) for f in fs]) if fs else pl.read_parquet(d / "p0_multi_gnn.parquet")  # time-guard: not transactions
 
 
 def compare(ds: str) -> None:
@@ -233,7 +240,7 @@ def compare(ds: str) -> None:
 
     cfg = io.load_config(ds)
     d = Path("data/scores") / ds
-    mg = pl.read_parquet(d / "p0_multi_gnn.parquet")  # time-guard: not transactions
+    mg = read_multi_gnn(d)
     gf = g.read_p0(ds, split="val")
     out: dict = {"dataset": ds}
     banks = sorted(mg.filter((pl.col("mode") == "one_bank") & pl.col("p0").is_not_null())["bank"].unique().to_list())

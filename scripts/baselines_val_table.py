@@ -43,8 +43,8 @@ def registry(ds: str) -> dict[str, dict]:
     reg: dict[str, dict] = {"GFP one-bank": {"kind": "view", "files": [s / "p0_one_bank.parquet"], "mode": "one_bank", "model": "gfp_lgbm"}}
     if (s / "p0_see_everything.parquet").exists():
         reg["GFP see-everything"] = {"kind": "tx", "files": [s / "p0_see_everything.parquet"], "mode": "see_everything", "model": "gfp_lgbm"}
-    for model, label in (("multi_gnn", "Multi-GNN"), ("mega_gnn", "MEGA-GNN (MEGA-GenAgg)")):
-        for mg in (s / f"p0_{model}.parquet", s / f"p0_{model}__one_bank.parquet"):  # HI-Medium only has the one-bank file
+    for model, label in (("multi_gnn", "Multi-GNN"), ("mega_gnn", "MEGA-GNN (MEGA-GenAgg)"), ("fraudgt", "FraudGT")):  # fraudgt: see-everything only (scripts/fraudgt_scores.py)
+        for mg in (s / f"p0_{model}.parquet", s / f"p0_{model}__one_bank.parquet", s / f"p0_{model}__see_everything.parquet"):  # HI-Medium: the one-bank file, see-everything when it arrives
             if not mg.exists():
                 continue
             d = pl.read_parquet(mg, columns=["mode"])["mode"].unique().to_list()

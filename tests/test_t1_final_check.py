@@ -43,3 +43,10 @@ def test_refuses_the_final_run(monkeypatch):
     monkeypatch.setenv("FTM_FINAL_RUN", "1")
     with pytest.raises(SystemExit):
         chk.check()
+
+
+def test_items_waiting_for_a_val_run_are_listed_as_expected_states_not_problems():
+    w = chk.waiting()
+    assert any(line.startswith("fraudgt.final_entry") and line.endswith("needs_val_run") for line in w)
+    problems, _ = chk.check(artefacts=False, run_help=False)
+    assert problems == []
