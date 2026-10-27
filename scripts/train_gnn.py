@@ -209,7 +209,7 @@ def final_run(a) -> None:
     d.mkdir(parents=True, exist_ok=True)
     pl.concat(parts).write_parquet(d / f"p0_{a.model}__{a.mode}.parquet")
     bad = [r for r in recs if (r.get("val_p0_max_abs_diff") or 0) > 1e-9]
-    RUNS / f"final_p0_{a.data}_{a.model}_{a.mode}.json".write_text(json.dumps({"commit": cm, "seconds": time.time() - t0, "graphs": recs}, indent=1, default=str))
+    (RUNS / f"final_p0_{a.data}_{a.model}_{a.mode}.json").write_text(json.dumps({"commit": cm, "seconds": time.time() - t0, "graphs": recs}, indent=1, default=str))
     if bad:
         raise SystemExit(f"the calibrator does not reproduce the stored val p0 for {[r['graph'] for r in bad]}: do not use these test scores")
     log(f"final {a.model} {a.mode} done {time.time() - t0:.0f}s")
