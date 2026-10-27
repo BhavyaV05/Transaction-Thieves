@@ -111,6 +111,24 @@ def check(names=None, artefacts: bool = True, run_help: bool = True) -> tuple[li
     return problems, final
 
 
+def waiting(names=None) -> list[str]:
+    """Items that wait for a val run done elsewhere (Akshat's 5070 Ti): an expected state, not a problem. `status: blocked_compute | needs_val_run` anywhere in a config."""
+    out = []
+    for name in names or REQUIRED:
+        f = CONFIGS / f"{name}.yaml"
+        if f.exists():
+            out += [f"{path:<34} {st}" for path, st in _statuses(yaml.safe_load(f.read_text()), name)]
+    return out
+
+
+def _statuses(node, path):
+    if isinstance(node, dict):
+        if node.get("status") in ("blocked_compute", "needs_val_run"):
+            yield path, node["status"]
+        for k, v in node.items():
+            yield from _statuses(v, f"{path}.{k}")
+
+
 def _finals(node, path):
     if isinstance(node, dict):
         if "final_entry" in node:
@@ -128,6 +146,8 @@ def main() -> int:
     problems, final = check(artefacts=not a.no_artefacts, run_help=not a.no_help)
     print("== week-14 entry points (final_entry of every config) ==")
     print("\n".join(final) or "(none)")
+    print("== waiting for a val run elsewhere (expected, not problems) ==")
+    print("\n".join(waiting()) or "(none)")
     print("== problems ==")
     print("\n".join(problems) or "none")
     return 1 if problems else 0

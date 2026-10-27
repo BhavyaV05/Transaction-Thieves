@@ -222,6 +222,13 @@ def combine(ds: str, name: str = "multi_gnn") -> None:
     pl.concat([pl.read_parquet(f) for f in fs]).write_parquet(d / f"p0_{name}.parquet")  # time-guard: not transactions
 
 
+def read_multi_gnn(d: Path) -> pl.DataFrame:
+    """Multi-GNN p0 of every mode: the per-mode files if there are any (HI-Medium see-everything arrives as its own file from the 5070 Ti, after the
+    one-bank run's combined `p0_multi_gnn.parquet` was written here), else the combined file."""
+    fs = sorted(d.glob("p0_multi_gnn__*.parquet"))
+    return pl.concat([pl.read_parquet(f) for f in fs]) if fs else pl.read_parquet(d / "p0_multi_gnn.parquet")  # time-guard: not transactions
+
+
 def compare(ds: str) -> None:
     """Brier / PR-AUC / F1 on the val `eval` part: Multi-GNN vs GFP, one-bank vs see-everything.
 
@@ -233,7 +240,7 @@ def compare(ds: str) -> None:
 
     cfg = io.load_config(ds)
     d = Path("data/scores") / ds
-    mg = pl.read_parquet(d / "p0_multi_gnn.parquet")  # time-guard: not transactions
+    mg = read_multi_gnn(d)
     gf = g.read_p0(ds, split="val")
     out: dict = {"dataset": ds}
     banks = sorted(mg.filter((pl.col("mode") == "one_bank") & pl.col("p0").is_not_null())["bank"].unique().to_list())
