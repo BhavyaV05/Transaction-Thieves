@@ -7,7 +7,7 @@ Owner: T1 (Abhishek).  Run from the repo root:
 It loads every `configs/t1_final/*.yaml`, takes each `val_command` / `val_commands` entry, checks that the script exists, that `--help` parses and
 lists every flag used (falls back to a text search of the script when `--help` cannot run, e.g. torch is missing), and that the files named in
 `inputs`, `model_file` and `scores_file` exist. Existence checks only (os.path): nothing is opened. It refuses to run with FTM_FINAL_RUN=1.
-The week-14 list is the `final_entry` of every config (`status: to_build` where the test-time entry point is not written yet).
+The week-14 list is the `final_entry` of every config (`status: to_build` where the test-time entry point is not written yet, `needs_val_run` where it is written but waits for a val run).
 """
 
 from __future__ import annotations

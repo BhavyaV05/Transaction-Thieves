@@ -16,7 +16,7 @@ Every T1 training script was train/val only by design. Each now has a `--final` 
 | explainers | `python scripts/run_explainers.py --data <ds> --final` | Multi-GNN bank checkpoints, per-bank PGExplainer weights (trained on train alerts in the val run) | explained prediction versus the test raw score of the Multi-GNN `--final` (the same agreement statistic as on val) |
 | evidence views | `python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer` | K = 40, 72 h, edge cost 0.05, token cap 4,000 (`configs/t1_final/retrieval.yaml`) | the same code path as val; views of test alerts (ids `F...`) may use edges of train, val and test up to the alert time |
 | conformal intake | `python scripts/make_alerts.py --data <ds> --final` | `t_alert` of `data/runs/alerts_<ds>.json` (calibrated on val `cal`, **not** on test) | none (a threshold); writes `data/alerts/<ds>/test.parquet` with a `test_tail` column (the sparse tail days, to be reported separately, decision 4) |
-| FraudGT | to build, 5070 Ti only (`configs/t1_final/fraudgt.yaml`) | full 500-epoch run with a prediction dump (not in the patch yet), epoch by best val F1, `T1_EVAL_TEST=1` set by `run_final.py` only | none yet |
+| FraudGT | `T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main ...` in the patched checkout, 5070 Ti (`configs/t1_final/fraudgt.yaml`) | `best.pt` of the val run (epoch by best val F1) | the rescored val must equal the stored `pred_val.csv` (< 1e-3); writes `pred_test.csv` |
 
 ## Ordered list, hours and machines
 
@@ -35,7 +35,7 @@ Hours are for the stated machine; the 3070 Ti numbers are measured on the valida
 | 8 | evidence views `--final` incl. the explainer views | 3070 Ti (CPU) | HI-Small ~0.2, HI-Medium ~0.7 | 3, 6, 7 |
 | 9 | DP-FedAvg `--final` (client: 6 settings x 3 seeds; edge: 5 x 3), CPU | 3070 Ti | HI-Small ~0.8, HI-Medium ~1.5 | |
 | 10 | layer-wise exchange `--final` (3 seeds), HI-Small | 3070 Ti | ~1.5 (val: 0.4 h per run) | |
-| 11 | FraudGT full run + prediction dump | 5070 Ti | ~6 (val: 97 s per epoch on the laptop, 13.5 h for 500 epochs) | patch update |
+| 11 | FraudGT test scoring from the val run's `best.pt` (`T1_DUMP_ONLY=1`, no training) | 5070 Ti | under 0.5 | the val run (phase B, T3) |
 | 12 | HI-Medium see-everything: **val runs first** (GFP: `train_gfp.py --data hi_medium --mode see_everything --neg-frac 0.1 --threads 16`, Multi-GNN and MEGA: `train_gnn.py --our-split --data hi_medium --mode see_everything --budget-s 28800`), then `--final` | 5070 Ti | val runs several hours each (GFP > 2 h on the laptop without finishing; GNNs need 24 GB RAM), final ~1 each | none of the above |
 
 Total on the laptop for steps 0 to 10: about 18 hours, of which about 8 are GPU (4, 5, 10) and the rest CPU, so the CPU steps (1, 3, 7, 8, 9) can overlap the GPU steps. Steps 11 and 12 are the 5070 Ti's. Half of the LLM investigations on the laptop (tracks 3.9) would need the GPU free for the hours of the LLM server; the schedule above leaves it free after step 10.
@@ -59,7 +59,7 @@ Total on the laptop for steps 0 to 10: about 18 hours, of which about 8 are GPU 
 
 - **No `--final` mode was run on real test data**, by design. The val-equivalence checks inside each mode are the safeguard; they were exercised on toy data in `tests/` (GFP, Multi-GNN/MEGA calibrator and test rows, edge scorer, intake, federated, layer-wise, evidence views) and, for the checkpoint re-scoring of the GNNs, on real validation data (see the table). The first real use is the dry run that T4's G5 rehearsal should do on a copy where "test" is replaced by val.
 - **HI-Medium see-everything has no val run** (GFP, Multi-GNN, MEGA): its hyper-parameters, checkpoints and calibrators do not exist yet, so its `--final` cannot run (BLOCKED-COMPUTE, step 12).
-- **FraudGT**: the only val run is partial (111 of 500 epochs, nothing saved), so there is no val Brier and no checkpoint; the final run is a new full run on the 5070 Ti whose epoch is fixed by val F1 (to build).
+- **FraudGT**: the only val run so far is partial (111 of 500 epochs, nothing saved). The patch now saves the best-val-F1 weights and dumps every val edge's score. The full val run is T3's 5070 Ti job in phase B, and the final run only rescores with its `best.pt` (`ftm/baselines/README.md`).
 - Client-level DP arms: the final run draws new noise (see above); the val numbers of the reported draw are in `data/runs/final_federated_<ds>_client.json` for the record.
 - The explainer cache of the test alerts is a CPU job of about 2.5 hours; the PGExplainer weights are the val run's, trained on train alerts only.
 - Layer-wise exchange on HI-Medium stays BLOCKED-COMPUTE (full-batch graphs).

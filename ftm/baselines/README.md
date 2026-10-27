@@ -212,7 +212,7 @@ python scripts/train_gnn.py --our-split --data hi_medium --mode one_bank --max-e
 python scripts/train_gnn.py --compare --data hi_medium        # needs p0 of GFP see-everything too (blocked, see HI-Medium above)
 ```
 
-## FraudGT (M6, secondary): run on OUR split, nothing saved
+## FraudGT (M6, secondary): run on OUR split
 
 FraudGT (Lin et al., ICAIF 2024, DOI 10.1145/3677052.3698648) has **no licence**: it is run only from its checkout `~/Documents/t1_external/FraudGT` (commit `f88db9dc003a6f521a90631c4741541686043119`), never vendored. `ftm/baselines/fraudgt_t1.patch` (apply with `git apply` inside the clone) holds the changes: (1) `AddEgoIdsForLinkNeighbor.__call__` -> `forward` (PyG 2.7's `BaseTransform` is abstract); (2) a wall-clock budget (`T1_BUDGET_S`) and a per-eval-epoch metrics line (`T1_METRICS`) in `custom_train.py`; (3) **the test loader reads the val split** (see below). Environment: python 3.12, torch 2.5.1+cu121 untouched; extra installs `torchmetrics`, `yacs`, and `ogb` (+ `outdated`, `littleutils`) with `--no-deps`; `datatable` and `pandas` were already present. Data: the raw `HI-Small_Trans.csv` symlinked into `~/Documents/t1_external/fraudgt_data/AML/` (its loader formats it itself).
 
@@ -227,6 +227,20 @@ Run: `SparseNodeGT+ports+Ego` (the repo's config for AML-Small-HI with port numb
 | epochs 63 / 79 / 95 / 111 | 0.623 / 0.596 / 0.648 / 0.593 |
 
 **Comparison with the published figure.** The task brief quotes 76.41 for FraudGT on HI-Small; **this could not be verified**: the paper's PDF (MIT DSpace) answered HTTP 429 and the ACM page is behind a bot check, so the number is unconfirmed. In any case the numbers are **not comparable**: the published one is on the paper's own test days with a full 500-epoch run, ours is on our val days 7-8 (a different, shorter evaluation window with 0.08 % positives), a quarter of the epochs, one seed. For orientation the same-condition Multi-GNN val F1 values are in the sections above (our split: 0.58 see-everything, with calibration and a `fit`-part threshold). **Reproduction status: partial.** The model trains, learns (val F1 0 to 0.65, AUC 0.988) and is still improving slowly, but the published level was not reached within 3 h on this GPU; a full run is a 5070 Ti job: `T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False` after `git apply ftm/baselines/fraudgt_t1.patch`.
+
+**Prediction dump (patch update, 28 Oct).** The full run is now a 5070 Ti job (T3, `docs/schedule_nov10.md`), and the patch saves what the 3 h run did not:
+- `best.pt` in `T1_OUT` at every eval epoch that improves val F1 (the selected epoch; val F1 is measured on 256 random val batches, so the selection carries the noise described above).
+- After training, `pred_val.csv` in `T1_OUT`: **every** val edge scored with those weights (the full loader, not the 256-batch cap), with columns `tx_id` (the raw CSV row, the same as ftm's `tx_id`), `label` and `score` (sigmoid of the logit, uncalibrated). Neighbour sampling is seeded with `cfg.seed`. The dump asserts that the CSV's labels match the model's for every row, so the edge-id mapping is checked on every run.
+- `pred_meta.json` holds the best epoch, its val F1 and the counts.
+- `T1_DUMP_ONLY=1` loads `best.pt` and only scores, with no training. Together with `T1_EVAL_TEST=1` (set by `run_final.py` only) this is the final run: it rescores val, asserts the stored `pred_val.csv` reproduces (max abs difference < 1e-3; two identical dumps differ by about 1e-4 from GPU scatter), and writes `pred_test.csv`.
+
+Val run on the 5070 Ti:
+```
+cd ~/Documents/t1_external/FraudGT && git apply <repo>/ftm/baselines/fraudgt_t1.patch
+T1_OUT=<dir> T1_METRICS=<dir>/metrics.jsonl T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir>/out dataset.dir <data> wandb.use False
+```
+
+Smoke test (scratch directory, 4 epochs of 8 batches, HI-Small on the 3070 Ti): the val dump has 963,085 of our 965,524 val rows (the tx_id sets match exactly otherwise), and the label check passed. **The 2,439 missing rows (0.25 %) are not a bug.** The seed edge itself is not always among the 50 sampled neighbours of a high-degree node, so the head cannot score it; FraudGT's own evaluation drops these rows too. Turning the dump into p0 (calibrate on val `fit`, Brier, PR-AUC and F1 on `eval`, a fill value for the unscored rows) is T1's step once the run is back.
 
 ## DP-FedAvg over the bank views (Group B, M5)
 
