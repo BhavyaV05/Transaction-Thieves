@@ -22,9 +22,20 @@ What the paper specifies, and what is here:
   * Model: a 2-layer Multi-PNA edge classifier (Egressy et al. 2024: PNA aggregators mean/min/max/std with the three degree
     scalers, reverse message passing, edge-state updates), constant node features.
 
+Two ways to run it. Full batch (HI-Small, the default): message passing over each client's whole extended subgraph, with the loss on a random
+mini-batch of the client's labelled edges (no sampling gap: with Sync-SGD the exchange is exactly the centralised computation). Neighbour-sampled
+(`run(sampled=True)`, class `Sampler`; automatic on HI-Medium, whose bank-70 view has 2.1 M edges and does not fit 8 GB full batch): the paper's
+training (Appendix C.2: mini-batches of 8,192 seed edges, two-hop neighbourhood sampling with up to 100 neighbours per hop, every client sampling
+independently). The paper gives no more detail of how the sample meets the exchange, so the protocol here is: a client's seed edges need their two
+endpoints' representations after both layers; a node that is needed after k layers draws up to `fanout` incident edges once (either direction) and
+its neighbours are needed after k-1 layers; a remote node is only a request, its owner computes it (the owner holds it with the same k and expands
+it in its own graph) and the exchange (gather, detached for forward-only) is unchanged. The subgraph of a client is the union of the drawn edges
+(as PyG's NeighborLoader). With fan-out = all neighbours the seed logits and gradients equal the full-batch ones (tests/test_layerwise.py), so the
+Theorems still hold for the sampled code path; with a finite fan-out the receptive fields of different clients differ, which is the gap the paper
+reports for its sampled runs. Scoring is sampled too (chunks of `eval_batch` seed edges per client, a fixed sampling stream, the same fan-out).
+
 Not as in the paper (stated in docs/t1_baselines_val.md):
-  * Full-batch message passing over each client's whole extended subgraph, with the loss on a random mini-batch of the client's labelled
-    edges, instead of 2-hop neighbour sampling (no sampling gap: with Sync-SGD the exchange is exactly the centralised computation);
+  * HI-Small only: full-batch message passing instead of 2-hop neighbour sampling (see above);
   * no ego ids and no port numbering (both are defined per sampled mini-batch);
   * LayerNorm instead of BatchNorm (batch statistics of a client mix owned and remote rows and cannot be averaged across clients);
   * clients are the 30 largest bank views, not a Louvain partition of all 30,470 banks; the accounts of the 30,440 other banks have no

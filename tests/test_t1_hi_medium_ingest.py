@@ -79,3 +79,11 @@ def test_compare_reads_the_per_mode_multi_gnn_files(tmp_path):
     pl.DataFrame({"mode": ["see_everything"], "tx_id": [1]}).write_parquet(tmp_path / "p0_multi_gnn__see_everything.parquet")
     pl.DataFrame({"mode": ["one_bank"], "tx_id": [1]}).write_parquet(tmp_path / "p0_multi_gnn.parquet")  # stale: one-bank only
     assert sorted(tg.read_multi_gnn(tmp_path)["mode"].to_list()) == ["one_bank", "see_everything"]
+
+
+def test_generator_turns_fraudgt_to_val_done_once_its_val_json_exists():
+    doc = {"status": "blocked_compute", "final_entry": {"status": "needs_val_run", "commands": ["python scripts/fraudgt_final.py"]}}
+    assert gen.fraudgt(None, dict(doc))["status"] == "blocked_compute"
+    val = {"commit": "abc", "dump": "d", "unscored_share": 0.0025, "calibration": "isotonic", "pred_meta": {"best_epoch": 3, "best_val_f1": 0.6}, "eval": {"n": 5, "n_pos": 1, "brier": 0.001, "pr_auc": 0.5, "f1": 0.6}}
+    out = gen.fraudgt(val, {**doc, "final_entry": dict(doc["final_entry"])})
+    assert out["status"] == "val_done" and out["final_entry"]["status"] == "ready" and out["val_result"]["best_epoch"] == 3 and out["scores_file"].endswith("p0_fraudgt.parquet")

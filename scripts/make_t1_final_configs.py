@@ -68,6 +68,19 @@ def gfp(ds: str, mode: str) -> dict:
             "calibration_rule": "isotonic only if the val fit part has >= 30 laundering rows AND the out-of-fold train AP is >= 3x the train prevalence (SIGNAL_LIFT), else Platt; refit from stored raw scores with --recalibrate"}  # fmt: skip
 
 
+def fraudgt(val: dict | None, doc: dict) -> dict:
+    """`val`: data/runs/p0_hi_small_fraudgt_see_everything.json (written by scripts/fraudgt_scores.py once the 5070 Ti run's dump is in); None: nothing yet."""
+    if val is None:
+        return doc
+    pm = val.get("pred_meta") or {}
+    doc["val_result"] = {"status": "val_done", "best_epoch": pm.get("best_epoch"), "best_val_f1_random_subset": pm.get("best_val_f1"), "commit": val["commit"], "dump": val["dump"],
+                         "unscored_share": val["unscored_share"], "calibration": val["calibration"], "val_eval": {k: val["eval"].get(k) for k in ("n", "n_pos", "brier", "pr_auc", "f1")}}  # fmt: skip
+    doc["status"] = "val_done"
+    doc["scores_file"] = "data/scores/hi_small/p0_fraudgt.parquet"
+    doc["final_entry"] |= {"status": FINAL_ENTRY_STATUS}
+    return doc
+
+
 def gnn(model: str, ds: str, mode: str) -> dict:
     d = load(f"p0_{ds}_{model}_{mode}.json")
     if d is None:
@@ -140,8 +153,8 @@ def main() -> None:
                                      "best_step_by_val_fit_ap": {str(r["seed"]): r["best_step"] for r in rows}, "commit": rows[0]["commit"],
                                      "val_command": "python scripts/train_layerwise.py --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2",
                                      "hi_medium": hm, "final_entry": final(*final_cmds)})  # fmt: skip
-    # FraudGT (secondary, 5070 Ti): the only val run is the partial 3 h run of week 6; nothing is saved from it
-    dump("fraudgt.yaml", hdr, {"model": "FraudGT SparseNodeGT+ports+Ego (Lin et al., ICAIF 2024; no licence: run from its checkout, never vendored)",
+    # FraudGT (secondary, 5070 Ti): until the full val run's dump has gone through scripts/fraudgt_scores.py the only val run is the partial 3 h run of week 6
+    dump("fraudgt.yaml", hdr, fraudgt(load("p0_hi_small_fraudgt_see_everything.json"), {"model": "FraudGT SparseNodeGT+ports+Ego (Lin et al., ICAIF 2024; no licence: run from its checkout, never vendored)",
                                "checkout": "~/Documents/t1_external/FraudGT", "dump_dir": "data/fraudgt/val_run", "data_dir": "~/Documents/t1_external/fraudgt_data", "commit": "f88db9dc003a6f521a90631c4741541686043119", "patch": "ftm/baselines/fraudgt_t1.patch",
                                "config": "configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml",
                                "hyper": {"layers": 2, "hidden": 64, "heads": 8, "batch": 2048, "neighbours": [50, 50], "optimizer": "AdamW lr 1e-3, cosine, 5 warm-up epochs", "epochs": 500,
@@ -149,7 +162,7 @@ def main() -> None:
                                "val_result": {"status": "partial", "epochs_run": 111, "best_val_epoch": 95, "val_f1": 0.648, "note": "3 h on the 3070 Ti, val numbers only; no predictions were saved, so there is no Brier or calibrated F1 on val"},
                                "status": "blocked_compute",
                                "external_command": "T1_OUT=<dir> T1_METRICS=<dir>/metrics.jsonl T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False",
-                               "final_entry": {"status": "needs_val_run", "commands": ["python scripts/fraudgt_final.py"], "external_final_command": "T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <val run dir>/final dataset.dir <data> wandb.use False", "note": "5070 Ti: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv; the final run only rescores with best.pt, asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects every test evaluation to val unless it is set. `commands` is the wrapper: it runs that command with T1_DUMP_ONLY=1 in the checkout, then scripts/fraudgt_scores.py --final (stored calibrator, p0 file). The val side: python scripts/fraudgt_scores.py --data hi_small --dump <val run dir>"}})  # fmt: skip
+                               "final_entry": {"status": "needs_val_run", "commands": ["python scripts/fraudgt_final.py"], "external_final_command": "T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <val run dir>/final dataset.dir <data> wandb.use False", "note": "5070 Ti: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv; the final run only rescores with best.pt, asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects every test evaluation to val unless it is set. `commands` is the wrapper: it runs that command with T1_DUMP_ONLY=1 in the checkout, then scripts/fraudgt_scores.py --final (stored calibrator, p0 file). The val side: python scripts/fraudgt_scores.py --data hi_small --dump <val run dir>"}}))  # fmt: skip
     # edge scorer and evidence views
     es = {ds: load(f"edge_scorer_{ds}_120ep.json") for ds in DATASETS}
     from ftm.retrieval import evidence_views as ev
