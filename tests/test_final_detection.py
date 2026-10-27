@@ -120,3 +120,13 @@ def test_the_detection_template_runs_under_the_interpreter_of_run_final(tmp_path
     assert argv[0] == sys.executable and argv[1] == "scripts/final_detection.py" and argv[argv.index("--system") + 1] == "multi_gnn"
     assert argv[argv.index("--alert-ids") + 1] == str(tmp_path / "ids.txt") and argv[argv.index("--out") + 1] == str(tmp_path / "job")
     assert (ROOT / argv[1]).exists()
+
+
+def test_test_alerts_cmd_is_the_final_intake_for_the_run_data():
+    """jobs.yaml: the fallback that builds data/alerts/{data}/test.parquet is `make_alerts.py --final` on the run's dataset (run_final formats {data} and {out})."""
+    from ftm.final import t1
+
+    cfg = plan.load_jobs_config()
+    argv = t1._cmd_argv(cfg["test_alerts"]["cmd"].format(data="hi_medium", out="unused"))
+    assert argv[0] == sys.executable and argv[1:] == ["scripts/make_alerts.py", "--data", "hi_medium", "--final"]
+    assert "--final" in (ROOT / argv[1]).read_text()
