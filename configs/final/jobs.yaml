@@ -237,5 +237,16 @@ extra_jobs:
   # and variant: raw_share (configs/analysis/systems.yaml role raw_share).
   - {system: raw_share, variant: raw_share, alerts: [subset, full_test], machine_class: cpu, est_hours: 1.5, owner: T2, tier: core,
      cmd: "python scripts/final_non_llm.py --arm raw_share --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"}
+  # E10 (T3): the frozen fast model + conformal cascade on the small-decision rows of the full test set, blind (scripts/e10_final.py,
+  # docs/t3_e10.md). Three phases, each when its model is the served one (T4 swaps servers like for E16): fast_tier needs the `qwen3-4b-bnb`
+  # server (adapter fast-s0), large_tier the Gemma server, cascade is CPU. The frozen thresholds are outputs/e10/fast.json (sha256 in docs/t3_e10.md).
+  - {system: fast_model, variant: fast_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
+     cmd: ".venv/bin/python scripts/e10_final.py --phase fast --model fast-s0 --alert-ids {alert_ids} --out {out}"}
+  - {system: fast_model, variant: large_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
+     depends_on: [fast_model.fast_tier.full_test],
+     cmd: ".venv/bin/python scripts/e10_final.py --phase large --model gemma4-12b --alert-ids {alert_ids} --out {out} --fast-dir {run_dir}/fast_model.fast_tier.full_test"}
+  - {system: fast_model, variant: cascade, alerts: [full_test], machine_class: cpu, est_hours: 0.1, owner: T3, tier: secondary,
+     depends_on: [fast_model.large_tier.full_test],
+     cmd: ".venv/bin/python scripts/e10_final.py --phase cascade --alert-ids {alert_ids} --out {out} --fast-dir {run_dir}/fast_model.fast_tier.full_test --large-dir {run_dir}/fast_model.large_tier.full_test"}
 #  - {system: gfp, variant: one_bank, alerts: [subset, full_test], machine_class: cpu, est_hours: 0.3, owner: T1, tier: core,
 #     cmd: "python scripts/...", depends_on: []}
