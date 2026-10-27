@@ -41,3 +41,18 @@ models:
     max_model_len: 8192
     gpu_memory_utilization: 0.92
     reasoning_parser: null                 # vLLM handles the harmony format natively
+  qwen3-14b:                               # E18 candidate (configs/experiments/e18_backbone_sweep.yaml)
+    repo: Qwen/Qwen3-14B-AWQ
+    revision: 31c69efc29464b6bb0aee1398b5a7b50a99340c3
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.88           # 9.9 GB of AWQ weights; the rest is KV cache at the 8192 cap
+    reasoning_parser: qwen3
+  gemma4-12b:                              # E18 candidate: Google's own 4-bit QAT checkpoint (compressed-tensors W4A16)
+    repo: google/gemma-4-12B-it-qat-w4a16-ct
+    revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.84           # was 0.88: OOM in a thinking-arm prefill (26 Oct, 15.8 GB peak beside the desktop); KV cache only
+    reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory

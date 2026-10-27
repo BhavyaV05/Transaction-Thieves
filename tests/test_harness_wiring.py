@@ -203,3 +203,16 @@ def test_chunks_of_the_seeded_order_do_not_overlap():
     assert [len(c) for c in chunks] == [20, 20, 10]
     assert sum(chunks, []) == whole
     assert mod.sample_order(50, 3, 20) == whole[:20]  # offset 0 is the old behaviour
+
+
+def test_val_part_all_puts_the_eval_run_first():
+    """E18: stage 1 runs `--val-part eval`, stage 2 `--val-part all`; the stage-1 alerts must be stage 2's prefix."""
+    mod = _script()
+    parts = ["eval"] * 7 + ["fit"] * 5 + ["cal"] * 4
+    alerts = pl.DataFrame({"alert_id": [f"a{i}" for i in range(16)], "val_part": parts}).sample(fraction=1.0, shuffle=True, seed=1)
+    ev = mod.select_alerts(alerts, "val", "eval", seed=0, n=7)["alert_id"].to_list()
+    every = mod.select_alerts(alerts, "val", "all", seed=0, n=16)["alert_id"].to_list()
+    assert every[:7] == ev and sorted(every) == sorted(alerts["alert_id"].to_list())
+    assert mod.select_alerts(alerts, "val", "all", seed=0, n=5, offset=5)["alert_id"].to_list() == every[5:10]
+    fit = mod.select_alerts(alerts, "val", "fit", seed=0, n=50)["val_part"].to_list()
+    assert fit == ["fit"] * 5  # a single part is unchanged

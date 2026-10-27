@@ -141,7 +141,7 @@ def test_candidates_from_the_real_config():
     core = e18.candidates(cfg)
     assert [c.name for c in core] == ["qwen3-8b", "gemma4-12b", "qwen3-14b", "gpt-oss-20b", "gemma4-26b-a4b", "qwen3.8-27b-q3"]
     assert len(e18.candidates(cfg, ("core", "if_time"))) == 8
-    assert e18.candidates(cfg, only=["gpt-oss-20b"])[0].size_gb_est == (13.0, "config")
+    assert e18.candidates(cfg, only=["gpt-oss-20b"])[0].size_gb_est == (12.1, "config")
     assert e18.candidates(cfg, only=["phi4-reasoning"])[0].size_gb_est == (7.9, "estimate")
     with pytest.raises(ValueError):
         e18.candidates(cfg, only=["nope"])
@@ -201,7 +201,7 @@ def test_driver_end_to_end_two_candidates_resume_parity_and_decisions(driver, fa
     # parity: same alerts, seed and limits in both run dirs; thinking off, gpt-oss at reasoning_effort low
     sm = {n: json.loads((s1 / n / "summary.json").read_text()) for n in mocks}
     assert len({m["alerts_hash"] for m in sm.values()}) == 1 and len({json.dumps(m["limits"]) for m in sm.values()}) == 1
-    assert sm["qwen3-8b"]["limits"]["max_tokens"] == 6000 and sm["gpt-oss-20b"]["serving_stack"] == "vllm"
+    assert sm["qwen3-8b"]["limits"]["max_tokens"] == 6000 and sm["gpt-oss-20b"]["serving_stack"] == "llama.cpp"
     assert mocks["qwen3-8b"].requests[0]["extra"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert mocks["gpt-oss-20b"].requests[0]["extra"]["reasoning_effort"] == "low"
     assert {r["seed"] for m in mocks.values() for r in m.requests} == {0}
@@ -278,12 +278,12 @@ def test_driver_refuses_a_draft_prereg_for_real_alerts_but_dry_run_prints_the_pl
 def test_dry_run_estimates_for_the_later_stages(driver, tmp_path, capsys):
     driver.main(["thinking", "--models", "qwen3-14b", "--alerts", "synthetic", "--dry-run", "--out", str(tmp_path)])
     plan = json.loads(capsys.readouterr().out)
-    assert plan["thinking"] and plan["n_alerts"] == 500
-    assert (plan["estimate"]["gpu_h_low"], plan["estimate"]["gpu_h_high"]) == (5.0, 9.0)
+    assert plan["thinking"] and plan["n_alerts"] == 460
+    assert (plan["estimate"]["gpu_h_low"], plan["estimate"]["gpu_h_high"]) == pytest.approx((4.6, 8.28))
     assert plan["candidates"][0]["max_output_tokens"] == 1024 and plan["candidates"][0]["thinking"]
     driver.main(["stage2", "--models", "qwen3-14b,qwen3-8b,gpt-oss-20b", "--alerts", "synthetic", "--dry-run", "--out", str(tmp_path)])
     est = json.loads(capsys.readouterr().out)["estimate"]
-    assert est["total_investigations"] == 1500 and est["gpu_h_low"] == pytest.approx(3.33) and est["gpu_h_high"] == pytest.approx(8.33)
+    assert est["total_investigations"] == 1380 and est["gpu_h_low"] == pytest.approx(3.07, abs=0.01) and est["gpu_h_high"] == pytest.approx(7.67, abs=0.01)
 
 
 def test_parity_check_catches_different_alerts_seed_or_limits():
@@ -296,3 +296,30 @@ def test_parity_check_catches_different_alerts_seed_or_limits():
             e18.check_parity({"a": base, "b": {**base, k: v}}, {"a": a, "b": b})
     with pytest.raises(e18.ParityError):
         e18.check_parity({"a": base, "b": dict(base)}, {"a": a, "b": arm("b", 14, 0.9, ids=tuple(reversed(IDS)))})
+
+
+def test_val_runs_forward_the_backtest_table_and_need_it(driver, tmp_path):
+    """Without the LR table the planner has no accepted questions and every verdict is p0 (the 2026-10-25 bug)."""
+    import argparse
+
+    cfg = e18.load_config(CONFIG)
+    cand = e18.candidates(cfg, only=["qwen3-8b"])[0]
+    a = argparse.Namespace(alerts="val", val_part="eval", data="hi_medium", backtest=Path("x/lr_table.jsonl"),
+                           toolbox="harness", machine="m", endpoint=None)  # fmt: skip
+    argv = driver.agent_argv(cfg, cand, a, 5, False, tmp_path / "stage1" / "qwen3-8b")
+    assert argv[argv.index("--backtest") + 1] == "x/lr_table.jsonl"
+    assert driver.expected_summary(cfg, cand, a, False)["backtest"] == {"path": "x/lr_table.jsonl"}
+    assert not e18.run_complete(tmp_path, 5, {"backtest": {"path": "x"}})  # no summary yet
+    (tmp_path / "per_alert.jsonl").write_text("")
+    (tmp_path / "summary.json").write_text(json.dumps({"n_alerts": 5, "backtest": None}))
+    assert not e18.run_complete(tmp_path, 5, {"backtest": {"path": "x"}})  # a run without the table is not complete
+    with pytest.raises(SystemExit, match="backtest"):
+        driver.main(["stage1", "--val-part", "eval", "--backtest", str(tmp_path / "missing.jsonl"), "--dry-run"])
+
+
+def test_valid_dsl_output_rate_counts_eps_short_selects_but_not_bad_dsl_or_bad_json():
+    # 10 outputs: 1 unparsable, 1 compose with invalid DSL, 2 selects set aside for lack of eps, 1 stop, 5 valid asks
+    tot = {"outputs": 10, "json_ok": 9, "stops": 1, "questions": 6, "dsl_ok": 5}
+    assert e18.valid_dsl_output_rate(tot) == pytest.approx(0.8)  # 9 parsed - 1 invalid DSL
+    assert (tot["stops"] + tot["dsl_ok"]) / tot["outputs"] == pytest.approx(0.6)  # the old usable-output reading
+    assert np.isnan(e18.valid_dsl_output_rate({"outputs": 0, "json_ok": 0, "stops": 0, "questions": 0, "dsl_ok": 0}))

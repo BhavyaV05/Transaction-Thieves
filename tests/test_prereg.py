@@ -30,7 +30,8 @@ def test_every_hypothesis_names_an_experiment():
 
 def test_e18_rule_matches_run_config():
     rule = _load("e18_decision.yaml")
-    assert rule["stage1"]["alerts"] == 200 and rule["stage2"]["alerts"] == 500
+    assert rule["stage1"]["alerts"] == 160 and rule["stage2"]["alerts"] == 460  # amended 2026-10-25: the askable HI-Medium val alerts
+    assert rule["status"] == "committed" and rule["stage1"]["val_part"] == "eval" and rule["stage2"]["val_part"] == "all"
     run_cfg = Path("configs/experiments/e18_backbone_sweep.yaml")
     if run_cfg.exists():  # the run config lands with the plan-sync PR (#9); once both exist they must agree
         run = yaml.safe_load(run_cfg.read_text())

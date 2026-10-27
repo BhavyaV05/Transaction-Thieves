@@ -39,7 +39,7 @@ from ftm.planners.llm_prompt import (
     Mode,
     PlannerParseError,
     PlannerState,
-    build_messages,
+    build_messages_with_estimate,
     output_token_budget,
     parse_action,
     planner_schema,
@@ -47,9 +47,11 @@ from ftm.planners.llm_prompt import (
 from ftm.types import AlertContext, Limits, Reply, Verdict
 
 EvidenceFn = Callable[[AlertContext, ToolBox], str]
+MAX_PROMPT_REFITS = 2  # resends after a server-counted PromptTooLong, per alert
+PROMPT_REFIT_MARGIN = 1.02
 QuestionFilter = Callable[[dict, AlertContext], bool]  # does this listed question apply to this alert (slot binding)?
 RULES_QUERY = "sharing information with another financial institution about suspected money laundering"
-_SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape"}  # passed in their own prompt sections
+_SUMMARY_HIDDEN = {"evidence", "partner_banks", "shape", "top_features"}  # own prompt sections; top_features: Sharma only (T3 decision, docs/t1_planner_view.md)
 
 
 def _family(canonical: str) -> str | None:
@@ -278,6 +280,7 @@ class LLMPlanner:
         menu = [q for q in self.questions.values() if self.question_filter is None or self.question_filter(q, alert)]
         refused: dict[tuple[str, str], str] = {}  # (canonical, bank) the gate / accountant refused -> why
         step, slot = 0, 0  # slot: position in batch_schedule (a retried step does not use one up)
+        token_scale, refits = 1.0, 0  # per alert, so results do not depend on alert order
         schedule = self.batch_schedule
         while (budget.calls_left > 0 and (schedule is None or slot < len(schedule)) and session.eps_left + 1e-9 >= min(EPS_LEVELS) and not session.out_of_time
                and failures < self.max_failures_in_row):  # fmt: skip
@@ -291,11 +294,20 @@ class LLMPlanner:
             rec: dict = {"step": step}
             trace.append(rec)
             try:
-                msgs = build_messages(self.mode, state, self.dsl, limits.max_tokens)
+                msgs, est = build_messages_with_estimate(self.mode, state, self.dsl, limits.max_tokens, token_scale)
                 resp = budget.chat(msgs, json_schema=planner_schema(self.mode, state),
                                    max_tokens=self.max_output_tokens or output_token_budget(self.mode, state.wave_k), temperature=self.temperature,
                                    seed=self.seed, extra=self.extra)  # fmt: skip
-            except (BudgetExceeded, PromptTooLong, PlannerParseError) as e:
+            except PromptTooLong as e:
+                rec["error"] = f"{type(e).__name__}: {e}"
+                if e.server_tokens is None or refits >= MAX_PROMPT_REFITS:
+                    break
+                # the server's tokenizer counts more than the estimate: trim by the measured ratio and resend (the over-long
+                # call stays counted in the budget and the cost)
+                token_scale, refits = max(token_scale, e.server_tokens / est * PROMPT_REFIT_MARGIN), refits + 1
+                rec["refit_token_scale"] = token_scale
+                continue
+            except (BudgetExceeded, PlannerParseError) as e:
                 rec["error"] = f"{type(e).__name__}: {e}"
                 break
             self.stats.outputs += 1

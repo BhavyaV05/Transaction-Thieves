@@ -266,3 +266,24 @@ def test_modelled_banks_filters_partner_list_to_the_harness_world():
     spec.loader.exec_module(mod)
     tools = SimpleNamespace(_h=SimpleNamespace(banks={0: object(), 11: object(), 115: object()}))
     assert mod.modelled_banks(tools) == {"0", "11", "115"}
+
+
+def test_server_counted_overflow_refits_the_prompt_instead_of_dropping_the_alert():
+    """Gemma 4 counts ~5% more tokens than the Qwen-fitted estimate: the planner trims by the measured ratio and resends
+    (the over-long call stays counted), instead of ending the alert at p0."""
+    import math
+    from dataclasses import replace
+
+    from ftm.llm.budget import estimate_messages
+
+    class Dense(MockLLM):  # a tokenizer that counts 40% more than estimate_messages
+        def chat(self, messages, **kw):
+            return replace(super().chat(messages, **kw), tokens_in=math.ceil(1.4 * estimate_messages(messages)))
+
+    big = "\n".join(f"2022-09-0{i % 9} 10:{i % 60:02d} | A{i:07x} -> A01bc22d | {i},000.00 US Dollar | ACH" for i in range(300))
+    a = AlertContext("V000001", "70", "2022-09-05T12:00:00", "val", 0.2, {**SUMMARY, "evidence": big})
+    p = LLMPlanner(Dense(script=[STOP, STOP]))  # the over-long call uses up one scripted reply
+    v = p.investigate(a, ScriptedToolBox(), Limits(max_tokens=6000))
+    assert "PromptTooLong" in p.last_trace[0]["error"] and p.last_trace[0]["refit_token_scale"] > 1.0
+    assert v.llm_calls >= 2 and p.stats.stops == 1  # the resent prompt fit and the planner answered
+    assert math.ceil(1.4 * estimate_messages(p.llm.requests[-1]["messages"])) <= 6000
