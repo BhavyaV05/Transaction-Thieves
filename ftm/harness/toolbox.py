@@ -212,7 +212,7 @@ class HarnessToolBox:
         partners = [b for b in h.banks if str(b) != str(alert.home_bank)]
         # The no-noise arm of the eps sweep (eps = inf) is an explicit opt-in of the harness: the gate still checks
         # everything but the eps level (it is checked at the largest level), and there is nothing to price.
-        exact = h.allow_exact and isinstance(eps, float) and ((math.isinf(eps) and eps > 0) or h.exact_all)
+        exact = h.allow_exact and (h.exact_all or (isinstance(eps, float) and math.isinf(eps) and eps > 0))  # exact_all: any eps, int too
         d = h.gate.check("ask_bank", alert_id=alert.alert_id, home_bank=alert.home_bank, bank=bank, program=program,
                          eps=h.gate.eps_levels[-1] if exact else eps, rule_id=rule_id, partners=partners)  # fmt: skip
         if d.decision == "blocked":

@@ -256,6 +256,7 @@ def test_exact_all_answers_every_level_exactly_and_free():
     r = t.ask_bank(bank, PROG, 0.5)  # a nominal level: answered as if eps = inf
     for _ in range(9):
         t.ask_bank(bank, PROG, 2.0)
+    t.ask_bank(bank, PROG, 1)  # an int level (LLM JSON "eps": 1) is exact too
     assert t.eps_spent == 0 and not h.accountant.alert_spent
     assert r == w.banks[bank].handle(Question(canonical(parse(PROG)), math.inf, a.binding), a.binding.t0)
 
