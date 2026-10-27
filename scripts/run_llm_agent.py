@@ -194,7 +194,9 @@ def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "syn
         return DevRandomToolBox(seed=seed), "devtools"
     from ftm.harness import make_toolbox as harness_toolbox  # T2, harness v0
 
-    if split in ("train", "val"):
+    if split in ("train", "val", "test"):
+        if split == "test":
+            guards.require_final_run("the test world")  # final run only (scripts/run_final.py)
         return harness_toolbox(seed=seed, mode="world", data=data, split=split), "harness"
     if split == "synthetic":
         return harness_toolbox(seed=seed, mode="mock"), "harness_mock"
@@ -330,6 +332,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="planner, E13 / H8: comma-separated wave sizes, e.g. 2,1 = the first step proposes 2 questions asked "
                          "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
+    ap.add_argument("--alert-ids", type=Path, default=None,
+                    help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set; "
+                         "scripts/run_final.py checks its hash)")
+    ap.add_argument("--blind", action="store_true",
+                    help="final run: no Brier in summary.json or on the console and no label in per_alert.jsonl (no result peeking)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
     ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "runs")
@@ -391,8 +398,13 @@ def main(argv: list[str] | None = None) -> int:
     refuse_devtools_test(variant, a.alerts)
     session = tools if a.toolbox == "harness" else None  # begin/end around each alert
     only_ids = askable_ids(tools) if variant == "harness" else None
+    wanted = {ln for ln in a.alert_ids.read_text(encoding="utf-8").splitlines() if ln} if a.alert_ids else None
+    if wanted is not None:  # the frozen set (final run): never more than it names
+        only_ids = wanted if only_ids is None else only_ids & wanted
     if a.alerts == "synthetic":
         alerts = synthetic_alerts(a.n, a.seed, a.synthetic_labels)
+        if wanted is not None:
+            alerts = [(c, y) for c, y in alerts if c.alert_id in wanted]
         if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
@@ -430,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
             refusals += facts["system_only_refusals"]
             seconds.append(time.perf_counter() - t0)
             after = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
-            per_alert.append({"alert_id": ctx.alert_id, "label": label, "p0": ctx.p0, "probability": v.probability,
+            per_alert.append({"alert_id": ctx.alert_id, "label": None if a.blind else label, "p0": ctx.p0, "probability": v.probability,
                               "seconds": seconds[-1], "gpu_seconds": v.gpu_seconds, "llm_calls": v.llm_calls,
                               "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
                               "eps_spent": facts["eps_spent"], "sim_days": facts["sim_days"],
@@ -441,7 +453,7 @@ def main(argv: list[str] | None = None) -> int:
             if v.trials is not None:
                 trials[ctx.alert_id] = v.trials
             traces.write(json.dumps({"alert_id": ctx.alert_id, "p0": ctx.p0, "trials": v.trials, "trace": system.last_trace}, default=str) + "\n")
-            if label is not None:
+            if label is not None and not a.blind:
                 p = ctx.p0 if v.probability is None else v.probability
                 sq, n_scored = sq + (p - label) ** 2, n_scored + 1
     (out / "per_alert.jsonl").write_text("".join(json.dumps(r) + "\n" for r in per_alert))  # E18 reads this
@@ -453,7 +465,8 @@ def main(argv: list[str] | None = None) -> int:
                "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
                "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
-               "brier": sq / n_scored if n_scored else None, "questions_exported": batches.n, "library_hash": library_hash,
+               "brier": sq / n_scored if n_scored and not a.blind else None, "blind": a.blind,
+               "alert_ids_file": str(a.alert_ids) if a.alert_ids else None, "questions_exported": batches.n, "library_hash": library_hash,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
     steps = df.filter(pl.col("event") == "step")
     summary["questions"] = {  # what the toolbox did with the asks (engineering counts; a mock-LLM run is not a result)
@@ -479,7 +492,8 @@ def main(argv: list[str] | None = None) -> int:
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
-    print(json.dumps(summary, indent=2, default=str))
+    if not a.blind:
+        print(json.dumps(summary, indent=2, default=str))
     return 0
 
 

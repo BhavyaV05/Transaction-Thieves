@@ -379,10 +379,17 @@ def read_p0(ds: str, mode: str | None = None, split: str | None = None, root: st
     """Load the p0 hand-off table `root/<ds>/p0.parquet` (train and val rows only; there are no test scores).
 
     mode: 'one_bank' | 'see_everything' | None for both; split: 'train' | 'val' | None. Asking for 'test'
-    raises TestSplitLocked unless FTM_FINAL_RUN=1 (and the file has no test rows even then).
+    raises TestSplitLocked unless FTM_FINAL_RUN=1; it then reads `final/p0_<mode>.parquet` (test rows only, written by the final run).
     """
     if split == "test":
         guards.require_final_run("p0 scores of the test split")
+        from pathlib import Path
+
+        fs = sorted(Path(root, ds, "final").glob("p0_*.parquet"))  # written by `scripts/train_gfp.py --final` only
+        if not fs:
+            raise FileNotFoundError(f"{root}/{ds}/final/p0_*.parquet: run scripts/train_gfp.py --final first")
+        df = pl.concat([pl.read_parquet(f) for f in fs])  # time-guard: not transactions
+        return df if mode is None else df.filter(pl.col("mode") == mode)
     df = pl.read_parquet(f"{root}/{ds}/p0.parquet")  # time-guard: not transactions
     if mode is not None:
         df = df.filter(pl.col("mode") == mode)

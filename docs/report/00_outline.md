@@ -10,7 +10,7 @@ Word counts are for the running text of the section, not for tables, figures or 
 
 Title: *Follow the Money Without Moving the Data: catching money laundering across banks by asking small, private, tested questions* (the proposal's title).
 
-Abstract: `{{TBD:abstract}}` placeholder, about 200 words, written last (after the results exist, 6 Nov). It states the problem, the idea in one sentence, the data, the three headline results (gap closed against both upper limits with CIs, the LLM against the simple planners, the best external agent) and the main limitation. It must contain no number that is not in a table of section 7.
+Abstract: `{{TBD:abstract}}` placeholder, about 200 words, written last (after the results exist, 6 Nov). A skeleton with every number as a placeholder is in `00_abstract.md`. It states the problem, the idea in one sentence, the data, the three headline results (gap closed against both upper limits with CIs, the LLM against the simple planners, the best external agent) and the main limitation. It must contain no number that is not in a table of section 7.
 
 - Owner: T4. Source: sections 1 and 7 of the report.
 - Target length: 200 words.
@@ -33,7 +33,7 @@ Abstract: `{{TBD:abstract}}` placeholder, about 200 words, written last (after t
 
 ### 3 Problem and approach
 
-- Owner: **T4**, with a read by every track. Status: not started.
+- Owner: **T4**, with a read by every track. Status: draft 1 in `03_problem_approach.md` (27 Oct; Figure 1 redrawn as text, illustrative worked example, Table 3; no results, no placeholders).
 - Sources: `docs/proposal_v5.pdf` sections 3-6 and Figure 1; `plan.md` sections 0 and 3 (architecture, invariants); the worked example of one alert; `docs/proposal_v5.pdf` Table 3 (why each capability is needed and how it is measured).
 - Contents: formal setting (home bank, alert, partner banks, noisy typed answers, budget); the invariants (no records leave a bank, LLM text never enters the decision, time guard, aliases, one gate for every system); one alert followed through the system; why each of the five capabilities is needed and how it is measured (the brief requires this).
 - Target length: 1,500 words and Figure 1 (system overview, redrawn from the proposal).
@@ -55,11 +55,11 @@ Abstract: `{{TBD:abstract}}` placeholder, about 200 words, written last (after t
 | 5.1 One-bank model and upper limits (GFP+GBT, Multi-GNN, FraudGT, MEGA-GNN); conformal intake; evidence retriever (edge scorer, PCST, four views); federated baselines | T1 | `ftm/baselines/README.md`, `ftm/intake/README.md`, `ftm/retrieval/README.md`, `docs/t1_planner_view.md`, `docs/t1_baselines_val.md`; `plan.md` sections 6.1-6.3, 6.12 |
 | 5.2 Partner banks, question language, DP mechanisms and accountant, back-testing (e-values, e-BH, families), non-LLM planners, orchestrator and harness | T2 | `ftm/dsl/README.md`, `ftm/banks/README.md`, `ftm/backtest/README.md`, `ftm/harness/README.md`, `ftm/planners/NONLLM.md`; `plan.md` sections 6.4-6.10, 6.16 |
 | 5.3 LLM planner and backbone choice, distillation and QLoRA, strategy library, fast model and conformal cascade, Group D frameworks | T3 | `docs/t3_planner_agents.md`, `docs/t3_e18.md`, `docs/t3_finetune_fastmodel.md`, `docs/t3_library_draft.md`, `docs/t3_e13.md`, `docs/t3_week0.md`; `plan.md` sections 6.11, 6.13, 6.14 |
-| 5.4 Compliance gate and regulatory RAG, evidence fusion, decision and stopping (threshold, FCAC), Group C ports (Sharma, Torres), Group D lighter ports | T4 | `ftm/compliance/`, `ftm/fusion/`, `ftm/decision/`, `ftm/external/`, `docs/external_code_check.md`, `prereg/external_list.yaml`; `plan.md` sections 6.7, 6.9, 6.15, 6.17 |
+| 5.4 Compliance gate, privacy accounting at the gate and regulatory RAG, evidence fusion, decision and stopping (threshold, FCAC), Group C ports (Sharma, Torres), Group D lighter ports; draft 1 in `05_4_gate_fusion_decision.md` | T4 | `ftm/compliance/`, `ftm/fusion/`, `ftm/decision/`, `ftm/external/`, `docs/external_code_check.md`, `prereg/external_list.yaml`; `plan.md` sections 6.7, 6.9, 6.15, 6.17 |
 
 ### 6 Experiments and baselines
 
-- Owner: **T4** (assembles), with each experiment lead supplying the setup of their rows. Status: the plan fixes it; the text is not written.
+- Owner: **T4** (assembles), with each experiment lead supplying the setup of their rows. Status: draft 1 in `06_experiments.md` (systems compared, fairness protocol, metrics, statistics, hypotheses table, test lock); the setup of each experiment's rows is still to be supplied by the leads.
 - Sources: `plan.md` sections 7 (Tables 5a and 5b, fairness protocol, component-level comparisons), 8 (E1-E18), 9 (metrics and statistics); `prereg/hypotheses.yaml`, `prereg/external_list.yaml`, `prereg/e18_decision.yaml`, `prereg/subset_manifest.txt`; `docs/t4_decisions_week2.md` items 2 and 7; `tracks.md` section 7.1.
 - Contents: systems compared (Table 5a external, Table 5b ablations, nothing removed); the fairness protocol (same alerts, banks, language, gate, ε, backbone, caps; end-to-end and questions-only scores; native and ported; tuning parity); metrics by capability (the brief requires at least one per capability); statistics (cluster bootstrap, Holm families, equivalence margin, power); what was pre-registered and when.
 - Target length: 2,000 words and two tables.
@@ -92,7 +92,7 @@ Abstract: `{{TBD:abstract}}` placeholder, about 200 words, written last (after t
 
 ### 10 Limitations and future work
 
-- Owner: **T4**. Status: not started; the known limits are listed in `plan.md` section 15 and in the notes of each doc.
+- Owner: **T4**. Status: draft 1 in `10_limitations.md` (threats to validity, limits of the design, future work; placeholders only where a test number is needed); the known limits are listed in `plan.md` section 15 and in the notes of each doc.
 - Sources: `plan.md` sections 14, 15; `docs/t4_decisions_week2.md`; `docs/t1_baselines_val.md` (val look-ahead of the GNNs; Multi-GNN see-everything on few epochs); `docs/schedule_nov10.md` rule 6 (G2); each owner's "not done" lines in `STATUS.md`.
 - Contents: synthetic data and a simulator; simulated banks and simulated private set intersection; protection unit is one transaction; approximate conformal and FCAC guarantees under drift; intake auto-clears most laundering at the alert budget; small number of positives on validation; reimplemented external systems whose published numbers cannot be checked on AMLworld; items cut or not run (cut order); future work.
 - Target length: 800 words.
@@ -145,6 +145,13 @@ One row per placeholder. "Produced by" names the script or experiment (`plan.md`
 | `{{TBD:error_tags}}` | Counts of errors by the pipeline step where they went wrong | tagging code over the final-run logs (to be written) | T4 | Tag list to be defined in phase B; not started | 9 |
 | `{{TBD:case_studies}}` | Ten case studies, good and bad | candidates chosen on validation by T3, test ones swapped in | T3 writes, T4 reviews | Not started; selection rule to be agreed before the final run | 9 |
 | `{{TBD:compute_table}}` | GPU-hours per machine and per item against the 250 h budget; tokens and LLM calls per system | `GPU_CALENDAR.md`, `docs/hardware.md`, run logs | T4 with T3 | Calendar kept weekly; final totals after G5 | 11 |
+| `{{TBD:g2_decision}}` | Wording of the team's decision on gate G2 (reported as not met on validation, or changed in phase B), with the validation numbers it rests on | Team decision, due 27 Oct (`docs/schedule_nov10.md` rule 6); numbers from `scripts/g2_check.py` | Team; T4 writes the sentence | Open: validation gain of naive fusion -0.0053 (HI-Small) and -0.0008 (HI-Medium); fitted fusion +0.0007 and +0.0053 with CIs covering 0; not met | Abstract, 5.4, 7.4, 10 |
+| `{{TBD:fusion_setting}}` | The fusion hyperparameters chosen by cross-validation on validation (mode, ridge, prior, folds, seed) and written to `prereg/` | `ftm/fusion` `fit_cv` through `scripts/g2_check.py --fusion per_family --fusion-select cv` (`fusion_chosen_all`) | T4 | Tooling done; the setting to pre-register is not yet recorded in `prereg/` | 5.4 |
+| `{{TBD:fusion_diagnostics}}` | Share of the answers' evidence that p0 already holds (explained_by_p0, with CI), share of answers whose claimed and validation likelihood-ratio direction disagree, and the cells contradicted | `scripts/fusion_diagnostics.py` (`data/runs/fusion_diagnostics_<ds>.json`); `docs/t4_fusion_findings.md` | T4 | Run on real validation data by T4 (reading: shift or winner's curse); the values are not yet recorded in the docs | 5.4, 7.2 |
+| `{{TBD:equiv_margin}}` | Equivalence margin for H3 and H10: half the Brier gap between random and the best simple planner, on the same alerts | `prereg/hypotheses.yaml` (`fix_on_val`); `ftm/eval/stats.py` | T4 | To be fixed on validation before G3 | 6.4, 7.3 |
+| `{{TBD:hub_cap}}` | Hub cap for the cluster bootstrap on all rows (accounts in more rows than the cap stop linking clusters) | `ftm/eval/bootstrap.py` `cluster_ids`; `scripts/eval_report.py --hub-cap`; rule in `prereg/hypotheses.yaml` | T4 with T1 | Not needed on alerts (largest cluster 1.5% on HI-Medium validation); rows 58%, cap to be fixed on validation before test | 6.4, 10 |
+| `{{TBD:n_askable_test}}` | Number and share of askable test alerts (partner bank among the 30 modelled views), with positives | `ftm/intake` after the test intake; `scripts/cap_sweep.py`-style counts | T1 | Validation: 87 (HI-Small eval), 160 and 460 (HI-Medium eval and all parts); test count only at G5 | 10 |
+| `{{TBD:cut_items}}` | List of items cut or not run in the final run, and what each cut changes in the claims | `plan.md` section 14 cut order; `STATUS.md` | T4 with all | After G5 | 10 |
 | `{{TBD:abstract}}` | Abstract | written last | T4 | Placeholder | Abstract |
 
 ## Order of work to 6 Nov

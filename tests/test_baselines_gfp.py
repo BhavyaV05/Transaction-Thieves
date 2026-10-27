@@ -134,3 +134,46 @@ def test_real_small_bank_p0_has_no_test_rows():
     t = g.p0_table(res, "one_bank", 1588, "test")
     assert set(t["split"].unique()) == {"train", "val"} and t.height == fr.height
     assert t["p0"].is_between(0, 1).all()
+
+
+def test_final_pass_scores_test_rows_and_leaves_train_val_p0_unchanged(monkeypatch, tmp_path):
+    """The week-14 path: appending the test rows after val must not change a single train/val p0 (so the stored val numbers are the
+    ones of the final models), and the test rows get a p0 from the model fit on train and the calibrator fit on val `fit`."""
+    pytest.importorskip("snapml")
+    pytest.importorskip("lightgbm")
+    pytest.importorskip("sklearn")
+    f = _frame(n=9000, with_test=True)
+    tv = f.filter(pl.col("split") != "test")
+    cut = (tv.filter(pl.col("split") == "val")["timestamp"].min(), tv.filter(pl.col("split") == "val")["timestamp"].max())
+    codes = g.category_codes(tv)
+    base = g.score_graph(tv, codes, cut, threads=1)
+    monkeypatch.setenv("FTM_FINAL_RUN", "1")
+    full = g.score_graph(f, codes, cut, threads=1)
+    a, b = base["frame"], full["frame"]
+    n = a.height
+    assert b["tx_id"].to_list()[:n] == a["tx_id"].to_list()  # the test rows are the contiguous tail
+    np.testing.assert_array_equal(base["p0"], full["p0"][:n])  # exactly equal, not close
+    test_p0 = full["p0"][n:]
+    assert len(test_p0) == (f["split"] == "test").sum() and np.isfinite(test_p0).all() and ((test_p0 >= 0) & (test_p0 <= 1)).all()
+    assert (b["split"].to_numpy()[n:] == "test").all()
+    # write_final: the check that the stored train/val p0 are reproduced, and the guarded read of the test rows
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import train_gfp
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data" / "scores" / "toy").mkdir(parents=True)
+    (tmp_path / "data" / "runs").mkdir()
+    tab = g.p0_table(full, "see_everything", None, "abc1234")
+    g.p0_table(base, "see_everything", None, "abc1234").write_parquet(tmp_path / "data" / "scores" / "toy" / "p0_see_everything.parquet")
+    train_gfp.write_final("toy", "see_everything", tab, "abc1234", 1.0)
+    got = g.read_p0("toy", mode="see_everything", split="test", root=str(tmp_path / "data" / "scores"))
+    assert got.height == len(test_p0) and set(got["split"]) == {"test"}
+    monkeypatch.delenv("FTM_FINAL_RUN")
+    with pytest.raises(guards.TestSplitLocked):
+        g.read_p0("toy", split="test", root=str(tmp_path / "data" / "scores"))
+    bad = tab.with_columns(pl.when(pl.col("split") == "val").then(pl.col("p0") + 0.01).otherwise(pl.col("p0")).alias("p0"))
+    with pytest.raises(SystemExit):
+        train_gfp.write_final("toy", "see_everything", bad, "abc1234", 1.0)

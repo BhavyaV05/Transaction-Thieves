@@ -41,6 +41,18 @@ def project_test_count(per_day_rate: float, test_bulk_days: float) -> float:
     return per_day_rate * test_bulk_days
 
 
+def frozen_alerts(p0: pl.DataFrame, t_alert: float) -> pl.DataFrame:
+    """The alert rule of the final run: one-bank rows whose p0 is at least the threshold that the conformal calibration chose on VAL
+    (`data/runs/alerts_<ds>.json`, thresholds.t_alert). Nothing is calibrated on test. Rows with a null p0 (a bank skipped for too
+    few train positives) are not alerts. Needs p0; keeps every other column and sorts by (timestamp, tx_id, bank)."""
+    return p0.filter(pl.col("p0").is_not_null() & pl.col("p0").is_not_nan() & (pl.col("p0") >= t_alert)).sort(["timestamp", "tx_id", "bank"])
+
+
+def test_alert_ids(alerts: pl.DataFrame) -> pl.DataFrame:
+    """alert_id `F000123` by (timestamp, tx_id, bank), as T/V for train/val."""
+    return alerts.with_columns((pl.lit("F") + pl.int_range(pl.len()).cast(pl.Utf8).str.zfill(6)).alias("alert_id"))
+
+
 STRATA = {
     "bank_p0_decile": ["bank", "p0_decile"],  # label-free: known at alert time (decision 1)
     "label_typology_bank": ["label", "typology", "bank"],  # needs labels; kept for synthetic/val checks
@@ -58,18 +70,25 @@ def stratified_subset(alerts: pl.DataFrame, n: int = 1000, seed: int = 0, strata
     per non-empty stratum while the budget allows; draws are seeded.
     """
     guards.require_final_run("the stratified external 1,000-alert subset (built from test alerts)")
+    return stratify(alerts, n, seed, strata)
+
+
+def stratify(alerts: pl.DataFrame, n: int = 1000, seed: int = 0, strata: str = "bank_p0_decile") -> pl.DataFrame:
+    """The sampling rule of `stratified_subset` without the test lock: a pure function of the frame it is given.
+    Real runs go through `stratified_subset` (locked, scripts/run_final.py); this exists so the final-run script can be
+    rehearsed on synthetic alerts, which hold no test data."""
     keys = STRATA[strata]
     work = alerts.sort("alert_id")
     if strata == "bank_p0_decile":
         work = work.with_columns((pl.col("p0").rank("ordinal") * 10 // (pl.len() + 1)).cast(pl.Int32).alias("p0_decile"))
     else:
         work = work.with_columns(pl.col("typology").fill_null("none"))
-    g = work.group_by(keys).len()
+    g = work.group_by(keys, maintain_order=True).len().sort(keys)  # a fixed stratum order: the same ids on every machine
     size = g["len"].to_numpy().astype("f8")
     raw = size / size.sum() * n
     alloc = np.maximum(np.floor(raw).astype(int), 1)
     # trim / top up to exactly n, by remainder
-    order = np.argsort(-(raw - np.floor(raw)))
+    order = np.argsort(-(raw - np.floor(raw)), kind="stable")
     i = 0
     while alloc.sum() < n and i < 10 * len(alloc):
         alloc[order[i % len(alloc)]] += 1

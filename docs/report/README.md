@@ -10,9 +10,15 @@ The project report ("Follow the Money Without Moving the Data"), written as one 
 | `01_introduction.md` | Section 1 | draft 1 |
 | `02_related_work.md` | Section 2 | draft 1 |
 | `references.md` | Bibliography, [1]-[41] numbered as in the proposal, then [42]-[77] | done, with open checks |
-| `03_problem_approach.md` ... `11_compute.md` | Sections 3 to 11 | to be written (names below) |
+| `00_abstract.md` | Abstract skeleton, every number a placeholder | skeleton, 27 Oct |
+| `03_problem_approach.md` | Section 3: formal setting, the five invariants, Figure 1 (redrawn as text), one illustrative alert followed through, Table 3 (why each capability, how measured) | draft 1, 27 Oct |
+| `05_4_gate_fusion_decision.md` | Section 5.4: gate, privacy accounting at the gate, regulatory retrieval, fusion (with the G2 finding on validation), decision, T4's external ports | draft 1, 27 Oct |
+| `06_experiments.md` | Section 6: systems compared, fairness protocol, metrics, statistics, hypotheses table, test lock | draft 1, 27 Oct |
+| `10_limitations.md` | Section 10: threats to validity, limits of the design, future work | draft 1, 27 Oct |
+| `../presentation/outline.md` | Slide-by-slide outline of the talk (not part of the report build) | draft 1, 27 Oct |
+| `04`, `05` (the other parts), `07`, `08`, `09`, `11` | The remaining sections | to be written (names below) |
 
-Names for the remaining files, so that the build command below works unchanged: `03_problem_approach.md`, `04_data_setup.md`, `05_methods.md`, `06_experiments.md`, `07_results.md`, `08_safety.md`, `09_failure_analysis.md`, `10_limitations.md`, `11_compute.md`, and `00_abstract.md` for the abstract.
+Names for the remaining files, so that the build command below works unchanged: `03_problem_approach.md`, `04_data_setup.md`, `05_methods.md` (or one file per part of section 5, such as `05_1_...md` to `05_4_...md`; the glob `05_*.md` sorts them in order), `06_experiments.md`, `07_results.md`, `08_safety.md`, `09_failure_analysis.md`, `10_limitations.md`, `11_compute.md`, and `00_abstract.md` for the abstract.
 
 ## Who writes what
 

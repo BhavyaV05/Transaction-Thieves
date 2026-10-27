@@ -83,3 +83,18 @@ Expect wide intervals: 160 askable alerts (52 positive) at about one answered qu
 | diagnostics pass cleanly but all CIs are wide | the data cannot separate the hypotheses | Say so. Naive remains a negative result as measured; the zero-prior fit is adopted on the grounds that it cannot do materially worse than p0 by construction, not on a measured gain |
 
 Whatever the outcome, `prereg/` needs the final fusion setting before G3, and the choice stays on validation.
+
+## 6. Real-data results (run 2026-10-26 by Akshat on the 5070 Ti, reported in PR #66)
+
+Commands of section 4, `--val-part eval`; outputs stay in `data/runs/` (not committed): `fusion_diagnostics_hi_{medium,small}.{md,json}`, `g2_hi_{medium,small}_cv.json`. Back-test namespaces `7df6bad5337d` (HI-Medium) and `4338ebb59b35` (HI-Small).
+
+| | HI-Medium (160 alerts, 52 positive) | HI-Small (87 alerts, 17 positive) |
+|---|---|---|
+| explained by p0 | 0% (CI 0 to 55%) | 27% |
+| answers whose direction disagrees (train vs val LR) | 41% | 85% |
+| naive gain | -0.0008 (matches A4) | -0.0053 (matches A4) |
+| per_family, fixed ridge | +0.0129 [-0.034, +0.064] | n/a |
+| **per_family_cv gain (G2)** | **+0.0053 [-0.041, +0.054], not met** | **+0.0007 [-0.015, +0.019], not met** |
+| CV choice on all val | ridge 100, prior zero | n/a |
+
+Reading (section 5, row 2): the shift / winner's-curse row, not double counting. On HI-Medium `dormant(ALERT.receiver, days=3)` flips direction (claimed LR 0.49 for `true`, validation LR 1.15). Naive fusion is reported as a pre-registered negative result; `per_family`, `prior="zero"`, `fit_cv` is the proposed v1 default; G2 is not met either way (team decision pending, `docs/schedule_nov10.md` rule 6). All intervals are wide: "inconclusive" is the honest word for the fitted fusion.

@@ -101,10 +101,10 @@ Val `eval` part, paired bootstrap 10,000 resamples. "alerts" = the 332 / 806 val
 |---|---|---|---|---|
 | GFP, alerts | 332 (49) | 0.1093 | 0.0682 | +0.0411 [0.0104, 0.0748] |
 | GFP, rows | 93,240 (122) | 0.001167 | 0.000906 | +0.00026 [0.00011, 0.00040] |
-| Multi-GNN, alerts | 332 (49) | 0.0901 | 0.0333 | +0.0567 [0.0341, 0.0816] |
-| Multi-GNN, rows | 93,239 (122) | 0.001110 | 0.000719 | +0.00039 [0.00020, 0.00060] |
+| Multi-GNN, alerts | 332 (49) | 0.0906 | 0.0333 | +0.0573 [0.0347, 0.0822] |
+| Multi-GNN, rows | 93,239 (122) | 0.001114 | 0.000719 | +0.00040 [0.00021, 0.00060] |
 
-PR-AUC one-bank / see-everything: GFP alerts 0.449 / 0.775, rows 0.202 / 0.419; Multi-GNN alerts 0.576 / 0.871, rows 0.243 / 0.548. Row-level CIs with the hub cap 20 and the attempt+tx clustering are in `data/runs/eval_gap_hi_small_*.json` and `data/runs/eval_multi_gnn_hi_small_*.json` and barely differ. The Multi-GNN rows come from `scripts/eval_report_models.py` (a wrapper around T4's `report`, because `eval_report.py` reads only the GFP p0 file).
+PR-AUC one-bank / see-everything: GFP alerts 0.449 / 0.775, rows 0.202 / 0.419; Multi-GNN alerts 0.571 / 0.871, rows 0.241 / 0.548 (bank 1 was retrained on 2026-10-25, see `ftm/baselines/README.md`). Row-level CIs with the hub cap 20 and the attempt+tx clustering are in `data/runs/eval_gap_hi_small_*.json` and `data/runs/eval_multi_gnn_hi_small_*.json` and barely differ. The Multi-GNN rows come from `scripts/eval_report_models.py` (a wrapper around T4's `report`, because `eval_report.py` reads only the GFP p0 file).
 
 **HI-Medium, GFP one-bank only** (no see-everything p0: BLOCKED-COMPUTE, `ftm/baselines/README.md`): `scripts/eval_report_models.py --data hi_medium`:
 

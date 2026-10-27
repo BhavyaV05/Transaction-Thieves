@@ -74,3 +74,23 @@ def test_run_federated_learns_and_reports_epsilon(unit):
     assert fed.evaluate(c, r["raw"])["brier_skill"] > 0
     p = fed.run_federated(c, unit, 4.0, rounds=6, local_steps=40, q=0.1, lr=0.5, pos_weight=5.0)
     assert 0 < p["epsilon"] <= 4.0 and p["sigma"] > 0 and p["delta"] == fed.DELTA
+
+
+def test_final_run_scores_test_rows_without_changing_the_val_model():
+    """Week 14: the test rows ride along (`Xte`); training uses train rows only, so the val raw scores are bit-identical, and the Platt
+    calibrator is fit on the val `fit` rows only (changing a test label or score cannot change it)."""
+    pytest.importorskip("opacus")
+    pytest.importorskip("flwr")
+    c = _clients()
+    rng = np.random.default_rng(1)
+    ct = [{**x, "Xte": rng.normal(size=(500, 6)).astype("f4"), "yte": (rng.random(500) < 0.1).astype("f4"), "tx_te": np.arange(500)} for x in c]
+    a = fed.run_federated(c, "client", 4.0, rounds=4, local_steps=20, q=0.1, lr=0.5, pos_weight=5.0, seed=3)
+    b = fed.run_federated(ct, "client", 4.0, rounds=4, local_steps=20, q=0.1, lr=0.5, pos_weight=5.0, seed=3)
+    assert a["raw_test"] is None and len(b["raw_test"]) == len(c)
+    for x, y in zip(a["raw"], b["raw"], strict=True):
+        np.testing.assert_array_equal(x, y)
+    p = fed.test_p0(ct, b["raw"], b["raw_test"])
+    assert p.shape == (500 * len(c),) and ((p >= 0) & (p <= 1)).all()
+    # the calibrator sees val `fit` rows only: perturbing the val `eval` labels leaves the test p0 unchanged
+    ct2 = [{**x, "yva": np.where(x["part_va"] == "eval", 1 - x["yva"], x["yva"])} for x in ct]
+    np.testing.assert_array_equal(p, fed.test_p0(ct2, b["raw"], b["raw_test"]))

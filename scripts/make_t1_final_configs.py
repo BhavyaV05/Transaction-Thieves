@@ -1,0 +1,177 @@
+"""Week 12-13 (C4): write `configs/t1_final/*.yaml` from the artefacts of the validation runs. Nothing is re-tuned and nothing reads test.
+
+Owner: T1 (Abhishek).  Run from the repo root (needs `data/runs/*.json`, i.e. the machine that ran the validation experiments):
+  python scripts/make_t1_final_configs.py
+
+Every value is copied from what the val run recorded (hyper-parameters, seed, the epoch / step / tree count picked on val `fit`, the calibrator,
+the commit of the run) or from a committed config (`configs/intake/conformal.yaml`, the module constants of `ftm/retrieval`). A model whose val
+run does not exist has `status: blocked_compute` and no hyper-parameters (nothing is invented). `scripts/t1_final_check.py` verifies the result.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+OUT = Path("configs/t1_final")
+RUNS = Path("data/runs")
+DATASETS = ("hi_small", "hi_medium")
+FINAL_ENTRY_STATUS = "ready"  # the `--final` mode exists, is locked behind FTM_FINAL_RUN and is unit-tested (val-equivalence checks built in); never run on test
+
+
+def load(name: str):
+    f = RUNS / name
+    return json.loads(f.read_text()) if f.exists() else None
+
+
+def dump(name: str, header: str, doc: dict) -> None:
+    OUT.mkdir(parents=True, exist_ok=True)
+    (OUT / name).write_text(header + yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, width=140))
+
+
+def best_grid(g: dict) -> dict:
+    """The grid entry of the chosen hyper-parameters: its val AP and the number of trees at the best iteration."""
+    hit = [e for e in g["grid"] if all(e[k] == g["params"][k] for k in g["params"])]
+    e = max(hit, key=lambda x: x["val_ap"])
+    return {"best_iteration": e["best_iteration"], "val_fit_ap": e["val_ap"]}
+
+
+def gfp(ds: str, mode: str) -> dict:
+    files = [f"p0_{ds}_{mode}.json"] if mode == "see_everything" or ds == "hi_small" else [f"p0_{ds}_{mode}__rest.json", f"p0_{ds}_{mode}__b70.json"]
+    runs = [r for r in map(load, files) if r]
+    if not runs:
+        return {"status": "blocked_compute", "reason": "no val run exists (HI-Medium see-everything needs the 5070 Ti, ftm/baselines/README.md)",
+                "val_command": f"python scripts/train_gfp.py --data {ds} --mode {mode} --neg-frac 0.1 --threads 16"}  # fmt: skip
+    graphs: dict = {}
+    for r in runs:
+        graphs |= r["graphs"]
+    banks = {}
+    for k, g in graphs.items():
+        if g.get("status") != "ok":
+            banks[k] = {"status": g.get("status")}
+            continue
+        banks[k] = {"params": g["params"], **best_grid(g), "calibration": g["calibration"], "train_pos": g["train_pos"], "val_fit_pos": g["val_fit_pos"]}
+    first = runs[0]
+    return {"status": "val_done", "seed": first["seed"], "commits": sorted({r["commit"] for r in runs}), "val_cut": first["val_cut"],
+            "models": banks if mode == "one_bank" else banks.get("all", banks),
+            "val_command": f"python scripts/train_gfp.py --data {ds} --mode {mode}" + (" --neg-frac 0.3" if ds == "hi_medium" and mode == "one_bank" else ""),
+            "inputs": [f"data/parquet/{ds}/transactions.parquet", f"data/views/{ds}", f"data/scores/{ds}/p0_{mode}.parquet"],
+            "calibration_rule": "isotonic only if the val fit part has >= 30 laundering rows AND the out-of-fold train AP is >= 3x the train prevalence (SIGNAL_LIFT), else Platt; refit from stored raw scores with --recalibrate"}  # fmt: skip
+
+
+def gnn(model: str, ds: str, mode: str) -> dict:
+    d = load(f"p0_{ds}_{model}_{mode}.json")
+    if d is None:
+        return {"status": "blocked_compute" if ds == "hi_medium" and mode == "see_everything" else "not_run",
+                "val_command": f"python scripts/train_gnn.py --our-split --model {model} --data {ds} --mode {mode} --max-epochs 100 --budget-s 28800"}  # fmt: skip
+    per = {}
+    tab = Path("data/scores") / ds / f"p0_{model}__{mode}.parquet"
+    commits = {}
+    if tab.exists():  # the commit that produced each graph's rows (bank 1 of HI-Small was retrained after an accidental overwrite, week 10)
+        import polars as pl
+
+        c = pl.read_parquet(tab, columns=["bank", "commit"]).unique()  # time-guard: not transactions
+        commits = {("all" if b is None else str(b)): cm for b, cm in c.iter_rows()}
+    for k, g in d["graphs"].items():
+        hist = g["history"]
+        best = max(hist, key=lambda h: h["fit_ap"]) if hist else None
+        per[k] = {"epochs_run": len(hist), "best_epoch_by_val_fit_ap": best["epoch"] if best else None, "best_val_fit_ap": g["best_fit_ap"],
+                  "calibration": g["calibration"], "train_edges": g["train_edges"], "train_pos": g["train_pos"], "commit": commits.get(k)}  # fmt: skip
+    return {"status": "val_done", "seed": d["seed"], "commit": d["commit"], "batch_size": d["batch_size"], "neighbours": d["neighbours"], "val_cut": d["val_cut"],
+            "skipped": d.get("skipped", {}), "models": per if mode == "one_bank" else per.get("all", per),
+            "val_command": f"python scripts/train_gnn.py --our-split --model {model} --data {ds} --mode {mode} --max-epochs 100",
+            "inputs": [f"data/parquet/{ds}/transactions.parquet", f"data/views/{ds}", f"data/scores/{ds}/p0_{model}__{mode}.parquet"]}  # fmt: skip
+
+
+def main() -> None:
+    hdr = "# T1 final-run config (week 12-13). Generated by scripts/make_t1_final_configs.py from the validation artefacts; nothing re-tuned, no test row read.\n"
+    def final(*cmds: str) -> dict:
+        return {"status": FINAL_ENTRY_STATUS, "commands": list(cmds), "note": "run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN; each `--final` refuses to run without it and checks that the val-time numbers are reproduced (docs/t1_final_run.md)"}
+
+    dump("gfp.yaml", hdr, {"model": "GFP + LightGBM (snapml GraphFeaturePreprocessor)", "split": "train days / val days of configs/data/<ds>.yaml, test locked",
+                           "features": "GFP paper settings, 55-56 features (ftm/baselines/README.md)",
+                           "final_entry": final("python scripts/train_gfp.py --data <ds> --mode one_bank --final", "python scripts/train_gfp.py --data <ds> --mode see_everything --final"),
+                           **{ds: {mode: gfp(ds, mode) for mode in ("one_bank", "see_everything")} for ds in DATASETS}})  # fmt: skip
+    for model, name in (("multi_gnn", "multi_gnn.yaml"), ("mega_gnn", "mega_gnn.yaml")):
+        arch = ("Multi-PNA+EU (edge updates, reverse MP, ego ids, ports); IBM code commit 252b0252afca109d1d216c411c59ff70753b25fc" if model == "multi_gnn" else
+                "MEGA-GenAgg (GIN, GenAgg node aggregation, GIN parallel-edge aggregation, edge updates, reverse MP, ego ids, no ports); hcagri/MEGA-GNN commit ef60a71")  # fmt: skip
+        dump(name, hdr, {"model": arch, "final_entry": final(f"python scripts/train_gnn.py --final --model {model} --data <ds> --mode one_bank", f"python scripts/train_gnn.py --final --model {model} --data <ds> --mode see_everything"),
+                         **{ds: {mode: gnn(model, ds, mode) for mode in ("one_bank", "see_everything")} for ds in DATASETS}})  # fmt: skip
+    # DP-FedAvg arms: epsilons and seeds from the val curves
+    fed = {}
+    for unit in ("client", "edge"):
+        for ds in DATASETS:
+            d = load(f"federated_{ds}_{unit}.json") or load(f"federated_{ds}_{unit}_p0.json")
+            if d is None:
+                continue
+            fed.setdefault(unit, {})[ds] = {"commit": d["commit"], "delta": d["delta"], "features": d["features"], "hyper": d["hyper"], "q": d["q"],
+                                           "epsilons": sorted({r["epsilon"] if r["epsilon"] != float("inf") else "inf" for r in d["rows"]}, key=str),
+                                           "seeds": sorted({x["seed"] for r in d["rows"] for x in r["runs"]}), "clients": len(d["clients"]),
+                                           "val_command": f"python scripts/train_federated.py --data {ds} --unit {unit} --eps 1 2 4 8 16 --save-p0"}  # fmt: skip
+    dump("federated.yaml", hdr, {"model": "DP-FedAvg (Flower DP helpers + Opacus RDP accountant), tiny MLP (hidden 16)", "arms": fed,
+                                 "privacy_units": {"client": "one bank's whole dataset (ε per bank dataset, training)", "edge": "one transaction (ε per transaction, training)"},
+                                 "report": "docs/t1_federated_eps.md", "figure": "docs/figures/t1_federated_eps_<ds>.png",
+                                 "final_entry": final("python scripts/train_federated.py --final --data <ds> --unit client --eps 1 2 4 8 16 --seeds 0 1 2", "python scripts/train_federated.py --final --data <ds> --unit edge --eps 1 2 4 8 --seeds 0 1 2")})  # fmt: skip
+    # layer-wise exchange, best arm
+    lw = load("layerwise_hi_small.json")
+    if lw:
+        rows = [r for r in lw["rows"] if r["arm"] == "sync_sgd:bwd"]
+        dump("layerwise.yaml", hdr, {"model": "Ceydeli et al. layer-wise exchange, Sync-SGD with forward + backward exchange (best arm on val), non-private reference", "dataset": "hi_small",
+                                     "arm": "sync_sgd:bwd", "steps": rows[0]["steps"], "lr": rows[0]["lr"], "batch": rows[0]["batch"], "seeds": [r["seed"] for r in rows],
+                                     "best_step_by_val_fit_ap": {str(r["seed"]): r["best_step"] for r in rows}, "commit": rows[0]["commit"],
+                                     "val_command": "python scripts/train_layerwise.py --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2",
+                                     "hi_medium": {"status": "blocked_compute", "reason": "full-batch message passing needs the neighbour-sampled variant or a larger GPU"},
+                                     "final_entry": final("python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2")})  # fmt: skip
+    # FraudGT (secondary, 5070 Ti): the only val run is the partial 3 h run of week 6; nothing is saved from it
+    dump("fraudgt.yaml", hdr, {"model": "FraudGT SparseNodeGT+ports+Ego (Lin et al., ICAIF 2024; no licence: run from its checkout, never vendored)",
+                               "checkout": "~/Documents/t1_external/FraudGT", "commit": "f88db9dc003a6f521a90631c4741541686043119", "patch": "ftm/baselines/fraudgt_t1.patch",
+                               "config": "configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml",
+                               "hyper": {"layers": 2, "hidden": 64, "heads": 8, "batch": 2048, "neighbours": [50, 50], "optimizer": "AdamW lr 1e-3, cosine, 5 warm-up epochs", "epochs": 500,
+                                         "iter_per_epoch": 256, "seed": 42},
+                               "val_result": {"status": "partial", "epochs_run": 111, "best_val_epoch": 95, "val_f1": 0.648, "note": "3 h on the 3070 Ti, val numbers only; no predictions were saved, so there is no Brier or calibrated F1 on val"},
+                               "status": "blocked_compute",
+                               "external_command": "T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False",
+                               "final_entry": {"status": "to_build", "commands": [], "note": "5070 Ti: the full 500-epoch run needs a prediction dump (val and test edge scores) added to the patch, the epoch fixed by best val F1, and `T1_EVAL_TEST=1` set by scripts/run_final.py only; the patch redirects every test evaluation to val unless that variable is set"}})  # fmt: skip
+    # edge scorer and evidence views
+    es = {ds: load(f"edge_scorer_{ds}_120ep.json") for ds in DATASETS}
+    from ftm.retrieval import evidence_views as ev
+    from ftm.retrieval import explainers as ex
+
+    dump("retrieval.yaml", hdr, {"edge_scorer": {ds: {"seed": d["seed"], "epochs": 120, "best_epoch_by_val_fit_ap": d["best_epoch"], "val_fit_ap": d["val_fit_ap"],
+                                                      "val_eval_auc": d["val_eval_auc"], "val_eval_ap": d["val_eval_ap"], "neg_frac": d.get("neg_frac", 0.1),
+                                                      "features": d["features"], "model_file": f"models/edge_scorer_{ds}.pt", "scores_file": f"data/retrieval/{ds}/edge_scores.parquet"}
+                                                  for ds, d in es.items() if d},
+                                 "evidence_views": {"k": ev.K, "window_hours": ev.WINDOW_HOURS, "edge_cost": 0.05, "pcst_bonus": 10.0, "evidence_tokens": ev.EVIDENCE_TOKENS,
+                                                    "chars_per_token": ev.CHARS_PER_TOKEN, "views": list(ev.NAMES), "alias_seed": "the run seed",
+                                                    "h6": {"statistic": "pattern_edge_share(scorer_pcst) - pattern_edge_share(amount), denominator 40", "margin": ev.H6_MARGIN}},
+                                 "explainers": {"ppr_alpha": ex.PPR_ALPHA, "gnnexplainer_epochs": ex.GNNEXPLAINER_EPOCHS, "pgexplainer_epochs": ex.PG_EPOCHS, "pgexplainer_lr": ex.PG_LR,
+                                                "pgexplainer_train_alerts_per_bank": ex.PG_TRAIN_ALERTS, "target_class": "laundering (1), no label read", "history_cap": 100},
+                                 "val_commands": [f"python -m ftm.retrieval.evidence_views --data {ds} --parts cal eval --explainers gnnexplainer pgexplainer" for ds in DATASETS],
+                                 "final_entry": final("python -m ftm.retrieval.edge_scorer --data <ds> --final", "python scripts/run_explainers.py --data <ds> --final", "python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer")})  # fmt: skip
+    # conformal intake
+    cfg = yaml.safe_load(Path("configs/intake/conformal.yaml").read_text())
+    intake = {"config_file": "configs/intake/conformal.yaml", "common": {k: v for k, v in cfg.items() if k not in ("alpha_launder", "bulk_days")}, "datasets": {}}
+    for ds in DATASETS:
+        a = load(f"alerts_{ds}.json")
+        if a:
+            intake["datasets"][ds] = {"alpha_launder": cfg["alpha_launder"][ds], "bulk_days": cfg["bulk_days"][ds], "thresholds_from_val_cal": a["thresholds"],
+                                      "alerts_val": a["val_parts"]["val_all"]["alerts"], "command": f"python scripts/make_alerts.py --data {ds}"}  # fmt: skip
+    intake["alert_definition"] = "launder in the Mondrian conformal prediction set, i.e. one-bank p0 >= t_alert; empty-set rows are not alerts and count as intake misses (decisions 2 and 5)"
+    intake["flags"] = {"spans_split": "flag only, never a filter (decision 3)", "window_72h_rule": "dropped (decision 3)"}
+    intake["final_entry"] = final("python scripts/make_alerts.py --data <ds> --final")
+    dump("intake.yaml", hdr, intake)
+    dump("subset_rule.yaml", hdr, {"rule": "stratified_subset", "code": "ftm.intake.alerts.stratified_subset", "code_commit": subprocess.run(["git", "log", "-1", "--format=%h", "--", "ftm/intake/alerts.py"], capture_output=True, text=True).stdout.strip(),
+                                   "strata": "bank_p0_decile",
+                                   "definition": "home bank x decile of p0 over the alerts passed in (rank over alert_id-sorted rows, ties by alert_id); proportional allocation, largest remainder, at least one per non-empty stratum",
+                                   "uses_labels": False, "n": 1000, "seed": 0, "built_at": "G5, first step of scripts/run_final.py, from TEST alerts (guarded by FTM_FINAL_RUN)",
+                                   "decision": "docs/t4_decisions_week2.md item 1: freeze the rule, not the IDs", "prereg_file": "prereg/subset_manifest.txt (T4 writes rule_commit; T1 does not touch prereg/)"})  # fmt: skip
+
+
+if __name__ == "__main__":
+    main()

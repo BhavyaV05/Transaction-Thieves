@@ -51,3 +51,52 @@ def test_chunked_features_equal_the_whole_frame_computation():
     assert got["tx_id"].to_list() == full["tx_id"].to_list()
     for c in es.FEATURES2:
         assert np.allclose(got[c].to_numpy(), full[c].to_numpy(), atol=1e-6), c
+
+
+def test_score_final_scores_test_edges_and_reproduces_the_val_scores(monkeypatch, tmp_path):
+    import pytest
+
+    torch = pytest.importorskip("torch")
+    from ftm import guards
+    from ftm.data import io
+
+    f = _frame(500, seed=5)
+    f = f.with_columns((pl.col("timestamp").dt.ordinal_day() - 244).cast(pl.Int64).alias("day"))
+    f = f.with_columns(pl.when(pl.col("day") <= 0).then(pl.lit("train")).when(pl.col("day") == 1).then(pl.lit("val")).otherwise(pl.lit("test")).alias("split"))
+    assert set(f["split"]) == {"train", "val", "test"}
+    tv = f.filter(pl.col("split") != "test")
+    feats, codes = es.timeline_features(tv.drop("day", "split"))
+    # a random but fixed network: the checkpoint of a "val run"
+    torch.manual_seed(0)
+    net = torch.nn.Sequential(torch.nn.Linear(len(es.FEATURES2), 128), torch.nn.ReLU(), torch.nn.Linear(128, 128), torch.nn.ReLU(), torch.nn.Linear(128, 1))
+    X = feats.select(es.FEATURES2).to_numpy().astype("f4")
+    X = np.sign(X) * np.log1p(np.abs(X))
+    mu, sd = X.mean(0), X.std(0) + 1e-6
+    sig = lambda Z: 1 / (1 + np.exp(-Z.astype("f8")))  # noqa: E731
+    with torch.no_grad():
+        stored = sig(net(torch.tensor(((X - mu) / sd).astype("f4"))).squeeze(1).numpy())
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "models").mkdir()
+    (tmp_path / "data" / "runs").mkdir(parents=True)
+    (tmp_path / "data" / "retrieval" / "toy").mkdir(parents=True)
+    torch.save({"state": net.state_dict(), "mu": mu, "sd": sd, "features": es.FEATURES2, "codes": codes, "best_epoch": 0}, "models/edge_scorer_toy.pt")
+    split_of = dict(zip(f["tx_id"], f["split"], strict=True))
+    pl.DataFrame({"tx_id": feats["tx_id"], "score": stored, "split": [split_of[t] for t in feats["tx_id"]]}).write_parquet("data/retrieval/toy/edge_scores.parquet")
+    monkeypatch.setattr(io, "load_config", lambda name: {"parquet_dir": "pq"})
+    monkeypatch.setattr(io, "scan_transactions", lambda *a, **k: f.lazy())
+    monkeypatch.delenv("FTM_FINAL_RUN", raising=False)
+    with pytest.raises(guards.TestSplitLocked):
+        es.score_final("toy")
+    monkeypatch.setenv("FTM_FINAL_RUN", "1")
+    rec = es.score_final("toy")
+    assert rec["max_abs_val_score_diff"] < 1e-5 and rec["test_edges"] == (f["split"] == "test").sum()
+    got = pl.read_parquet("data/retrieval/toy/final/edge_scores_test.parquet")
+    assert set(got["split"]) == {"test"} and got["score"].is_between(0, 1).all()
+    # reference: the whole-frame features of the full timeline with the same network
+    full, _ = es.timeline_features(f.drop("day", "split"), codes)
+    Xf = full.select(es.FEATURES2).to_numpy().astype("f4")
+    Xf = np.sign(Xf) * np.log1p(np.abs(Xf))
+    with torch.no_grad():
+        ref = sig(net(torch.tensor(((Xf - mu) / sd).astype("f4"))).squeeze(1).numpy())
+    want = dict(zip(full["tx_id"].to_list(), ref, strict=True))
+    np.testing.assert_allclose(got["score"].to_numpy(), [want[t] for t in got["tx_id"].to_list()], atol=1e-5)
