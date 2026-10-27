@@ -858,12 +858,12 @@ def test_t1_steps_in_jobs_yaml_follow_the_t1_document():
     # the alert set is built by GFP then the conformal intake, before the subset; everything else after it
     assert by["intake"].depends_on == ["gfp_one_bank"] and by["intake"].cmds[1] == "python scripts/make_alerts.py --data hi_medium --final"
     assert by["multi_gnn"].cmds[2] == "python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode see_everything"
-    assert by["layerwise"].cmds == ["python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2"]
+    assert by["layerwise"].cmds == [f"python scripts/train_layerwise.py --final --data {ds} --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2" for ds in ("hi_small", "hi_medium")]
     assert by["explainers"].depends_on == ["intake", "multi_gnn", "edge_scorer"] and by["evidence_views"].depends_on == ["intake", "edge_scorer", "explainers"]
     assert by["fraudgt"].env == {"T1_EVAL_TEST": "1"} and by["fraudgt"].machine_class == "gpu_s3" and by["fraudgt"].cmds == ["python scripts/fraudgt_final.py"]
     assert not by["hi_medium_see_everything"].required
     assert all("FTM_FINAL_RUN" not in s.env for s in steps)
-    assert round(sum(s.est_hours for s in steps if s.machine_class == "gpu_s1"), 1) == 17.6  # T1's "about 18 hours" for steps 1-10
+    assert round(sum(s.est_hours for s in steps if s.machine_class == "gpu_s1"), 1) == 19.1  # T1's "about 18 hours" for steps 1-10, plus 1.5 h for the HI-Medium layer-wise exchange
 
 
 def test_every_t1_command_exists_and_is_one_t1_listed():

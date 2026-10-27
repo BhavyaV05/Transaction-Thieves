@@ -34,11 +34,11 @@ Hours are for the stated machine; the 3070 Ti numbers are measured on the valida
 | 7 | explainers `--final` (GNNExplainer 1.4 s per alert, PGExplainer 0.011 s, CPU) | 3070 Ti (CPU) | HI-Small ~0.6 (1,272 projected test alerts), HI-Medium ~2 (3,475) | 3, 4, 6 |
 | 8 | evidence views `--final` incl. the explainer views | 3070 Ti (CPU) | HI-Small ~0.2, HI-Medium ~0.7 | 3, 6, 7 |
 | 9 | DP-FedAvg `--final` (client: 6 settings x 3 seeds; edge: 5 x 3), CPU | 3070 Ti | HI-Small ~0.8, HI-Medium ~1.5 | |
-| 10 | layer-wise exchange `--final` (3 seeds), HI-Small and HI-Medium (sampled) | 3070 Ti | HI-Small ~1.5 (val: 0.4 h per run), HI-Medium ~HM_FINAL_H (val: HM_VAL_H h per run) | |
+| 10 | layer-wise exchange `--final` (3 seeds), HI-Small and HI-Medium (sampled) | 3070 Ti | HI-Small ~1.5 (val: 0.4 h per run), HI-Medium ~1.5 (val: 0.55 h per run, sampled) | |
 | 11 | FraudGT test scoring from the val run's `best.pt` (`scripts/fraudgt_final.py`: `T1_DUMP_ONLY=1`, no training, then the calibration) | 5070 Ti | under 0.5 | the val run (phase B, T3) and its dump in `data/fraudgt/val_run` |
 | 12 | HI-Medium see-everything: **val runs first** (GFP: `train_gfp.py --data hi_medium --mode see_everything --neg-frac 0.1 --threads 16`, Multi-GNN and MEGA: `train_gnn.py --our-split --data hi_medium --mode see_everything --budget-s 28800`), then `--final` | 5070 Ti | val runs several hours each (GFP > 2 h on the laptop without finishing; GNNs need 24 GB RAM), final ~1 each | none of the above |
 
-Total on the laptop for steps 0 to 10: about 18 hours, of which about 8 are GPU (4, 5, 10) and the rest CPU, so the CPU steps (1, 3, 7, 8, 9) can overlap the GPU steps. Steps 11 and 12 are the 5070 Ti's. Half of the LLM investigations on the laptop (tracks 3.9) would need the GPU free for the hours of the LLM server; the schedule above leaves it free after step 10.
+Total on the laptop for steps 0 to 10: about 19 hours, of which about 9.5 are GPU (4, 5, 10) and the rest CPU, so the CPU steps (1, 3, 7, 8, 9) can overlap the GPU steps. Steps 11 and 12 are the 5070 Ti's. Half of the LLM investigations on the laptop (tracks 3.9) would need the GPU free for the hours of the LLM server; the schedule above leaves it free after step 10.
 
 ## What `scripts/run_final.py` (T4) must call for T1
 

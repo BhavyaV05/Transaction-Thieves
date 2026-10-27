@@ -158,13 +158,14 @@ t1_final:
         - python scripts/train_federated.py --final --data hi_small --unit edge --eps 1 2 4 8 --seeds 0 1 2
         - python scripts/train_federated.py --final --data hi_medium --unit client --eps 1 2 4 8 16 --seeds 0 1 2
         - python scripts/train_federated.py --final --data hi_medium --unit edge --eps 1 2 4 8 --seeds 0 1 2
-    - id: layerwise             # row 10 (GPU, HI-Small only; HI-Medium is BLOCKED-COMPUTE)
+    - id: layerwise             # row 10 (GPU; HI-Small full batch ~1.5 h, HI-Medium neighbour-sampled ~1.5 h: val 0.55 h per seed)
       row: 10
       phase: post
       machine_class: gpu_s1
-      est_hours: 1.5
+      est_hours: 3.0
       cmds:
         - python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
+        - python scripts/train_layerwise.py --final --data hi_medium --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
     - id: fraudgt               # row 11: the val run's best.pt rescored in dump-only mode (no training), then the stored calibrator; 5070 Ti only
       row: 11
       phase: post
