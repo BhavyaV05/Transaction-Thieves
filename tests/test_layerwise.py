@@ -199,3 +199,20 @@ def test_sampled_run_trains_scores_and_reproduces_its_val_scores_at_the_fixed_st
     for a, b in zip(sel["raw"], fin["raw"], strict=True):
         np.testing.assert_allclose(a, b, atol=1e-6)
     assert [len(r) for r in fin["raw_test"]] == [int((f["split"] == "test").sum()) for f in frames_te.values()]
+
+
+@pytest.mark.parametrize("mode", ["bwd", "none"])
+def test_sampled_equals_full_batch_with_three_owners_and_unowned_nodes(mode):
+    """Three bank-like owners on a denser graph, only two of them are clients (the third's accounts have no owner): the same equality."""
+    rng = np.random.default_rng(5)
+    n, m = 40, 400
+    src, dst = rng.integers(0, n, m), rng.integers(0, n, m)
+    x = rng.normal(size=(m, lw.EDGE_FEATURES)).astype("f4")
+    owners = {i: i % 3 for i in range(n) if i % 3 < 2}  # nodes with i % 3 == 2 have no owner
+    parts = [_graph(np.array([i for i in range(n) if i % 3 == c]), None, src, dst, x, owners, c) for c in (0, 1)]
+    assert any((p.owner < 0).any() for p in parts)
+    net = _net(parts)
+    picks = [np.sort(rng.choice(len(p.src), 25, replace=False)) for p in parts]
+    full = _logits(parts, mode, lambda c: net, [torch.as_tensor(p) for p in picks])
+    smp, _ = _sampled_logits(parts, net, picks, mode, None)
+    assert all(torch.allclose(a, b, atol=1e-5) for a, b in zip(full, smp, strict=True))
