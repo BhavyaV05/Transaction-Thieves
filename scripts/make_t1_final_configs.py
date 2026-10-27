@@ -136,8 +136,8 @@ def main() -> None:
                                          "iter_per_epoch": 256, "seed": 42},
                                "val_result": {"status": "partial", "epochs_run": 111, "best_val_epoch": 95, "val_f1": 0.648, "note": "3 h on the 3070 Ti, val numbers only; no predictions were saved, so there is no Brier or calibrated F1 on val"},
                                "status": "blocked_compute",
-                               "external_command": "T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False",
-                               "final_entry": {"status": "to_build", "commands": [], "note": "5070 Ti: the full 500-epoch run needs a prediction dump (val and test edge scores) added to the patch, the epoch fixed by best val F1, and `T1_EVAL_TEST=1` set by scripts/run_final.py only; the patch redirects every test evaluation to val unless that variable is set"}})  # fmt: skip
+                               "external_command": "T1_OUT=<dir> T1_METRICS=<dir>/metrics.jsonl T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False",
+                               "final_entry": {"status": "needs_val_run", "commands": [], "external_final_command": "T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <val run dir>/final dataset.dir <data> wandb.use False", "note": "5070 Ti: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv; the final run only rescores with best.pt, asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects every test evaluation to val unless it is set"}})  # fmt: skip
     # edge scorer and evidence views
     es = {ds: load(f"edge_scorer_{ds}_120ep.json") for ds in DATASETS}
     from ftm.retrieval import evidence_views as ev
