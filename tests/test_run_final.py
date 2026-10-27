@@ -860,7 +860,7 @@ def test_t1_steps_in_jobs_yaml_follow_the_t1_document():
     assert by["multi_gnn"].cmds[2] == "python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode see_everything"
     assert by["layerwise"].cmds == ["python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2"]
     assert by["explainers"].depends_on == ["intake", "multi_gnn", "edge_scorer"] and by["evidence_views"].depends_on == ["intake", "edge_scorer", "explainers"]
-    assert by["fraudgt"].env == {"T1_EVAL_TEST": "1"} and by["fraudgt"].machine_class == "gpu_s3" and not by["fraudgt"].cmds
+    assert by["fraudgt"].env == {"T1_EVAL_TEST": "1"} and by["fraudgt"].machine_class == "gpu_s3" and by["fraudgt"].cmds == ["python scripts/fraudgt_final.py"]
     assert not by["hi_medium_see_everything"].required
     assert all("FTM_FINAL_RUN" not in s.env for s in steps)
     assert round(sum(s.est_hours for s in steps if s.machine_class == "gpu_s1"), 1) == 17.6  # T1's "about 18 hours" for steps 1-10

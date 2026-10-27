@@ -30,8 +30,11 @@ def load(name: str):
     return json.loads(f.read_text()) if f.exists() else None
 
 
-def dump(name: str, header: str, doc: dict) -> None:
+def dump(name: str, header: str, doc: dict, keep: bool = False) -> None:
+    """`keep=True`: an existing file is left alone (subset_rule.yaml is frozen: T4 quotes the commit that merged it in the prereg)."""
     OUT.mkdir(parents=True, exist_ok=True)
+    if keep and (OUT / name).exists():
+        return
     (OUT / name).write_text(header + yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, width=140))
 
 
@@ -122,22 +125,31 @@ def main() -> None:
     lw = load("layerwise_hi_small.json")
     if lw:
         rows = [r for r in lw["rows"] if r["arm"] == "sync_sgd:bwd"]
+        cmd = "python scripts/train_layerwise.py {}--data {} --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2"
+        hm = {"status": "blocked_compute", "reason": "no val run: python scripts/train_layerwise.py --data hi_medium (neighbour-sampled, 3 seeds)"}
+        final_cmds = [cmd.format("--final ", "hi_small")]
+        lwm = load("layerwise_hi_medium.json")  # the neighbour-sampled val run (HI-Medium is always sampled, scripts/train_layerwise.py)
+        mrows = [r for r in lwm["rows"] if r["arm"] == "sync_sgd:bwd"] if lwm else []
+        if mrows:
+            hm = {"status": "val_done", "sampled": True, "fanout": mrows[0].get("fanout"), "eval_batch": mrows[0].get("eval_batch"), "steps": mrows[0]["steps"],
+                  "lr": mrows[0]["lr"], "batch": mrows[0]["batch"], "seeds": [r["seed"] for r in mrows], "commit": mrows[0]["commit"],
+                  "best_step_by_val_fit_ap": {str(r["seed"]): r["best_step"] for r in mrows}, "val_command": cmd.format("", "hi_medium")}
+            final_cmds.append(cmd.format("--final ", "hi_medium"))
         dump("layerwise.yaml", hdr, {"model": "Ceydeli et al. layer-wise exchange, Sync-SGD with forward + backward exchange (best arm on val), non-private reference", "dataset": "hi_small",
                                      "arm": "sync_sgd:bwd", "steps": rows[0]["steps"], "lr": rows[0]["lr"], "batch": rows[0]["batch"], "seeds": [r["seed"] for r in rows],
                                      "best_step_by_val_fit_ap": {str(r["seed"]): r["best_step"] for r in rows}, "commit": rows[0]["commit"],
                                      "val_command": "python scripts/train_layerwise.py --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2",
-                                     "hi_medium": {"status": "blocked_compute", "reason": "full-batch message passing needs the neighbour-sampled variant or a larger GPU"},
-                                     "final_entry": final("python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2")})  # fmt: skip
+                                     "hi_medium": hm, "final_entry": final(*final_cmds)})  # fmt: skip
     # FraudGT (secondary, 5070 Ti): the only val run is the partial 3 h run of week 6; nothing is saved from it
     dump("fraudgt.yaml", hdr, {"model": "FraudGT SparseNodeGT+ports+Ego (Lin et al., ICAIF 2024; no licence: run from its checkout, never vendored)",
-                               "checkout": "~/Documents/t1_external/FraudGT", "commit": "f88db9dc003a6f521a90631c4741541686043119", "patch": "ftm/baselines/fraudgt_t1.patch",
+                               "checkout": "~/Documents/t1_external/FraudGT", "dump_dir": "data/fraudgt/val_run", "data_dir": "~/Documents/t1_external/fraudgt_data", "commit": "f88db9dc003a6f521a90631c4741541686043119", "patch": "ftm/baselines/fraudgt_t1.patch",
                                "config": "configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml",
                                "hyper": {"layers": 2, "hidden": 64, "heads": 8, "batch": 2048, "neighbours": [50, 50], "optimizer": "AdamW lr 1e-3, cosine, 5 warm-up epochs", "epochs": 500,
                                          "iter_per_epoch": 256, "seed": 42},
                                "val_result": {"status": "partial", "epochs_run": 111, "best_val_epoch": 95, "val_f1": 0.648, "note": "3 h on the 3070 Ti, val numbers only; no predictions were saved, so there is no Brier or calibrated F1 on val"},
                                "status": "blocked_compute",
                                "external_command": "T1_OUT=<dir> T1_METRICS=<dir>/metrics.jsonl T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False",
-                               "final_entry": {"status": "needs_val_run", "commands": [], "external_final_command": "T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <val run dir>/final dataset.dir <data> wandb.use False", "note": "5070 Ti: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv; the final run only rescores with best.pt, asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects every test evaluation to val unless it is set"}})  # fmt: skip
+                               "final_entry": {"status": "needs_val_run", "commands": ["python scripts/fraudgt_final.py"], "external_final_command": "T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml --repeat 1 out_dir <val run dir>/final dataset.dir <data> wandb.use False", "note": "5070 Ti: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv; the final run only rescores with best.pt, asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects every test evaluation to val unless it is set. `commands` is the wrapper: it runs that command with T1_DUMP_ONLY=1 in the checkout, then scripts/fraudgt_scores.py --final (stored calibrator, p0 file). The val side: python scripts/fraudgt_scores.py --data hi_small --dump <val run dir>"}})  # fmt: skip
     # edge scorer and evidence views
     es = {ds: load(f"edge_scorer_{ds}_120ep.json") for ds in DATASETS}
     from ftm.retrieval import evidence_views as ev
@@ -170,7 +182,7 @@ def main() -> None:
                                    "strata": "bank_p0_decile",
                                    "definition": "home bank x decile of p0 over the alerts passed in (rank over alert_id-sorted rows, ties by alert_id); proportional allocation, largest remainder, at least one per non-empty stratum",
                                    "uses_labels": False, "n": 1000, "seed": 0, "built_at": "G5, first step of scripts/run_final.py, from TEST alerts (guarded by FTM_FINAL_RUN)",
-                                   "decision": "docs/t4_decisions_week2.md item 1: freeze the rule, not the IDs", "prereg_file": "prereg/subset_manifest.txt (T4 writes rule_commit; T1 does not touch prereg/)"})  # fmt: skip
+                                   "decision": "docs/t4_decisions_week2.md item 1: freeze the rule, not the IDs", "prereg_file": "prereg/subset_manifest.txt (T4 writes rule_commit; T1 does not touch prereg/)"}, keep=True)  # fmt: skip
 
 
 if __name__ == "__main__":

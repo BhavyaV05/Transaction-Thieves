@@ -17,7 +17,7 @@ commit: 2e7d6f7
 val_command: python scripts/train_layerwise.py --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
 hi_medium:
   status: blocked_compute
-  reason: full-batch message passing needs the neighbour-sampled variant or a larger GPU
+  reason: 'no val run: python scripts/train_layerwise.py --data hi_medium (neighbour-sampled, 3 seeds)'
 final_entry:
   status: ready
   commands:

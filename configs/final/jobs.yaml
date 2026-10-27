@@ -56,7 +56,7 @@ ours:
 # Needed only if the file does not exist yet. It runs with FTM_FINAL_RUN=1, after the preflight.
 test_alerts:
   path: data/alerts/{data}/test.parquet
-  cmd: null
+  cmd: python scripts/make_alerts.py --data {data} --final    # also the `intake` step below, which has built it by then; formatted with {data} and {out}
 
 external_cmd:
   # One command template per family, or one command per job (key: "system.variant" for both sets, or the full job id).
@@ -165,21 +165,25 @@ t1_final:
       est_hours: 1.5
       cmds:
         - python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
-    - id: fraudgt               # row 11: T1 has not written the final entry point (full 500-epoch run + prediction dump), 5070 Ti only
+    - id: fraudgt               # row 11: the val run's best.pt rescored in dump-only mode (no training), then the stored calibrator; 5070 Ti only
       row: 11
       phase: post
       machine_class: gpu_s3
-      est_hours: 6
+      est_hours: 0.5
       required: true
-      env: {T1_EVAL_TEST: "1"}  # per docs/t1_final_run.md: set by run_final.py only
-      cmds: []                  # T1: put the command here
+      env: {T1_EVAL_TEST: "1"}  # per docs/t1_final_run.md: set by run_final.py only; the wrapper adds T1_DUMP_ONLY=1 and T1_OUT and refuses without this
+      cmds:
+        - python scripts/fraudgt_final.py   # needs best.pt + pred_val.csv of the val run in data/fraudgt/val_run (configs/t1_final/fraudgt.yaml: dump_dir)
     - id: hi_medium_see_everything   # row 12: needs val runs first (BLOCKED-COMPUTE); optional until they exist
       row: 12
       phase: post
       machine_class: gpu_s3
       est_hours: 3
-      required: false
-      cmds: []
+      required: false           # the val runs (Akshat, 5070 Ti) must exist first: p0_hi_medium_<model>_see_everything.json and models/ (docs/t1_final_run.md, "When Akshat's files arrive")
+      cmds:
+        - python scripts/train_gfp.py --data hi_medium --mode see_everything --final
+        - python scripts/train_gnn.py --final --model multi_gnn --data hi_medium --mode see_everything
+        - python scripts/train_gnn.py --final --model mega_gnn --data hi_medium --mode see_everything
 
 # Anything else that belongs in the final run (one bank only, GFP see-everything, raw sharing, ...):
 extra_jobs: []
