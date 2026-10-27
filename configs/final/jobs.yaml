@@ -61,7 +61,7 @@ test_alerts:
 external_cmd:
   # One command template per family, or one command per job (key: "system.variant" for both sets, or the full job id).
   templates:
-    detection: null                       # T1: Groups A/B (e.g. "python scripts/final_detection.py --system {system} --mode {variant} --alert-ids {alert_ids} --out {out}")
+    detection: python scripts/final_detection.py --system {system} --variant {variant} --data {data} --seed {seed} --alert-ids {alert_ids} --out {out} --run-id {run_id} --commit {commit} --machine {machine}  # T1: Groups A/B run logs from data/scores/<ds>/final/ (docs/t1_final_run.md)
     non_llm_arm: null                     # T2: the non-LLM planners and ablation arms (variant = the arm name in configs/experiments/ablations_nonllm.yaml)
   commands: {}                            # {"multi_gnn.see_everything": "python scripts/...", "nonllm.eig.subset": "..."}
   machine_class: {}                       # overrides: {"fraudgt.see_everything": gpu_s3}
