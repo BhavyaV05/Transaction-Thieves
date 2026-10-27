@@ -93,6 +93,121 @@ def degree_histograms(graphs: list[ClientGraph]) -> tuple[np.ndarray, np.ndarray
     return tuple(np.bincount(np.concatenate(d)).astype(np.int64) for d in (din, dout))
 
 
+class Sampler:
+    """Neighbour-sampled mini-batches of the clients' extended subgraphs (the paper's training: seed edges, 2-hop sampling, up to `fanout`
+    neighbours per node, here with the exchange kept exact).
+
+    One step: every client has a batch of seed edges. A node whose representation after `k` layers is needed (`rem` = k) draws up to `fanout`
+    of its incident edges (either direction: reverse message passing) once, its neighbours then need `k - 1` layers. Only nodes the client owns
+    are expanded; a remote node's own aggregate is overwritten by the exchange, so it is only a request: the owner must hold that node
+    with the same `rem`, which expands it in the owner's graph. The subgraph of a client is the union of the drawn edges. With
+    `fanout=None` every incident edge is taken and the seed logits equal the full-batch ones (Theorems 1 and 2 still hold; tested). With a finite
+    fan-out the receptive fields differ a little between clients, which is the gap the paper reports for its own sampled runs.
+    Works on any objects with `nodes, src, dst, x_edge, owned, owner` (ClientGraph or the test stand-ins)."""
+
+    def __init__(self, graphs, fanout: int | None = 100, hops: int = LAYERS, x_device=None):
+        self.g, self.fanout, self.hops = graphs, fanout, hops
+        self.ptr, self.inc, self.oloc, self.x = [], [], [], []
+        for g in graphs:
+            n, m = len(g.nodes), len(g.src)
+            key = np.concatenate([g.src, g.dst])
+            order = np.argsort(key, kind="stable")
+            self.inc.append(np.concatenate([np.arange(m), np.arange(m)])[order])
+            self.ptr.append(np.concatenate([[0], np.cumsum(np.bincount(key, minlength=n))]))
+            loc = np.full(n, -1, np.int64)  # position of the node in its owner's node table
+            for o in np.unique(g.owner[(g.owner >= 0) & ~g.owned]):
+                pos = np.flatnonzero(g.owner == o)
+                loc[pos] = np.searchsorted(graphs[o].nodes, g.nodes[pos])
+            self.oloc.append(loc)
+            if x_device is not None:
+                import torch
+
+                self.x.append(torch.as_tensor(g.x_edge, device=x_device))
+
+    def _draw(self, c, v, level, rem, em, rng):
+        g, ptr = self.g[c], self.ptr[c]
+        d = ptr[v + 1] - ptr[v]
+        big = np.zeros(len(v), bool) if self.fanout is None else d > self.fanout
+        sm, ds = v[~big], d[~big]
+        idx = [np.arange(ds.sum()) - np.repeat(np.cumsum(ds) - ds, ds) + np.repeat(ptr[sm], ds)]
+        who = [np.repeat(sm, ds)]
+        for u in v[big]:  # hubs: a uniform sample without replacement
+            idx.append(ptr[u] + rng.choice(ptr[u + 1] - ptr[u], self.fanout, replace=False))
+            who.append(np.full(self.fanout, u))
+        e, who = self.inc[c][np.concatenate(idx)], np.concatenate(who)
+        em[e] = True
+        nb = g.src[e] + g.dst[e] - who  # the other endpoint
+        rem[nb[rem[nb] < level - 1]] = level - 1
+
+    def sample(self, seeds: list[np.ndarray], rng, exchange: bool):
+        """seeds[c]: local edge indices of client c. Returns per-client subgraphs (numpy) and the exchange plan over their node tables."""
+        G = self.g
+        rem = [np.full(len(g.nodes), -1, np.int8) for g in G]
+        drawn = [np.zeros(len(g.nodes), bool) for g in G]
+        em = [np.zeros(len(g.src), bool) for g in G]
+        for c, s in enumerate(seeds):
+            em[c][s] = True
+            rem[c][G[c].src[s]] = self.hops
+            rem[c][G[c].dst[s]] = self.hops
+
+        def request(level):  # remote copies ask their owner for the representation after `level` layers
+            raised = False
+            for c, g in enumerate(G):
+                v = np.flatnonzero((rem[c] == level) & ~g.owned & (g.owner >= 0)) if exchange else np.zeros(0, np.int64)
+                for o in np.unique(g.owner[v]):
+                    t = self.oloc[c][v[g.owner[v] == o]]
+                    t = t[rem[o][t] < level]
+                    rem[o][t] = level
+                    raised |= len(t) > 0
+            return raised
+
+        for level in range(self.hops, 0, -1):
+            while True:
+                raised = request(level)
+                for c, g in enumerate(G):
+                    v = np.flatnonzero((rem[c] == level) & g.owned & ~drawn[c])
+                    if len(v):
+                        self._draw(c, v, level, rem[c], em[c], rng)
+                        drawn[c][v] = True
+                        raised = True
+                if not raised:
+                    break
+        request(0)
+        subs = []
+        for c, g in enumerate(G):
+            nodes, edges = np.flatnonzero(rem[c] >= 0), np.flatnonzero(em[c])
+            lut = np.full(len(g.nodes), -1, np.int64)
+            lut[nodes] = np.arange(len(nodes))
+            subs.append({"nodes": nodes, "edges": edges, "lut": lut, "src": lut[g.src[edges]], "dst": lut[g.dst[edges]], "owned": g.owned[nodes],
+                         "owner": g.owner[nodes], "seed": np.searchsorted(edges, seeds[c])})  # fmt: skip
+        off = np.cumsum([0] + [len(s["nodes"]) for s in subs])
+        plan = []
+        for c, s in enumerate(subs):
+            pos, rows = [np.zeros(0, np.int64)], [np.zeros(0, np.int64)]
+            for o in np.unique(s["owner"][~s["owned"] & (s["owner"] >= 0)]) if exchange else []:
+                p = np.flatnonzero(~s["owned"] & (s["owner"] == o))
+                r = subs[o]["lut"][self.oloc[c][s["nodes"][p]]]
+                assert (r >= 0).all(), "the owner does not hold a requested node"
+                pos.append(p)
+                rows.append(off[o] + r)
+            plan.append({"pos": np.concatenate(pos), "rows": np.concatenate(rows), "unowned": np.flatnonzero(s["owner"] < 0),
+                         "remote": np.flatnonzero(~s["owned"])})  # fmt: skip
+        return subs, plan
+
+    def to_device(self, subs, plan, device):
+        import torch
+
+        gt = []
+        for c, s in enumerate(subs):
+            e = torch.as_tensor(s["edges"], device=device)
+            x = self.x[c][e] if self.x else torch.as_tensor(self.g[c].x_edge[s["edges"]], device=device)
+            gt.append({"src": torch.as_tensor(s["src"], device=device), "dst": torch.as_tensor(s["dst"], device=device), "x": x,
+                       "owned": torch.as_tensor(s["owned"], device=device)})  # fmt: skip
+        pt = [{"pos": p["pos"], "pos_t": torch.as_tensor(p["pos"], device=device), "rows_t": torch.as_tensor(p["rows"], device=device),
+               "unowned_t": torch.as_tensor(p["unowned"], device=device), "remote_t": torch.as_tensor(p["remote"], device=device)} for p in plan]  # fmt: skip
+        return gt, pt, [torch.as_tensor(s["seed"], device=device) for s in subs]
+
+
 def make_model(deg_in: np.ndarray, deg_out: np.ndarray, hidden: int = HIDDEN, layers: int = LAYERS):
     import torch
     from torch import nn
@@ -186,12 +301,15 @@ def to_device(graphs: list[ClientGraph], plan: list[dict], device):
 def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync: str, exchange: str, steps: int = 400, local_steps: int = 10,
         parts: dict[int, np.ndarray], batch: int = 8192, lr: float = 2e-3, pos_weight: float = 7.0, mu: float = 0.01, eval_every: int = 40,
         seed: int = 0, device: str = "cuda", log=print, fixed_step: int | None = None, frames_test: dict | None = None,
-        x_edge_test: dict | None = None) -> dict:  # fmt: skip
+        x_edge_test: dict | None = None, sampled: bool = False, fanout: int | None = 100, eval_batch: int = 8192) -> dict:  # fmt: skip
     """One training run. Returns per client the raw P(laundering) of its val rows at the step with the best pooled val `fit` AP.
 
     Final run (week 14): `fixed_step` (the step chosen on val, no selection and no training beyond it) and `frames_test` / `x_edge_test` (the same
     views with the TEST rows appended; features from `x_edge_test`): at that step the val rows are scored on the train+val graph as before and the
     test rows on the train+val+test graph with the same network; the result also holds `raw_test` and `test_idx_tx`.
+
+    `sampled`: neighbour-sampled mini-batches (class `Sampler`, `fanout` neighbours per node and hop, `batch` seed edges per client and step) instead of
+    full-batch message passing; scoring then also goes through sampled batches of `eval_batch` seed edges per client (a fixed sampling stream).
 
     `frames`: bank -> its view rows (train and val), sorted by (timestamp, tx_id), with split, is_laundering, from_bank ...;
     `x_edge`: bank -> edge features of those rows; `parts`: bank -> val_part ('fit'/'cal'/'eval') of its val rows, in row order. Training uses train rows only; scoring uses the train+val graph (as the paper)."""
@@ -215,10 +333,15 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
     g_te = None
     if frames_test is not None:  # train+val+test graph: only the test rows are scored on it
         g_te = [ClientGraph(b, frames_test[b], node_bank, x_edge_test[b], client_of_bank, False) for b in banks]
-    plan_tr, plan_ev = build_plan(g_tr), build_plan(g_ev)
-    gt_tr, pt_tr = to_device(g_tr, plan_tr, device)
-    gt_ev, pt_ev = to_device(g_ev, plan_ev, device)
-    gt_te, pt_te = to_device(g_te, build_plan(g_te), device) if g_te is not None else (None, None)
+    if sampled:
+        sm_tr, sm_ev = Sampler(g_tr, fanout, x_device=device), Sampler(g_ev, fanout)
+        sm_te = Sampler(g_te, fanout) if g_te is not None else None
+        rng_s = np.random.default_rng(seed + 1)  # sampling stream, apart from the seed-edge picks
+    else:
+        plan_tr, plan_ev = build_plan(g_tr), build_plan(g_ev)
+        gt_tr, pt_tr = to_device(g_tr, plan_tr, device)
+        gt_ev, pt_ev = to_device(g_ev, plan_ev, device)
+        gt_te, pt_te = to_device(g_te, build_plan(g_te), device) if g_te is not None else (None, None)
     deg_in, deg_out = degree_histograms(g_tr)
     base = make_model(deg_in, deg_out).to(device)
     shared = sync == "sync_sgd"
@@ -238,13 +361,28 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
     hist = []
     glob = {k: p.detach().clone() for k, p in base.named_parameters()}
 
+    def sub_forward(sm, seeds, rng):
+        subs, plan = sm.sample(seeds, rng, exchange != "none")
+        gt, pt, pos = sm.to_device(subs, plan, device)
+        return forward(nets, gt, pt, exchange, device, pos)
+
+    def score_sampled(sm, idx):  # every listed edge of every client, in chunks of `eval_batch` seeds, the same sampling stream at every call
+        rng_e, out = np.random.default_rng(seed + 7919), [[] for _ in banks]
+        for k in range(max((len(i) + eval_batch - 1) // eval_batch for i in idx)):
+            lo = sub_forward(sm, [i[k * eval_batch : (k + 1) * eval_batch] for i in idx], rng_e)
+            for c, x in enumerate(lo):
+                out[c].append(torch.sigmoid(x).cpu().numpy().astype("f8"))
+        return [np.concatenate(o) for o in out]
+
     def evaluate(step):
         nonlocal best, raw_test
         for n in uniq:
             n.eval()
         with torch.no_grad():
-            lo = forward(nets, gt_ev, pt_ev, exchange, device, val_t)
-        raw = [torch.sigmoid(x).cpu().numpy().astype("f8") for x in lo]
+            if sampled:
+                raw = score_sampled(sm_ev, val_idx)
+            else:
+                raw = [torch.sigmoid(x).cpu().numpy().astype("f8") for x in forward(nets, gt_ev, pt_ev, exchange, device, val_t)]
         yv = np.concatenate([g_ev[c].y[val_idx[c]] for c in range(len(banks))])
         fit = part == "fit"
         ap = float(average_precision_score(yv[fit], np.concatenate(raw)[fit])) if yv[fit].sum() else 0.0
@@ -254,8 +392,11 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
             best = (ap, raw, step)
             if g_te is not None:  # same network, test rows on the graph that also holds the test edges
                 with torch.no_grad():
-                    lt = forward(nets, gt_te, pt_te, exchange, device, [torch.as_tensor(i, device=device) for i in test_idx])
-                raw_test = [torch.sigmoid(x).cpu().numpy().astype("f8") for x in lt]
+                    if sampled:
+                        raw_test = score_sampled(sm_te, test_idx)
+                    else:
+                        lt = forward(nets, gt_te, pt_te, exchange, device, [torch.as_tensor(i, device=device) for i in test_idx])
+                        raw_test = [torch.sigmoid(x).cpu().numpy().astype("f8") for x in lt]
         for n in uniq:
             n.train()
 
@@ -264,7 +405,7 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
         pick_t = [torch.as_tensor(p, device=device) for p in picks]
         for o in opts:
             o.zero_grad()
-        logits = forward(nets, gt_tr, pt_tr, exchange, device, pick_t)
+        logits = sub_forward(sm_tr, picks, rng_s) if sampled else forward(nets, gt_tr, pt_tr, exchange, device, pick_t)
         losses = []
         for c, (lg, p) in enumerate(zip(logits, pick_t, strict=True)):
             if len(p) == 0:
@@ -300,4 +441,4 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
     return {"raw": best[1], "raw_test": raw_test, "test_idx_tx": [g_te[c].tx_id[test_idx[c]] for c in range(len(banks))] if g_te is not None else None,
             "best_step": best[2], "best_val_fit_ap": best[0], "history": hist, "sync": sync, "exchange": exchange,
             "steps": steps, "local_steps": local_steps, "batch": batch, "lr": lr, "pos_weight": pos_weight, "seed": seed,
-            "n_clients": len(banks), "val_rows": [len(i) for i in val_idx], "val_idx_tx": [g_ev[c].tx_id[val_idx[c]] for c in range(len(banks))]}  # fmt: skip
+            "sampled": sampled, "fanout": fanout if sampled else None, "n_clients": len(banks), "val_rows": [len(i) for i in val_idx], "val_idx_tx": [g_ev[c].tx_id[val_idx[c]] for c in range(len(banks))]}  # fmt: skip
