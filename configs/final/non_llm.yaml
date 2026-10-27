@@ -1,0 +1,17 @@
+# T2's non-LLM arms in the final run (G5): where the arms get their question tables and fitted pieces.
+# Read by ftm/orchestrator/final_nonllm.py and scripts/final_non_llm.py (the `non_llm_arm` command of configs/final/jobs.yaml).
+# The ARMS and their settings are not here: they are the arms of configs/experiments/ablations_nonllm.yaml, built by the same code
+# as the G4 table (ftm.orchestrator.ablations.prepare_arm), so the final run cannot drift from what was validated.
+#
+# Fill the paths in at G4 (30 Oct) from the back-test tables the G4 table was run on; `python scripts/final_non_llm.py --check`
+# lists what is still missing. The tables are NOT rebuilt for the final run: the LRs were fixed on train alerts before test existed.
+
+data: hi_medium         # the headline dataset; jobs.yaml `data` overrides it through --data
+
+tables:                 # lr_table.jsonl written by `python scripts/backtest.py --assemble` (docs/t2_final_run.md)
+  realistic: null       # e.g. data/backtest/{data}/<namespace>/lr_table.jsonl        (all arms but the two below)
+  enumerator: null      # the enumerated programs' table                             (arm: enumerator)
+  exact_labels: null    # the --exact-labels back-test table                         (arm: eig_exact_label_lrs)
+
+# A fitted learned policy (scripts/train_policy.py). null: the arm `learned_policy` fits it on the fit half of validation, as in G4.
+policy: null

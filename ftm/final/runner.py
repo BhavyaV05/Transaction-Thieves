@@ -261,8 +261,9 @@ def command_for(job: Job, ctx: Ctx, d: Path, ids_file: Path, seed: int) -> list[
     fields = {"out": str(d), "alert_ids": str(ids_file), "alerts": job.alerts, "run_dir": str(ctx.run_dir),
               "data": ctx.data, "seed": str(seed), "system": job.system, "variant": job.variant, "job_id": job.job_id,
               "machine": ctx.machine_name, "run_id": ctx.run_id, "commit": ctx.commit}  # fmt: skip
+    quoted = {k: shlex.quote(v) for k, v in fields.items()}  # a Windows path keeps its backslashes through shlex.split
     try:
-        return shlex.split(job.cmd.format(**fields))
+        return shlex.split(job.cmd.format(**quoted))
     except KeyError as e:
         raise JobFailed(f"command template of {job.job_id} uses unknown placeholder {e}") from e
 

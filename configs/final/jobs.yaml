@@ -62,10 +62,16 @@ external_cmd:
   # One command template per family, or one command per job (key: "system.variant" for both sets, or the full job id).
   templates:
     detection: null                       # T1: Groups A/B (e.g. "python scripts/final_detection.py --system {system} --mode {variant} --alert-ids {alert_ids} --out {out}")
-    non_llm_arm: null                     # T2: the non-LLM planners and ablation arms (variant = the arm name in configs/experiments/ablations_nonllm.yaml)
+    # T2: the non-LLM planners and ablation arms (variant = the arm name in configs/experiments/ablations_nonllm.yaml); settings,
+    # question tables and the fit on validation: configs/final/non_llm.yaml, docs/t2_final_run.md
+    non_llm_arm: "python scripts/final_non_llm.py --arm {variant} --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"
   commands: {}                            # {"multi_gnn.see_everything": "python scripts/...", "nonllm.eig.subset": "..."}
   machine_class: {}                       # overrides: {"fraudgt.see_everything": gpu_s3}
-  est_hours: {}                           # {"multi_gnn.see_everything": 3.0}
+  est_hours:                              # {"multi_gnn.see_everything": 3.0}; T2 arms: guesses (world loading dominates), replace with the val medians
+    nonllm.enumerator: 1.0
+    nonllm.learned_policy: 1.0
+    nonllm.eig_fusion_shared: 1.0
+    nonllm.eig_fusion_per_family: 1.0
   default_est_hours: 0.5
   detection_est_hours: 0.1                # T1 groups A/B: the models are computed by the t1_final steps below; this job writes their run log
 
@@ -182,6 +188,10 @@ t1_final:
       cmds: []
 
 # Anything else that belongs in the final run (one bank only, GFP see-everything, raw sharing, ...):
-extra_jobs: []
+extra_jobs:
+  # T2: the raw-sharing arm of H2 (3 banks, exact, no budget). Fitted on the train alerts, applied to the frozen ids. Run-log system
+  # and variant: raw_share (configs/analysis/systems.yaml role raw_share).
+  - {system: raw_share, variant: raw_share, alerts: [subset, full_test], machine_class: cpu, est_hours: 1.5, owner: T2, tier: core,
+     cmd: "python scripts/final_non_llm.py --arm raw_share --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"}
 #  - {system: gfp, variant: one_bank, alerts: [subset, full_test], machine_class: cpu, est_hours: 0.3, owner: T1, tier: core,
 #     cmd: "python scripts/...", depends_on: []}

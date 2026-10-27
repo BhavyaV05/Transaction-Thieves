@@ -117,6 +117,58 @@ def _refused_share(verdicts) -> float:
     return sum(not isinstance(e.response, Reply) for e in asked) / len(asked)
 
 
+@dataclass
+class PreparedArm:
+    """Everything one arm needs to run on a set of alerts: the planner, the harness (gate, accountant, banks under this arm's
+    refusal rates) and the limits. Built by `prepare_arm`, the one place the arm settings turn into objects."""
+
+    planner: object
+    harness: object
+    limits: Limits
+    pool: QuestionPool
+
+
+def prepare_arm(arm: Arm, spec: AblationSpec, *, banks: dict, bindings: dict, fit: Sequence[BtAlert], fit_banks: dict | None,
+                pools: dict[str, QuestionPool], policy: LearnedPolicy | None, seed: int, cache: dict) -> PreparedArm | str:  # fmt: skip
+    """Build one arm, or return the reason it cannot run (missing table, no LightGBM, ...).
+
+    `banks` and `bindings` are the world the arm is scored in (validation at G4, the test alerts at G5). `fit` and `fit_banks`
+    are where whatever needs fitting is fitted (the fitted fusions, the learned policy): the first half of validation, in both.
+    `cache` shares those fits between arms."""
+    s = arm.settings
+    pool = pools.get(s["pool"])
+    if pool is None or not len(pool):
+        return f"no {s['pool']!r} question table"
+    fusion = None
+    if s["fusion"]:
+        key = ("fusion", s["fusion"], s["pool"])
+        if key not in cache:
+            cache[key] = fit_fusion(s["fusion"], fit_banks if fit_banks is not None else banks, fit, pool, spec.eps_levels, seed)
+        fusion = cache[key]
+    pol = None
+    if arm.system == "learned":
+        if policy is None and "policy" not in cache:
+            try:
+                data = collect_policy_data(fit_banks if fit_banks is not None else banks, fit, pool,
+                                           eps_per_alert=s["budget"], seed=seed)  # fmt: skip
+                cache["policy"] = LearnedPolicy.fit(data, seed=seed)
+            except ImportError as e:
+                cache["policy"] = None
+                cache["policy_error"] = f"lightgbm is not installed ({e})"
+            except ValueError as e:
+                cache["policy"] = None
+                cache["policy_error"] = str(e)
+        pol = policy or cache.get("policy")
+        if pol is None:
+            return cache.get("policy_error", "no fitted policy")
+    acc = PrivacyAccountant(eps_per_alert=s["budget"], per_account_cap=s["cap"])
+    harness = make_harness(_banks_for(banks, s), bindings, acc, eps_levels=spec.eps_levels)
+    waves = tuple(s["waves"]) if s["waves"] else None
+    planner = build_planner(arm.system, pool, seed, eps=fixed_level(s["budget"], spec.eps_levels), threshold=s["threshold"],
+                            waves=waves, policy=pol, fusion=fusion, one_per_family=s["one_per_family"])  # fmt: skip
+    return PreparedArm(planner, harness, Limits(eps_per_alert=s["budget"]), pool)
+
+
 def run_ablations(banks: dict, val: Sequence[BtAlert], pools: dict[str, QuestionPool], spec: AblationSpec | None = None,
                   policy: LearnedPolicy | None = None, seed: int = 0, n_boot: int = 500,
                   only: Sequence[str] | None = None) -> list[dict]:  # fmt: skip
@@ -137,40 +189,14 @@ def run_ablations(banks: dict, val: Sequence[BtAlert], pools: dict[str, Question
         if only and arm.name not in only and arm.name != spec.reference:
             continue
         s = arm.settings
-        pool = pools.get(s["pool"])
-        if pool is None or not len(pool):
-            rows.append(_skipped(arm, f"no {s['pool']!r} question table"))
+        prep = prepare_arm(arm, spec, banks=banks, bindings=bindings, fit=fit, fit_banks=banks, pools=pools, policy=policy,
+                           seed=seed, cache=cache)  # fmt: skip
+        if isinstance(prep, str):
+            rows.append(_skipped(arm, prep))
             continue
-        fusion = None
-        if s["fusion"]:
-            key = ("fusion", s["fusion"], s["pool"])
-            if key not in cache:
-                cache[key] = fit_fusion(s["fusion"], banks, fit, pool, spec.eps_levels, seed)
-            fusion = cache[key]
-        pol = None
-        if arm.system == "learned":
-            if policy is None and "policy" not in cache:
-                try:
-                    data = collect_policy_data(banks, fit, pool, eps_per_alert=s["budget"], seed=seed)
-                    cache["policy"] = LearnedPolicy.fit(data, seed=seed)
-                except ImportError as e:
-                    cache["policy"] = None
-                    cache["policy_error"] = f"lightgbm is not installed ({e})"
-                except ValueError as e:
-                    cache["policy"] = None
-                    cache["policy_error"] = str(e)
-            pol = policy or cache.get("policy")
-            if pol is None:
-                rows.append(_skipped(arm, cache.get("policy_error", "no fitted policy")))
-                continue
-        acc = PrivacyAccountant(eps_per_alert=s["budget"], per_account_cap=s["cap"])
-        harness = make_harness(_banks_for(banks, s), bindings, acc, eps_levels=spec.eps_levels)
-        waves = tuple(s["waves"]) if s["waves"] else None
-        planner = build_planner(arm.system, pool, seed, eps=fixed_level(s["budget"], spec.eps_levels), threshold=s["threshold"],
-                                waves=waves, policy=pol, fusion=fusion, one_per_family=s["one_per_family"])  # fmt: skip
         base = {"run_id": f"ablation-{arm.name}", "commit": "", "machine": "", "system": arm.system, "variant": arm.name,
                 "seed": seed}  # fmt: skip
-        res = run_alerts(planner, ev, harness, Limits(eps_per_alert=s["budget"]), base, "val")
+        res = run_alerts(prep.planner, ev, prep.harness, prep.limits, base, "val")
         p = np.array([a.p0 if v.probability is None else v.probability for a, v in zip(ev, res.verdicts, strict=True)])
         ps[arm.name] = p
         gain = (p0 - y) ** 2 - (p - y) ** 2
@@ -226,7 +252,7 @@ class SyntheticEnv:
 
 
 def synthetic_env(n_alerts: int = 600, seed: int = 0, eps_levels: Sequence[float] = (0.5, 1.0, 2.0), max_programs: int = 14,
-                  signal: float = 1.0) -> SyntheticEnv:  # fmt: skip
+                  signal: float = 1.0, enumerator: bool = True) -> SyntheticEnv:  # fmt: skip
     """The synthetic world for smoke tests, never a result: back-test on the first 50% of the alerts in time (the expert
     questions, and a thinned enumeration for the enumerator), the rest play the validation set with p0 = the base rate."""
     from ftm.backtest.synth import make_world
@@ -244,9 +270,11 @@ def synthetic_env(n_alerts: int = 600, seed: int = 0, eps_levels: Sequence[float
     allp = [p["program"] for p in expert_programs("receiver")]
     progs = allp[:: max(1, len(allp) // max_programs)]
     pool, _ = pool_from_backtest(w.banks, train, progs, eps_levels, cfg)
-    enum_progs = [canonical(n) for n in enumerate_programs(3, ("receiver",))][::6]
-    enum_pool, _ = pool_from_backtest(w.banks, train, enum_progs, eps_levels, cfg)
-    return SyntheticEnv(w.banks, val, {"realistic": pool, "enumerator": enum_pool})
+    pools = {"realistic": pool}
+    if enumerator:  # the thinned enumeration costs as much again; only the enumerator arm reads it
+        enum_progs = [canonical(n) for n in enumerate_programs(3, ("receiver",))][::6]
+        pools["enumerator"], _ = pool_from_backtest(w.banks, train, enum_progs, eps_levels, cfg)
+    return SyntheticEnv(w.banks, val, pools)
 
 
 def synthetic_ablations(n_alerts: int = 600, seed: int = 0, spec: AblationSpec | None = None, n_boot: int = 200,
