@@ -41,7 +41,7 @@ Script: `scripts/bench_llm.py` (T3). One fixed prompt (a ~3,000-token aliased tr
 
 ```
 python scripts/bench_llm.py --machine t3-5070ti                                                   # reference, first
-python scripts/bench_llm.py --machine t1-3070ti --reference outputs/bench/t3-5070ti_qwen3-8b.json  # any other machine
+python scripts/bench_llm.py --machine t1-3070ti --reference docs/bench/t3-5070ti_qwen3-8b.json  # any other machine (the reference JSON is committed)
 ```
 
 It writes `outputs/bench/<machine>_<model>.json` and prints one row for the table below. **Factor** = decode tok/s on that machine ÷ decode tok/s on the 5070 Ti (single stream, because agent loops are sequential); reference-hours = hours on that machine × factor. Do not assume it.

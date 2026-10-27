@@ -16,18 +16,24 @@ n_alerts_estimate: {full_test: 3000, subset: 1000}
 
 machines:
   gpu_s3: {speed: 1.0}                    # RTX 5070 Ti, the reference machine (timing counts only from here)
-  gpu_s1: {speed: 0.5, enabled: true}     # RTX 3070 Ti, about half the speed; enabled: false if the backbone does not fit 8 GB
+  gpu_s1: {speed: 0.5, enabled: false}    # RTX 3070 Ti: off, the Gemma 4 12B backbone is 10.3 GB and does not fit its 8 GB (T3, E18); T1's steps on it are unaffected
   cpu: {}
 
 llm:
   toolbox: harness                        # the real gate, accountant and clock in front of every bank
   endpoint: null                          # null: --endpoint on the command line, else FTM_LLM_ENDPOINT
-  model: null                             # served model name; null: the chosen E18 candidate's served_model
+  model: null                             # served model name; null: the chosen E18 candidate's served_model (gemma4-12b)
   serving_stack: null                     # vllm | llama.cpp, recorded in summary.json
-  # Extra scripts/run_llm_agent.py arguments for EVERY LLM job (T3/T4 fill in before 31 Oct), e.g.
-  #   ["--backtest", "data/backtest/hi_medium/<ns>/lr_table.jsonl", "--fusion-params", "outputs/fusion/params.json",
-  #    "--library", "outputs/library/frozen.json"]
-  common_args: []
+  # Extra scripts/run_llm_agent.py arguments for EVERY LLM job (T3, filled 28 Oct): the realistic HI-Medium back-test table
+  # (data/backtest/hi_medium/7df6bad5337d, T2) and the frozen shape-keyed strategy library (C12, docs/t3_library_draft.md).
+  # FUSION is the naive summed default until the team decides G2: if it adopts the fitted fusion, add the two arguments
+  #   "--fusion-params", "outputs/fusion/params.json"
+  # to this list (path of the Fusion.params() JSON fitted on val `fit` by T4) and nothing else (the same fusion for every system).
+  common_args:
+    - "--backtest"
+    - "data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl"
+    - "--library"
+    - "outputs/t3_library/frozen/shape_gemma.json"
   # seconds per alert on the reference machine (estimates for scheduling only; replace with the val-run medians)
   s_per_alert:
     default: 7.5                          # docs/t3_first_runs.md, Qwen3-8B
@@ -49,8 +55,41 @@ llm:
 
 ours:
   variants: [compose, fixed_list, act_only, no_backtest, llm_decides]   # planner modes (E3, E4, E9)
-  extra_variants: []                      # e.g. [batched_2_1, library] (E11, E13); give their args in variant_args
-  variant_args: {}                        # {batched_2_1: ["--batch-schedule", "2,1"], library: ["--library", "<frozen json>"]}
+  # T3's extra arms (all on the full test set only, plan.md section 8; `variant_alerts`): E2 privacy-detection curve at eps 0.5, 1, 4 and
+  # no noise (compose is the default eps 2 point), E11 library keyed by shape vs by account, E13 batched 2,1, E16 the QLoRA student
+  # (3 seeds) and the same Qwen3-8B prompted. The common --library is the frozen shape library, so `compose` IS the shape-keyed arm of E11;
+  # library_account overrides it with the account-keyed one (the later --library wins).
+  extra_variants: [eps_0.5, eps_1, eps_4, eps_inf, library_account, batched_2_1, student_s0, student_s1, student_s2, prompted_qwen3_8b]
+  variant_args:
+    eps_0.5: ["--eps-per-alert", "0.5"]
+    eps_1: ["--eps-per-alert", "1"]
+    eps_4: ["--eps-per-alert", "4"]
+    eps_inf: ["--no-noise"]               # the harness's allow_exact opt-in; LRs of the noisy table at the level the planner names (a lower bound)
+    library_account: ["--library", "outputs/t3_library/frozen/account_gemma.json"]
+    batched_2_1: ["--batch-schedule", "2,1"]
+    # E16: another served model. Last argument wins, so --model here replaces the run's --model; the endpoint is the same URL, so
+    # T4 must stop the Gemma server and start `scripts/serve_llm.py --model qwen3-8b-lora` (one server: the quantised Qwen3-8B base
+    # and the three adapters) before `run_final.py --only 'ours.student_*' --only 'ours.prompted_*'`. Docs: docs/t3_finetune_fastmodel.md.
+    student_s0: ["--model", "planner-sft-s0"]
+    student_s1: ["--model", "planner-sft-s1"]
+    student_s2: ["--model", "planner-sft-s2"]
+    prompted_qwen3_8b: ["--model", "qwen3-8b-bnb"]
+  variant_alerts:
+    eps_0.5: [full_test]
+    eps_1: [full_test]
+    eps_4: [full_test]
+    eps_inf: [full_test]
+    library_account: [full_test]
+    batched_2_1: [full_test]
+    student_s0: [full_test]
+    student_s1: [full_test]
+    student_s2: [full_test]
+    prompted_qwen3_8b: [full_test]
+  variant_parity:                         # model/backbone are compared inside a group (ftm/final/runner.py check_parity)
+    student_s0: e16_qwen3_8b
+    student_s1: e16_qwen3_8b
+    student_s2: e16_qwen3_8b
+    prompted_qwen3_8b: e16_qwen3_8b
 
 # T1: the command that writes data/alerts/{data}/test.parquet (alert-set schema of ftm/intake/README.md, split=test).
 # Needed only if the file does not exist yet. It runs with FTM_FINAL_RUN=1, after the preflight.

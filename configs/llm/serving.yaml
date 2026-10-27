@@ -56,3 +56,29 @@ models:
     gpu_memory_utilization: 0.84           # was 0.88: OOM in a thinking-arm prefill (26 Oct, 15.8 GB peak beside the desktop); KV cache only
     reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
     extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory
+  qwen3-8b-bnb:                            # E16 (planner QLoRA): the bf16 Qwen3-8B quantised to 4 bit at load (bitsandbytes), as in training;
+    repo: Qwen/Qwen3-8B                    # served alone it is the "same model prompted" arm, with the adapters (LoRA) the three students
+    revision: b968826d9c46dd6066d109eabc6255188de91218
+    licence: apache-2.0
+    quantization: bitsandbytes
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85
+    reasoning_parser: qwen3
+    max_lora_rank: 16
+    lora_modules:                          # adapters trained by scripts/train_planner.py (gitignored, models/); an adapter is addressed by its name in `model`
+      planner-sft-s0: models/planner_sft/seed=0/adapter
+      planner-sft-s1: models/planner_sft/seed=1/adapter
+      planner-sft-s2: models/planner_sft/seed=2/adapter
+  qwen3-4b-bnb:                            # E10 (fast model): the bf16 Qwen3-4B quantised at load, the tuned adapters, the untuned base
+    repo: Qwen/Qwen3-4B
+    revision: 1cfa9a7208912126459214e8b04321603b3df60c
+    licence: apache-2.0
+    quantization: bitsandbytes
+    max_model_len: 8192
+    gpu_memory_utilization: 0.60
+    reasoning_parser: qwen3
+    max_lora_rank: 16
+    lora_modules:
+      fast-s0: models/fast_4b/seed=0/adapter
+      fast-s1: models/fast_4b/seed=1/adapter
+      fast-s2: models/fast_4b/seed=2/adapter

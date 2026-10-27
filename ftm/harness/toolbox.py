@@ -97,6 +97,7 @@ class Harness:
     library_fn: Callable[[dict], list[dict]] | None = None  # T3's strategy library
     mode: str = "ported"
     allow_exact: bool = False  # the no-noise arm (eps = inf); never set outside the eps sweep
+    exact_all: bool = False  # LLM no-noise arm (E2, eps = inf): every ask is answered exactly and free, whatever level the system names
     t0_of: Callable[[AlertContext], datetime] | None = None
 
     def toolbox(self) -> HarnessToolBox:
@@ -211,7 +212,7 @@ class HarnessToolBox:
         partners = [b for b in h.banks if str(b) != str(alert.home_bank)]
         # The no-noise arm of the eps sweep (eps = inf) is an explicit opt-in of the harness: the gate still checks
         # everything but the eps level (it is checked at the largest level), and there is nothing to price.
-        exact = h.allow_exact and isinstance(eps, float) and math.isinf(eps) and eps > 0
+        exact = h.allow_exact and isinstance(eps, float) and ((math.isinf(eps) and eps > 0) or h.exact_all)
         d = h.gate.check("ask_bank", alert_id=alert.alert_id, home_bank=alert.home_bank, bank=bank, program=program,
                          eps=h.gate.eps_levels[-1] if exact else eps, rule_id=rule_id, partners=partners)  # fmt: skip
         if d.decision == "blocked":
@@ -240,7 +241,7 @@ class HarnessToolBox:
 
         as_of = self._t0 + timedelta(days=start)
         binding = self._binding
-        response, wait = bank_obj.respond(Question(program, eps, binding), as_of)
+        response, wait = bank_obj.respond(Question(program, math.inf if exact else eps, binding), as_of)
         if start + wait > limits.max_sim_time_days + TOL:  # would arrive after the deadline
             wait = limits.max_sim_time_days - start
             response = Timeout(int(bank), after_days=wait)
@@ -287,15 +288,24 @@ def run_one(investigator, alert: AlertContext, tools: HarnessToolBox, limits: Li
 # --- construction ---------------------------------------------------------------------------------------------------
 def make_toolbox(seed: int = 0, mode: str = "mock", n_banks: int = 30, data: str | None = None, split: str = "val",
                  eps_levels: tuple[float, ...] | None = None, gate_overrides: dict | None = None,
-                 max_alerts: int | None = None) -> HarnessToolBox:  # fmt: skip
+                 max_alerts: int | None = None, eps_per_alert: float | None = None,
+                 no_noise: bool = False) -> HarnessToolBox:  # fmt: skip
     """The toolbox T3's runner asks for (`ftm.harness.make_toolbox(seed=...)`).
 
     mode "mock": random typed answers from banks 1..n_banks, through the real gate and accountant (offline dev).
     mode "world": the real partner banks and alerts of `data` ("hi_small"): replies come from the ledgers with real
     noise. `split` is train or val (test only under the G5 lock, FTM_FINAL_RUN=1).
+
+    E2 (privacy-detection curve) for the LLM systems: `eps_per_alert` replaces the accountant's per-alert budget (0.5, 1, 4);
+    `no_noise` is the eps = inf arm: every ask is answered exactly and costs nothing (`Harness.exact_all`), and the
+    per-alert budget is unlimited (pass `Limits(eps_per_alert=inf)` to the system too).
     """
     with open(PRIVACY_CONFIG, encoding="utf-8") as f:
         acc = PrivacyAccountant.from_config(yaml.safe_load(f))
+    if eps_per_alert is not None:
+        acc.eps_per_alert = float(eps_per_alert)
+    if no_noise:
+        acc.eps_per_alert = math.inf
     gate = Gate.from_config(validator=gate_validator, accountant=acc, **(gate_overrides or {}))
     if eps_levels is not None:
         gate.eps_levels = tuple(eps_levels)
@@ -305,11 +315,11 @@ def make_toolbox(seed: int = 0, mode: str = "mock", n_banks: int = 30, data: str
         w = load_world(data or "hi_small", split, seed, max_alerts=max_alerts)
         banks: dict = dict(w.banks)
         bindings = {a.alert_id: a.binding for a in w.alerts}
-        return Harness(banks, gate, acc, bindings).toolbox()
+        return Harness(banks, gate, acc, bindings, allow_exact=no_noise, exact_all=no_noise).toolbox()
     if mode != "mock":
         raise ValueError("mode must be 'mock' or 'world'")
     banks = {b: MockBank(b, seed) for b in range(1, n_banks + 1)}
-    return Harness(banks, gate, acc, {}).toolbox()
+    return Harness(banks, gate, acc, {}, allow_exact=no_noise, exact_all=no_noise).toolbox()
 
 
 __all__ = [

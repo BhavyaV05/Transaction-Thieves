@@ -14,7 +14,7 @@ Fairness (plan.md 7.2):
     counted by a CountingClient and written to the compute log.
 `client_lm` uses DSPy's legacy BaseLM.forward interface, supported in 3.4 and removed in 3.5 (port it to an
 engine before upgrading). dspy is imported lazily so this module imports without it (CI does not install it).
-NOT YET OPTIMISED: `optimize()` needs val alerts through harness v0 and the endpoint.
+Optimised by `scripts/optimize_dspy.py` (val `fit`, Gemma 4 12B, harness); the saved program is loaded with `--dspy-program`.
 """
 
 from __future__ import annotations
@@ -213,10 +213,16 @@ def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, a
 
         def forward(self, case, tools_help, alert_id):
             alert, tools = registry[alert_id]
-            s = Investigation(alert, tools, limits)
-            _CTX.executor, _CTX.step = ToolExecutor(alert, tools, s, dsl, list(alert.summary.get("partner_banks", []))), 0
-            with dspy.context(lm=client_lm(BudgetedClient(llm, limits))):
-                return self.react(case=case, tools_help=tools_help)
+            if hasattr(tools, "begin"):  # the harness toolbox: one session per alert (run_llm_agent.investigate_one does the same)
+                tools.begin(alert, limits)
+            try:
+                s = Investigation(alert, tools, limits)
+                _CTX.executor, _CTX.step = ToolExecutor(alert, tools, s, dsl, list(alert.summary.get("partner_banks", []))), 0
+                with dspy.context(lm=client_lm(BudgetedClient(llm, limits))):
+                    return self.react(case=case, tools_help=tools_help)
+            finally:
+                if hasattr(tools, "end"):
+                    tools.end()
 
     opt = dspy.MIPROv2(metric=brier_metric, prompt_model=client_lm(llm), task_model=client_lm(llm), auto=auto,
                        seed=seed, num_threads=num_threads)  # fmt: skip

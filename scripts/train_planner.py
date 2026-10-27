@@ -120,14 +120,20 @@ def cmd_distill(a) -> int:
     runs_model = {json.loads((run / "summary.json").read_text(encoding="utf-8")).get("model") for run in a.runs}
     if runs_model != {a.teacher_model}:
         raise SystemExit(f"runs were made with {sorted(map(str, runs_model))}, not --teacher-model {a.teacher_model!r}")
-    fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), table)  # fitted on val (T4)
+    if a.fusion_params is not None:
+        fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), table)  # fitted on val (T4)
+    else:  # the naive summed fusion every run uses until the team adopts the fitted one (configs/final/jobs.yaml)
+        from ftm.llm.investigation import NaiveLRFusion
+
+        fusion = NaiveLRFusion(table)
     examples, counts = distill_examples(traces, labels, TableAcceptance(bt), fusion=fusion,
-                                        teacher=Teacher(a.teacher_model, a.teacher_revision), splits=tuple(a.splits))  # fmt: skip
+                                        teacher=Teacher(a.teacher_model, a.teacher_revision), splits=tuple(a.splits),
+                                        allow_naive=a.fusion_params is None)  # fmt: skip
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text("".join(json.dumps(e) + "\n" for e in examples), encoding="utf-8")
     summary = {"out": str(a.out), "runs": [str(r) for r in a.runs], "backtest": str(a.backtest), "backtest_mode": bt.mode,
                "backtest_namespace": bt.namespace, "backtest_accepted_by_eps": bt.summary()["accepted_by_eps"],
-               "fusion_params": str(a.fusion_params), **counts}  # fmt: skip
+               "fusion_params": str(a.fusion_params) if a.fusion_params else "naive", **counts}  # fmt: skip
     (a.out.parent / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0
@@ -178,7 +184,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--backtest", type=Path, required=True, help="assembled back-test dir (or its lr_table.jsonl)")
     d.add_argument("--backtest-mode", default=None,
                    help="cross-check, or the stated mode of a table copied away from its cache; read from the cache otherwise")
-    d.add_argument("--fusion-params", type=Path, required=True, help="Fusion.params() JSON of the model fitted on val")
+    d.add_argument("--fusion-params", type=Path, default=None,
+                   help="Fusion.params() JSON of the model fitted on val; default: the naive summed fusion (the one the teacher runs used)")
     d.add_argument("--teacher-model", required=True)
     d.add_argument("--teacher-revision", required=True, help="weights revision (commit hash) of the served teacher")
     d.add_argument("--out", type=Path, required=True)

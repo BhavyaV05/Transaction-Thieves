@@ -38,7 +38,7 @@ DEFAULTS = {
     "machines": {"gpu_s3": {"speed": 1.0}, "gpu_s1": {"speed": 0.5, "enabled": True}, "cpu": {"speed": 1.0}},
     "llm": {"toolbox": "harness", "common_args": [], "s_per_alert": {"default": 7.5}, "pin_gpu_s3": ["ours.compose.*"],
             "endpoint": None, "model": None, "serving_stack": None},
-    "ours": {"variants": list(OUR_VARIANTS), "extra_variants": []},
+    "ours": {"variants": list(OUR_VARIANTS), "extra_variants": [], "variant_args": {}, "variant_alerts": {}, "variant_parity": {}},
     "test_alerts": {"path": "data/alerts/{data}/test.parquet", "cmd": None},
     "external_cmd": {"templates": {}, "commands": {}, "machine_class": {}, "est_hours": {}, "default_est_hours": 0.5,
                      "detection_est_hours": 0.1},  # T1's models are computed by the t1_final steps; this job only writes their run log
@@ -64,6 +64,7 @@ class Job:
     llm_system: str | None = None  # --system of run_llm_agent.py
     llm_mode: str | None = None  # --mode (planner only)
     extra_args: list[str] = field(default_factory=list)
+    parity_group: str | None = None  # LLM jobs served by another model (E16's Qwen3-8B student and prompted arm): `model` and `backbone` are compared within a group
     cmd: str | None = None  # external_cmd: command template; None = nobody has plugged one in yet
 
     def as_dict(self) -> dict:
@@ -137,13 +138,14 @@ def build_plan(ext: dict, cfg: dict, ablations: dict | None, top_external: list[
     # 2. our LLM system and its ablations, both sets
     variants = list(cfg["ours"]["variants"]) + list(cfg["ours"]["extra_variants"])
     for v in variants:
-        for alerts in (FULL, SUBSET):
+        for alerts in cfg["ours"].get("variant_alerts", {}).get(v, (FULL, SUBSET)):  # E2/E11/E13/E16 arms: the full test set only
             extra = list(cfg["ours"].get("variant_args", {}).get(v, []))
             if v == "batched_2_1":
                 extra = extra or ["--batch-schedule", "2,1"]
             mode = v if v in OUR_VARIANTS else "compose"
             jobs.append(Job(f"ours.{v}.{alerts}", "ours", v, "llm_agent", alerts, seeds, None, hours_llm("ours", alerts),
-                            group="ours", tier="core", owner="T3", llm_system="planner", llm_mode=mode, extra_args=extra))  # fmt: skip
+                            group="ours", tier="core", owner="T3", llm_system="planner", llm_mode=mode, extra_args=extra,
+                            parity_group=cfg["ours"].get("variant_parity", {}).get(v)))  # fmt: skip
     # 3. external LLM agents: subset for all, full test for the G4 top
     for s in ext["systems"]:
         if s["group"] not in ("C", "D"):

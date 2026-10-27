@@ -241,3 +241,41 @@ def test_eps_sweep_cli_synthetic(tmp_path):
     out = tmp_path / "rows.json"
     rows = cli.main(["--system", "random", "--synthetic", "200", "--budgets", "1", "2", "--out", str(out)])
     assert [r["budget"] for r in rows] == [1.0, 2.0, math.inf] and len(json.loads(out.read_text())) == 3
+
+
+# --- E2 for the LLM systems: run_llm_agent --eps-per-alert / --no-noise (harness exact_all) ----------------------------
+def test_exact_all_answers_every_level_exactly_and_free():
+    w = make_world(60, seed=7)
+    a = w.alerts[0]
+    ctx = alert_context(a.binding, 0.2)
+    bank = a.binding.receiver_bank
+    h = make_harness(w.banks, {a.alert_id: a.binding}, eps_levels=(0.5, 1.0, 2.0), allow_exact=True)
+    h.exact_all = True
+    t = h.toolbox()
+    t.begin(ctx, Limits(eps_per_alert=math.inf, max_sim_time_days=1000.0))
+    r = t.ask_bank(bank, PROG, 0.5)  # a nominal level: answered as if eps = inf
+    for _ in range(9):
+        t.ask_bank(bank, PROG, 2.0)
+    assert t.eps_spent == 0 and not h.accountant.alert_spent
+    assert r == w.banks[bank].handle(Question(canonical(parse(PROG)), math.inf, a.binding), a.binding.t0)
+
+
+def test_make_toolbox_sets_the_per_alert_budget_and_the_no_noise_arm():
+    from ftm.harness import make_toolbox
+
+    assert make_toolbox(mode="mock", eps_per_alert=4.0)._h.accountant.eps_per_alert == 4.0
+    t = make_toolbox(mode="mock", no_noise=True)
+    assert t._h.exact_all and t._h.allow_exact and math.isinf(t._h.accountant.eps_per_alert)
+    assert not make_toolbox(mode="mock")._h.exact_all
+
+
+def test_run_llm_agent_eps_flags_reach_limits_and_summary(tmp_path):
+    spec = importlib.util.spec_from_file_location("rla", Path(__file__).resolve().parents[1] / "scripts" / "run_llm_agent.py")
+    rla = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rla)
+    for flags, want_eps, want_nn in ((["--eps-per-alert", "4"], 4.0, False), (["--no-noise"], None, True), ([], 2.0, False)):
+        out = tmp_path / f"r{len(flags)}{want_nn}"
+        rla.main(["--system", "react", "--alerts", "synthetic", "--n", "3", "--llm", "mock", "--toolbox", "harness",
+                  "--run-dir", str(out), *flags])
+        s = json.loads((out / "summary.json").read_text())
+        assert s["eps_per_alert"] == want_eps and s["no_noise"] is want_nn

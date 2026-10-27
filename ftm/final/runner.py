@@ -379,11 +379,13 @@ def check_parity(metas: dict[str, dict], allow_mixed_commits: bool = False) -> l
     Returns the commits seen when mixed commits are allowed; raises ParityError otherwise."""
     by_set: dict[str, list[tuple[str, dict]]] = {}
     llm: list[tuple[str, dict]] = []
+    groups: dict[str, str | None] = {}
     for jid, m in metas.items():
         p = m["parity"]
         by_set.setdefault(m["job"]["alerts"], []).append((jid, p))
         if m["job"]["kind"] == "llm_agent":
             llm.append((jid, p))
+            groups[jid] = m["job"].get("parity_group")
     for alerts, items in by_set.items():
         for key in PARITY_KEYS_PER_SET:
             vals = {json.dumps(p.get(key), sort_keys=True) for jid, p in items if not (key == "alerts_hash" and p.get(key) is None)}
@@ -391,9 +393,13 @@ def check_parity(metas: dict[str, dict], allow_mixed_commits: bool = False) -> l
                 raise ParityError(f"jobs on the {alerts} set differ in {key}: " + "; ".join(
                     f"{jid}={p.get(key)}" for jid, p in items if p.get(key) is not None or key != "alerts_hash"))
     for key in PARITY_KEYS_LLM:
-        vals = {json.dumps(p.get(key), sort_keys=True) for _, p in llm}
-        if len(vals) > 1:
-            raise ParityError(f"LLM jobs differ in {key}: " + "; ".join(f"{jid}={p.get(key)}" for jid, p in llm))
+        # model and backbone are compared inside a parity group: E16's student and prompted arms (Qwen3-8B, another server)
+        # differ from the Gemma jobs on purpose; every other key is shared by all LLM jobs
+        for grp in sorted({groups[jid] or "" for jid, _ in llm}) if key in ("model", "backbone") else [None]:
+            sel = [(jid, p) for jid, p in llm if grp is None or (groups[jid] or "") == grp]
+            vals = {json.dumps(p.get(key), sort_keys=True) for _, p in sel}
+            if len(vals) > 1:
+                raise ParityError(f"LLM jobs differ in {key}: " + "; ".join(f"{jid}={p.get(key)}" for jid, p in sel))
     commits = sorted({m["git_commit"] for m in metas.values()})
     if len(commits) > 1 and not allow_mixed_commits:
         raise ParityError(f"jobs ran at different commits {commits}; rerun them or pass --allow-mixed-commits")
