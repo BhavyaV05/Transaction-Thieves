@@ -26,3 +26,12 @@ system = FinfreRag(llm, pool, mode="native")
 ```
 
 Both read `alert.summary` like the other Group C ports (`amount`, `currency`, `format`, banks, `time`, `evidence`, `partner_banks`, `shape`). Wiring them into `scripts/run_llm_agent.py` is a two-line change in T3's script (not done here).
+
+## Stretch (week 11): MediQ - `mediq.py`
+
+Group D, ported only. **Not in `prereg/external_list.yaml`**, so it is not part of the pre-registered Table 5a and the final-run job plan does not include it; adding it needs the TA (the list is locked at G3). It is registered in `scripts/run_llm_agent.py` (`--system mediq`) so it can run on validation as an exploratory row if the team wants one.
+
+MediQ (Li et al., NeurIPS 2024, arXiv:2406.00922) is an expert that abstains from answering until it is confident, and asks the patient follow-up questions meanwhile. Reimplemented from the paper (the official repo is CC-BY-4.0; nothing copied). Per turn: an abstention call (the model states a probability and a 0-1 confidence; the paper's "numerical" variant), and, if the confidence is under the fixed threshold 0.8, a question call. At most 4 questions, no rationale, no self-consistency (the shared call cap of 20 does not leave room for them). The probability is the last one the model stated; a model that never stated one is scored as p0. It uses neither the back-tested LRs nor an EIG calculation, which is what separates it from our planner, UoT and BED-LLM. Tests: `tests/test_mediq_port.py` (mock LLM).
+
+Not done from the stretch list (`plan.md` 7.1): CodeAct, GraphDx, NOL*, FC2L, ExpeL, Agent Workflow Memory. ExpeL and AWM are memory frameworks meant to replace T3's strategy library, which is still being built; GraphDx has no licence; CodeAct and NOL* do not fit a fixed DSL tool. They stay unported.
+

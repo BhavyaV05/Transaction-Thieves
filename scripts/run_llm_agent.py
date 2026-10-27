@@ -48,6 +48,8 @@ from ftm.external.finfre_rag import ExemplarPool, FinfreRag  # noqa: E402
 from ftm.external.finfre_rag import dev_responder as finfre_dev_responder  # noqa: E402
 from ftm.external.lats import Lats  # noqa: E402
 from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
+from ftm.external.mediq import MediQ  # noqa: E402
+from ftm.external.mediq import dev_responder as mediq_dev_responder  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
@@ -90,10 +92,11 @@ GROUP_C = {  # T4 ports (Group C, native and ported modes)
 }
 DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
                   "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder, "debate": debate_dev_responder,
-                  "uot": uot_dev_responder, "bed_llm": bed_llm_dev_responder}
+                  "uot": uot_dev_responder, "bed_llm": bed_llm_dev_responder, "mediq": mediq_dev_responder}
 GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
            "dspy_react": DspyReact, "debate": Debate,  # debate: T4, reimplementation of Du et al. (debate_autogen.py)
-           "uot": Uot, "bed_llm": BedLlm}  # uot, bed_llm: T4 information-seeking ports (uot.py, bed_llm.py)
+           "uot": Uot, "bed_llm": BedLlm,  # uot, bed_llm: T4 information-seeking ports (uot.py, bed_llm.py)
+           "mediq": MediQ}  # mediq: T2 stretch port (mediq.py), not in prereg/external_list.yaml
 
 
 def git_commit() -> str:
