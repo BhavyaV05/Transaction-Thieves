@@ -33,7 +33,7 @@ Abstract: `{{TBD:abstract}}` placeholder, about 200 words, written last (after t
 
 ### 3 Problem and approach
 
-- Owner: **T4**, with a read by every track. Status: not started.
+- Owner: **T4**, with a read by every track. Status: draft 1 in `03_problem_approach.md` (27 Oct; Figure 1 redrawn as text, illustrative worked example, Table 3; no results, no placeholders).
 - Sources: `docs/proposal_v5.pdf` sections 3-6 and Figure 1; `plan.md` sections 0 and 3 (architecture, invariants); the worked example of one alert; `docs/proposal_v5.pdf` Table 3 (why each capability is needed and how it is measured).
 - Contents: formal setting (home bank, alert, partner banks, noisy typed answers, budget); the invariants (no records leave a bank, LLM text never enters the decision, time guard, aliases, one gate for every system); one alert followed through the system; why each of the five capabilities is needed and how it is measured (the brief requires this).
 - Target length: 1,500 words and Figure 1 (system overview, redrawn from the proposal).
