@@ -77,14 +77,16 @@ def distill_examples(
     teacher: Teacher,
     splits: tuple[str, ...] = ("train",),
     keep_stops: bool = True,
+    allow_naive: bool = False,
 ) -> tuple[list[dict], dict]:
     """Returns (examples, counts). `alerts`: alert_id -> {"split", "label"}; each trace carries the alert's "p0"."""
     if accepted is None:
         raise ValueError("distillation needs a realistic back-test acceptance rule (RealisticAcceptance), none was "
                          "supplied; T2's adapter (PR #24) is pending, build one from a realistic-mode table")
-    if type(fusion) is NaiveLRFusion:  # FusedLR subclasses it for the shared lookup, so exact type
+    if type(fusion) is NaiveLRFusion and not allow_naive:  # FusedLR subclasses it for the shared lookup, so exact type
         raise ValueError("posteriors must come from the fusion model the system uses (ftm.fusion, fitted on val), "
-                         "not the NaiveLRFusion placeholder")
+                         "not the NaiveLRFusion placeholder (allow_naive=True when the system itself runs on it: the final run's \"naive default\" "
+                         "fusion, configs/final/jobs.yaml, until the team adopts the fitted one)")
     if "test" in splits:
         raise ValueError("never distil from test alerts")
     tag = asdict(teacher)

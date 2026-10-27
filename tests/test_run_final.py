@@ -449,7 +449,8 @@ def test_every_llm_job_names_a_system_run_llm_agent_knows():
 
 
 def test_machine_assignment_balances_and_pins():
-    jobs, _ = real_plan()
+    # jobs.yaml has gpu_s1 off (Gemma 4 12B does not fit its 8 GB, T3); this test is about the balancing rule, so it turns it on
+    jobs, _ = real_plan(machines={"gpu_s3": {"speed": 1.0}, "gpu_s1": {"speed": 0.5, "enabled": True}, "cpu": {}})
     llm = [j for j in jobs if j.kind == "llm_agent"]
     assert {j.machine_class for j in llm} == {"gpu_s3", "gpu_s1"}
     assert all(j.machine_class == "gpu_s3" for j in jobs if j.job_id.startswith("ours.compose."))  # reference machine

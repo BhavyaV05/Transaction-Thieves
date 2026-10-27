@@ -1,5 +1,7 @@
 """T3 weeks 8-9: LATS (adapted), LLMCompiler, parallel time accounting, DSPy-ReAct."""
 
+import json
+
 import pytest
 
 from ftm.external.lats import Lats, failed, parse_scores
@@ -160,3 +162,59 @@ def test_dspy_unparseable_model_output_is_a_failed_alert_not_a_crash():
 
     v = DspyReact(MockLLM()).investigate(ALERT, ScriptedToolBox(), Limits(max_llm_calls=4))  # mock answers "MOCK"
     assert v.probability is None and v.llm_calls >= 1
+
+
+def _dspy_mipro_responder(messages, kw):
+    last = str(messages[-1].get("content"))
+    if "program_code" in last:  # MIPROv2's instruction proposer (prompt model)
+        return json.dumps({k: "x" for k in ("proposed_instruction", "observations", "summary", "program_description",
+                                            "module_description", "program_example", "task_demos", "basic_instruction")})
+    if "next_tool_name" in last:
+        return _dspy_step("finish", "{}")
+    return "[[ ## reasoning ## ]]\nr\n\n[[ ## probability ## ]]\n0.4\n\n[[ ## completed ## ]]"
+
+
+def test_dspy_mipro_optimize_saves_a_program_that_dspy_react_loads(tmp_path):
+    """The optimiser path of scripts/optimize_dspy.py on the mock: val `fit` examples through a harness-style session
+    (begin/end per alert), instruction search only, a compute log, and a saved program run_llm_agent --dspy-program loads."""
+    pytest.importorskip("dspy")
+    pytest.importorskip("optuna")
+    from ftm.external.dspy_react import DspyReact, optimize
+
+    class Session(ScriptedToolBox):
+        began = ended = 0
+
+        def begin(self, alert, limits):
+            type(self).began += 1
+
+        def end(self):
+            type(self).ended += 1
+
+    tools = Session()
+    ex = [{"alert": AlertContext(f"V{i:06d}", "70", "2022-09-05T12:00:00", "val", 0.2,
+                                 {"sender": "A1", "receiver": "A2", "amount": 1.0, "evidence": "r1\nr2", "partner_banks": [220]}),
+           "tools": tools, "label": i % 2, "part": "fit"} for i in range(8)]  # fmt: skip
+    log = tmp_path / "compute.jsonl"
+    program = optimize(MockLLM(responder=_dspy_mipro_responder), ex, auto="light", compute_log=log)
+    assert Session.began == Session.ended > 0
+    path = tmp_path / "react_miprov2.json"
+    program.save(str(path))
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["part"] == "fit" and rec["llm_calls"] > 0 and rec["n_examples"] == 8
+    v = DspyReact(MockLLM(script=[_dspy_step("finish", "{}"),
+                                  "[[ ## reasoning ## ]]\nr\n\n[[ ## probability ## ]]\n0.3\n\n[[ ## completed ## ]]"]),
+                  program_path=str(path)).investigate(ALERT, ScriptedToolBox(), Limits())
+    assert v.probability == pytest.approx(0.3)
+
+
+def test_run_llm_agent_dspy_program_flag_is_for_dspy_react_only(tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("rla2", Path(__file__).resolve().parents[1] / "scripts" / "run_llm_agent.py")
+    rla = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rla)
+    f = tmp_path / "p.json"
+    f.write_text("{}")
+    with pytest.raises(SystemExit):
+        rla.main(["--system", "react", "--alerts", "synthetic", "--n", "1", "--dspy-program", str(f), "--run-dir", str(tmp_path / "o")])
