@@ -271,7 +271,7 @@ class LLMPlanner:
     def investigate(self, alert: AlertContext, tools: ToolBox, limits: Limits) -> Verdict:
         t0 = time.perf_counter()
         session = Investigation(alert, tools, limits, fusion=self.fusion)
-        budget = BudgetedClient(self.llm, limits, tag=alert.alert_id)
+        budget = BudgetedClient(self.llm, limits, tag=alert.alert_id, trim=False)  # trims itself below
         evidence, rules, strategies = self._context(alert, tools)
         banks = list(alert.summary.get("partner_banks", []))
         summary = {k: v for k, v in alert.summary.items() if k not in _SUMMARY_HIDDEN}

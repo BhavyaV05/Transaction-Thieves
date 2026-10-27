@@ -33,7 +33,7 @@ enc = ["torch", "transformers", "scikit-learn"]
 gnn = ["torch", "torch_geometric", "pcst_fast"]
 fed = ["flwr", "opacus"]
 # T3 (and T4 for ports): LLM client side. vLLM/Unsloth run on the serving machine only, see docs/hardware.md.
-llm = ["openai", "dspy>=3.4,<3.5", "ag2"]  # dspy 3.5 drops the BaseLM.forward API ftm/external/dspy_react.py uses
+llm = ["openai", "dspy[optuna]>=3.4,<3.5", "ag2"]  # dspy 3.5 drops the BaseLM.forward API ftm/external/dspy_react.py uses
 serve = ["vllm", "unsloth"]
 rag = ["rank-bm25", "sentence-transformers"]
 

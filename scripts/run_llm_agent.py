@@ -186,7 +186,8 @@ def exemplar_pool(a) -> ExemplarPool:
     return ExemplarPool.from_alerts([c for c, _ in train], [y for _, y in train], seed=a.seed)
 
 
-def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic"):
+def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic", eps_per_alert: float | None = None,
+                 no_noise: bool = False):  # the dev toolbox (dry runs) has no accountant and ignores both
     """dev: random answers, no gate (variant devtools). harness: T2's toolbox, gate + accountant + clock in front of
     every bank. Real alerts (train/val) get the real partner banks (mode "world"); synthetic alerts have no ledger,
     so they get the harness's mock banks (variant harness_mock). Returns (toolbox, variant)."""
@@ -197,9 +198,10 @@ def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "syn
     if split in ("train", "val", "test"):
         if split == "test":
             guards.require_final_run("the test world")  # final run only (scripts/run_final.py)
-        return harness_toolbox(seed=seed, mode="world", data=data, split=split), "harness"
+        return harness_toolbox(seed=seed, mode="world", data=data, split=split, eps_per_alert=eps_per_alert,
+                               no_noise=no_noise), "harness"
     if split == "synthetic":
-        return harness_toolbox(seed=seed, mode="mock"), "harness_mock"
+        return harness_toolbox(seed=seed, mode="mock", eps_per_alert=eps_per_alert, no_noise=no_noise), "harness_mock"
     raise SystemExit(f"--toolbox harness has no world for --alerts {split}")
 
 
@@ -312,6 +314,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="per-step output budget (E18 thinking arm: 1024, counted in tokens_out and latency)")
     ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens, help="Limits.max_tokens, the prompt cap")
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
+    ap.add_argument("--eps-per-alert", type=float, default=None,
+                    help="E2 (privacy-detection curve): per-alert eps budget in Limits AND in the harness accountant "
+                         f"(default {Limits.eps_per_alert:g}; the sweep runs 0.5, 1, 4 besides the default)")
+    ap.add_argument("--no-noise", action="store_true",
+                    help="E2 eps = inf arm: the harness answers every ask exactly and free (Harness.exact_all), per-alert eps unlimited. "
+                         "The fusion still reads the back-test LR of the level the system named (the noisy table): a lower bound")
     ap.add_argument("--endpoint", default=None, help="OpenAI-compatible base URL (default: FTM_LLM_ENDPOINT)")
     ap.add_argument("--model", default=None, help="served model name (default: FTM_LLM_MODEL, else the server's first)")
     ap.add_argument("--serving-stack", default=None, help="vllm | llama.cpp, recorded in summary.json (plan.md 6.11)")
@@ -329,6 +337,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--batch-schedule", default=None,
                     help="planner, E13 / H8: comma-separated wave sizes, e.g. 2,1 = the first step proposes 2 questions asked "
                          "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
+    ap.add_argument("--dspy-program", type=Path, default=None,
+                    help="dspy_react: the MIPROv2-optimised program saved by scripts/optimize_dspy.py (its sha256 is recorded in summary.json)")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--alert-ids", type=Path, default=None,
                     help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set, "
@@ -348,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
     schedule = tuple(int(x) for x in a.batch_schedule.split(",")) if a.batch_schedule else None
     if schedule and a.system != "planner":
         ap.error("--batch-schedule applies to --system planner only")
+    if a.no_noise and a.eps_per_alert is not None:
+        ap.error("--no-noise and --eps-per-alert exclude each other (no-noise is the eps = inf arm)")
+    eps_budget = math.inf if a.no_noise else (a.eps_per_alert if a.eps_per_alert is not None else Limits.eps_per_alert)
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.run_dir or a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -389,10 +402,13 @@ def main(argv: list[str] | None = None) -> int:
         system_name = system.system_name
     else:
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
+        if a.dspy_program is not None and a.system != "dspy_react":
+            ap.error("--dspy-program applies to --system dspy_react only")
+        kw = {"program_path": str(a.dspy_program)} if a.dspy_program is not None else {}
         system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
-                                                  **({"pool": pool} if a.system in GROUP_C else {}))
+                                                  **({"pool": pool} if a.system in GROUP_C else {}), **kw)
         system_name = a.system
-    tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts)
+    tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
     refuse_devtools_test(variant, a.alerts)
     session = tools if a.toolbox == "harness" else None  # begin/end around each alert
     only_ids = askable_ids(tools) if variant == "harness" else None
@@ -417,7 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         if not library.frozen:
             raise SystemExit(f"{a.library} is not frozen; freeze it before using it in a run (plan.md 6.13)")
         library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
-    limits = Limits(max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
+    limits = Limits(eps_per_alert=eps_budget, max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": variant, "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
             "thinking": int(a.thinking), "mode": "native" if a.system.endswith("_native") else "ported"}  # fmt: skip
@@ -457,10 +473,12 @@ def main(argv: list[str] | None = None) -> int:
                "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view,
                "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,
                "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
+               "eps_per_alert": None if a.no_noise else limits.eps_per_alert, "no_noise": a.no_noise,
                "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
                "brier": sq / n_scored if n_scored and not a.blind else None, "blind": a.blind,
                "alert_ids_file": str(a.alert_ids) if a.alert_ids else None, "questions_exported": batches.n, "library_hash": library_hash,
+               "dspy_program_sha256": hashlib.sha256(a.dspy_program.read_bytes()).hexdigest() if a.dspy_program else None,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
     steps = df.filter(pl.col("event") == "step")
     summary["questions"] = {  # what the toolbox did with the asks (engineering counts; a mock-LLM run is not a result)
