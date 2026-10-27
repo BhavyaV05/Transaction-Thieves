@@ -182,7 +182,7 @@ def select_best(candidates: dict[str, DspyReact], examples: list, *, limits: Lim
 
 
 def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, auto: str = "light", seed: int = 0,
-             num_threads: int = 1, compute_log: str | Path | None = None):  # pragma: no cover - needs val alerts and the endpoint
+             num_threads: int = 1, compute_log: str | Path | None = None):
     """MIPROv2 over `examples`: dicts {"alert": AlertContext, "tools": ToolBox, "label": 0/1, "part": "fit"} (val `fit` only).
 
     The program sees only case, tools_help and alert_id; the alert's ToolBox is looked up by alert_id, so tools bind
@@ -226,7 +226,10 @@ def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, a
 
     opt = dspy.MIPROv2(metric=brier_metric, prompt_model=client_lm(llm), task_model=client_lm(llm), auto=auto,
                        seed=seed, num_threads=num_threads)  # fmt: skip
-    program = opt.compile(Bound(), trainset=trainset, requires_permission_to_run=False).react
+    # Instruction search only (no few-shot demos): one demo carries a whole case (about 2,500 tokens), so a few demos would push every
+    # call over the shared 6,000-token prompt cap and the optimiser would learn from failed alerts; the caps are the fairness protocol.
+    program = opt.compile(Bound(), trainset=trainset, max_bootstrapped_demos=0, max_labeled_demos=0,
+                          requires_permission_to_run=False).react
     if compute_log is not None:
         rec = {"stage": "dspy_mipro_optimize", "part": "fit", "n_examples": len(examples), "auto": auto, "seed": seed,
                "wall_seconds": time.perf_counter() - t0, **llm.totals()}  # fmt: skip

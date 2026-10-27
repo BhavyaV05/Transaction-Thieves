@@ -18,6 +18,7 @@ Times are local to the machine owner; say the timezone if it matters. Keep it ch
 | 2026-10-26 08:11 → 08:57 (done, superseded) | 5070 Ti PC (Linux) | Akshat | E8 first pass, four evidence views on 160 val eval alerts: hit the Gemma prompt-cap bug, re-run below | Yes | 0.77 |
 | 2026-10-26 08:57 → 09:08 (done) | 5070 Ti PC (Linux) | Akshat | Decision rows for T2: untuned Gemma 4 12B, `large` and `large-logprob` tiers, 8,066 val rows each | Yes | 0.18 |
 | 2026-10-26 09:08 → 10:51 (done) | 5070 Ti PC (Linux) | Akshat | E8 re-run with the prompt-refit fix, four arms | Yes | 1.70 |
+| 2026-10-28 02:29 → ~10:30 (running) | 5070 Ti PC (Linux) | Akshat | T1 job: Multi-GNN HI-Medium see-everything, `--budget-s 28800` (PR #77 item 3), run from `~/projects/tt-run` via `scripts/gpu_queue.sh`; queue log `outputs/t3_queue/windows.log` | Yes (GPU busy; 16 GB card runs one job) | 8 |
 
 ## Weekly GPU-hour log (reference-hours)
 

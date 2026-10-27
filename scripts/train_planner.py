@@ -3,9 +3,10 @@
 Owner: T3 (Akshat).  Spec: tracks.md 5.4 (steps 1-4) and 5.6; plan.md 6.11 and 6.14.
 
     # 1. distil teacher traces (run_llm_agent.py --keep-prompts on TRAIN alerts) into SFT examples
-    python scripts/train_planner.py distill --runs outputs/runs/<teacher1> ... --data hi_small \
-        --backtest data/backtest/hi_medium/<namespace> --fusion-params outputs/fusion/val_fit.json \
-        --teacher-model <served model name> --teacher-revision <40-char hash> --out outputs/sft/planner_train.jsonl
+    python scripts/train_planner.py distill --runs outputs/t3_teacher/runs/c0?? --data hi_medium \
+        --backtest data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl [--fusion-params outputs/fusion/val_fit.json] \
+        --teacher-model gemma4-12b --teacher-revision <40-char hash> --out outputs/sft/planner_train.jsonl
+    # (no --fusion-params: the naive summed fusion the teacher runs and the final run use)
     # 2. check config + data without a GPU, then train one seed (block GPU_CALENDAR.md first)
     python scripts/train_planner.py train --config configs/llm/sft_planner.yaml --dataset outputs/sft/planner_train.jsonl --dry-run
     python scripts/train_planner.py train --config configs/llm/sft_planner.yaml --dataset outputs/sft/planner_train.jsonl --seed 0
@@ -13,8 +14,8 @@ Owner: T3 (Akshat).  Spec: tracks.md 5.4 (steps 1-4) and 5.6; plan.md 6.11 and 6
     python scripts/train_planner.py calibrate --dataset outputs/fast/val_decisions.jsonl --fast-url http://... \
         --large-url http://... --out outputs/fast/calibration.json
 
-The trainer (Unsloth + TRL) is imported lazily, so `--dry-run`, `distill` and the tests need no GPU packages.
-NOT YET RUN ON A GPU: the Unsloth/TRL calls follow their documented APIs and must be checked on the first real run.
+The trainer (transformers + PEFT + TRL + bitsandbytes) is imported lazily, so `--dry-run`, `distill` and the tests need no GPU packages.
+Environment: ~/projects/train-venv (versions in docs/t3_finetune_fastmodel.md).
 """
 
 from __future__ import annotations
@@ -65,37 +66,54 @@ def data_report(rows: list[dict], cfg: dict) -> dict:
             "over_max_seq_length": too_long, "alerts": len({r.get("alert_id") for r in rows})}  # fmt: skip
 
 
-def train(cfg: dict, rows: list[dict], seed: int) -> Path:  # pragma: no cover - needs a GPU
-    from datasets import Dataset
-    from trl import SFTConfig, SFTTrainer
-    from unsloth import FastLanguageModel
-    from unsloth.chat_templates import train_on_responses_only
+OPTIM = {"adamw_8bit": "adamw_bnb_8bit"}  # config name (Unsloth's) -> transformers' name
 
-    model, tok = FastLanguageModel.from_pretrained(model_name=cfg["base_model"], revision=cfg["revision"],
-                                                   max_seq_length=cfg["max_seq_length"],
-                                                   load_in_4bit=cfg.get("load_in_4bit", True))  # fmt: skip
+
+def render_prompt_completion(tok, messages: list[dict], enable_thinking: bool) -> tuple[str, str]:
+    """(prompt text, completion text) of one chat example, rendered exactly as inference sees it: the prompt ends with the
+    generation prompt (Qwen3 with thinking off: `<|im_start|>assistant\n<think>\n\n</think>\n\n`) and the completion is the
+    assistant JSON (or the one label token) plus `<|im_end|>`. Loss on the completion only (responses_only)."""
+    prompt = tok.apply_chat_template(messages[:-1], tokenize=False, add_generation_prompt=True, enable_thinking=enable_thinking)
+    return prompt, messages[-1]["content"] + "<|im_end|>"
+
+
+def train(cfg: dict, rows: list[dict], seed: int) -> Path:  # pragma: no cover - needs a GPU
+    """QLoRA SFT with plain transformers + PEFT + TRL + bitsandbytes (NF4, double quant, bf16 compute). Unsloth is not used:
+    its release that resolves against torch 2.8 / sm_120 here is mid-2025 and does not run with transformers 5
+    (docs/t3_finetune_fastmodel.md, environment). Same algorithm: 4-bit frozen base, LoRA on all linear layers."""
+    import torch
+    from datasets import Dataset
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from trl import SFTConfig, SFTTrainer
+
+    tok = AutoTokenizer.from_pretrained(cfg["base_model"], revision=cfg["revision"])
+    bnb = BitsAndBytesConfig(load_in_4bit=cfg.get("load_in_4bit", True), bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
+                             bnb_4bit_compute_dtype=torch.bfloat16)  # fmt: skip
+    model = AutoModelForCausalLM.from_pretrained(cfg["base_model"], revision=cfg["revision"], quantization_config=bnb,
+                                                 dtype=torch.bfloat16, device_map={"": 0})  # fmt: skip
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     lo = cfg["lora"]
-    model = FastLanguageModel.get_peft_model(model, r=lo["r"], lora_alpha=lo["alpha"], lora_dropout=lo["dropout"],
-                                             target_modules=lo["target_modules"], bias="none",
-                                             use_gradient_checkpointing="unsloth", random_state=seed)  # fmt: skip
-    texts = [tok.apply_chat_template(r["messages"], tokenize=False, enable_thinking=cfg.get("enable_thinking", False))
-             for r in rows]  # fmt: skip
+    model = get_peft_model(model, LoraConfig(r=lo["r"], lora_alpha=lo["alpha"], lora_dropout=lo["dropout"], bias="none",
+                                             target_modules=lo["target_modules"], task_type="CAUSAL_LM"))  # fmt: skip
+    pairs = [render_prompt_completion(tok, r["messages"], cfg.get("enable_thinking", False)) for r in rows]
+    ds = Dataset.from_dict({"prompt": [p for p, _ in pairs], "completion": [c for _, c in pairs]})
     out = ROOT / cfg["output_dir"] / f"seed={seed}"
     t = cfg["train"]
     trainer = SFTTrainer(
-        model=model, processing_class=tok, train_dataset=Dataset.from_dict({"text": texts}),
-        args=SFTConfig(dataset_text_field="text", max_length=cfg["max_seq_length"], num_train_epochs=t["epochs"],
-                       learning_rate=t["learning_rate"], per_device_train_batch_size=t["per_device_batch_size"],
-                       gradient_accumulation_steps=t["grad_accum"], warmup_ratio=t["warmup_ratio"],
-                       weight_decay=t["weight_decay"], optim=t["optim"], seed=seed, logging_steps=10,
-                       output_dir=str(out / "checkpoints"), save_strategy="steps", save_steps=200, report_to=[]),
+        model=model, processing_class=tok, train_dataset=ds,
+        args=SFTConfig(max_length=cfg["max_seq_length"], num_train_epochs=t["epochs"], learning_rate=t["learning_rate"],
+                       per_device_train_batch_size=t["per_device_batch_size"], gradient_accumulation_steps=t["grad_accum"],
+                       warmup_ratio=t["warmup_ratio"], weight_decay=t["weight_decay"], optim=OPTIM.get(t["optim"], t["optim"]),
+                       completion_only_loss=bool(t.get("responses_only", True)), bf16=True, gradient_checkpointing=True,
+                       seed=seed, data_seed=seed, logging_steps=10, output_dir=str(out / "checkpoints"), save_strategy="no",
+                       report_to=[]),
     )  # fmt: skip
-    if t.get("responses_only", True):
-        trainer = train_on_responses_only(trainer, instruction_part="<|im_start|>user\n",
-                                          response_part="<|im_start|>assistant\n")  # fmt: skip
     trainer.train()
     model.save_pretrained(out / "adapter")
     tok.save_pretrained(out / "adapter")
+    (out / "train_log.json").write_text(json.dumps({"seed": seed, "examples": len(rows), "log_history": trainer.state.log_history}, indent=1),
+                                        encoding="utf-8")
     return out
 
 
@@ -139,6 +157,28 @@ def cmd_distill(a) -> int:
     return 0
 
 
+def cmd_fast_data(a) -> int:
+    """T2's small-decision TRAIN rows -> chat examples (`to_sft_example`: the assistant turn is one label token)."""
+    from collections import Counter
+
+    from ftm.fastmodel.decisions import DecisionExample, to_sft_example
+
+    n, by = 0, Counter()
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+    with a.decisions.open(encoding="utf-8") as f, a.out.open("w", encoding="utf-8") as g:
+        for line in f:
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if r.get("split") != "train":
+                raise SystemExit(f"{a.decisions}: row with split {r.get('split')!r}; the fast model trains on train rows only")
+            g.write(json.dumps(to_sft_example(DecisionExample(r["decision"], r["context"], r["label"], r.get("alert_id"), "train"))) + "\n")
+            n, by[r["decision"]] = n + 1, by[r["decision"]] + 1
+    summary = {"out": str(a.out), "decisions": str(a.decisions), "examples": n, "by_decision": dict(by)}
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def cmd_calibrate(a) -> int:
     from ftm.fastmodel.decisions import DecisionExample
     from ftm.fastmodel.model import JsonDecisionModel, LogprobFastModel
@@ -169,6 +209,10 @@ def cmd_train(a) -> int:
         return 0
     if a.seed not in cfg["seeds"]:
         raise SystemExit(f"seed {a.seed} is not in the config seeds {cfg['seeds']}")
+    adapter = ROOT / cfg["output_dir"] / f"seed={a.seed}" / "adapter"
+    if a.skip_existing and (adapter / "adapter_config.json").exists():
+        print(f"seed {a.seed}: {adapter} exists, skipped")
+        return 0
     print("Reminder: QLoRA takes the whole GPU. Is the window blocked in GPU_CALENDAR.md?")
     print(f"saved {train(cfg, rows, a.seed)}")
     return 0
@@ -189,6 +233,9 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--teacher-model", required=True)
     d.add_argument("--teacher-revision", required=True, help="weights revision (commit hash) of the served teacher")
     d.add_argument("--out", type=Path, required=True)
+    fd = sub.add_parser("fast-data")
+    fd.add_argument("--decisions", type=Path, default=ROOT / "data" / "decisions" / "hi_medium" / "decisions_train.jsonl")
+    fd.add_argument("--out", type=Path, default=ROOT / "outputs" / "sft" / "fast_train.jsonl")
     c = sub.add_parser("calibrate")
     c.add_argument("--dataset", type=Path, required=True, help="JSONL rows: decision, context, label, val_part (fit/cal/eval)")
     c.add_argument("--fast-url", required=True)
@@ -202,8 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--dataset", type=Path, required=True)
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--dry-run", action="store_true")
+    t.add_argument("--skip-existing", action="store_true", help="a seed whose adapter is already saved is not trained again (resume)")
     a = ap.parse_args(argv)
-    return {"distill": cmd_distill, "calibrate": cmd_calibrate, "train": cmd_train}[a.cmd](a)
+    return {"distill": cmd_distill, "fast-data": cmd_fast_data, "calibrate": cmd_calibrate, "train": cmd_train}[a.cmd](a)
 
 
 if __name__ == "__main__":
