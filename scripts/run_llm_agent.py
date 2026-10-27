@@ -297,8 +297,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")
-    ap.add_argument("--alert-ids", type=Path, default=None,
-                    help="file with one alert id per line: run only these (re-runs of alerts a fixed bug ended early)")
     ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
     ap.add_argument("--evidence-view", default=None,
@@ -333,8 +331,8 @@ def main(argv: list[str] | None = None) -> int:
                          "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--alert-ids", type=Path, default=None,
-                    help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set; "
-                         "scripts/run_final.py checks its hash)")
+                    help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set, "
+                         "whose hash scripts/run_final.py checks; also re-runs of alerts a fixed bug ended early)")
     ap.add_argument("--blind", action="store_true",
                     help="final run: no Brier in summary.json or on the console and no label in per_alert.jsonl (no result peeking)")
     ap.add_argument("--seed", type=int, default=0)
@@ -408,11 +406,7 @@ def main(argv: list[str] | None = None) -> int:
         if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
-        ids = only_ids
-        if a.alert_ids is not None:
-            wanted = {x.strip() for x in a.alert_ids.read_text().splitlines() if x.strip()}
-            ids = wanted if ids is None else wanted & ids
-        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, ids, a.offset, a.evidence_view)
+        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset, a.evidence_view)
         if variant == "harness":  # offer only banks the harness can answer for (the first run offered 29, the world has 27)
             world = modelled_banks(tools)
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
