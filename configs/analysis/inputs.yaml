@@ -44,6 +44,13 @@ fusion:
 # values fixed on validation: written by `--split val` to <outdir>/fixed_on_val.json; `--split test` needs that file
 fixed_on_val: null                  # path to fixed_on_val.json
 
+# eps = infinity row (table `eps_infinity`): the JSON list written by scripts/eps_sweep.py (rows with budget, brier_p0, brier_final,
+# brier_gain, mean_questions; budget inf = no noise). A validation sweep, e.g. data/runs/eps_sweep_hi_medium.json; null = not_run
+eps_sweep: {path: null}
+
+# power.txt: the Brier difference to be detected and the projected test size (HI-Medium projection from validation, docs/report/00_outline.md n_alerts)
+power: {target_brier_difference: 0.01, projected_test_alerts: 3475}
+
 e18: {summary_csv: null}            # outputs/e18/stage2/summary.csv (T3's E18 table)
 fast_model: {path: null}            # JSON with {"decision_types": [{name, alpha, error_marginal, kept, speedup, brier_delta}]}
 evidence_edges: {path: null}        # parquet: view, alert_id, pattern_edge_share (H6; T1's retrieval views)
