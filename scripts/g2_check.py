@@ -11,6 +11,9 @@ Owner: T4 (Shreyas).  Spec: plan.md 13, tracks.md 2.2.  Run from the repo root. 
     python scripts/g2_check.py --world real --data hi_medium --fusion per_family     # cross-fitted inside val
     # per-family fusion with the ridge and the prior ("naive" or "zero") chosen by inner cross-validation
     python scripts/g2_check.py --world real --data hi_medium --fusion per_family --fusion-select cv
+    # with the replication filter (docs/t4_fusion_findings.md section 7): accepted questions that do not keep their
+    # direction across time blocks get e_value = 1 before e-BH (m unchanged); descriptive, off by default
+    python scripts/g2_check.py --world real --data hi_medium --backtest-dir data/backtest/hi_medium/<ns> --replication-filter outputs/replication/hi_medium.json
 
 The fixed-order expert planner asks up to four questions per alert (eps 0.5 each, budget 2) through the harness (gate,
 accountant, clock); the answers go through fusion; the Brier gain over p0 gets a cluster-bootstrap CI. The ceiling check
@@ -34,6 +37,7 @@ sys.path.insert(0, str(ROOT))
 from ftm.backtest.engine import BacktestCache, BacktestConfig  # noqa: E402
 from ftm.eval import bootstrap as bs  # noqa: E402
 from ftm.eval import g2  # noqa: E402
+from ftm.eval import replication as rep  # noqa: E402
 
 PASS, FAIL, NOT_RUN = 0, 1, 2
 
@@ -62,6 +66,14 @@ def real_inputs(a):
     return val.banks, entries, alerts, attempt_of
 
 
+def _train(a):
+    """(banks, alerts) of the train world, for --replication-blocks only."""
+    from ftm.backtest.world import load_world
+
+    w = load_world(a.data, "train", a.seed)
+    return w.banks, w.alerts
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--world", choices=["synth", "real"], default="synth")
@@ -80,6 +92,7 @@ def main(argv=None) -> int:
     ap.add_argument("--n-boot", type=int, default=bs.N_BOOT)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=None, help="default data/runs/g2_<world>.json")
+    rep.add_filter_args(ap)
     a = ap.parse_args(argv)
 
     try:
@@ -94,14 +107,29 @@ def main(argv=None) -> int:
     if not val or not entries:
         print(f"G2 NOT RUN: {len(val)} validation alerts, {len(entries)} back-test entries", file=sys.stderr)
         return NOT_RUN
+    filter_info = None
+    if a.replication_filter or a.replication_blocks:
+        if a.world != "real" and a.replication_blocks:
+            print("G2 NOT RUN: --replication-blocks needs the real world (use --replication-filter)", file=sys.stderr)
+            return NOT_RUN
+        try:
+            entries, filter_info = rep.filter_from_args(a, entries, lambda: _train(a), a.fdr)
+        except (FileNotFoundError, KeyError, ValueError) as e:
+            print(f"G2 NOT RUN: {type(e).__name__}: {e}", file=sys.stderr)
+            return NOT_RUN
     r = g2.run_g2(banks, entries, val, a.world, a.fusion, a.budget, a.ask_eps, a.eps_levels, attempt_of, a.hub_cap,
                   a.n_boot, a.seed, fdr=a.fdr, fusion_select=a.fusion_select)  # fmt: skip
     if a.world == "real":
         r["data"], r["val_part"] = a.data, a.val_part
+    if filter_info is not None:
+        r["replication_filter"] = filter_info
     out = Path(a.out or ROOT / "data" / "runs" / f"g2_{a.world}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(r, indent=1, default=str))
     print(g2.verdict_line(r))
+    if filter_info is not None:
+        print(f"replication filter: {filter_info['n_dropped']} accepted questions dropped "
+              f"({filter_info['accepted_before']} -> {filter_info['accepted_after']} accepted, m = {filter_info['m']})")
     return PASS if r["passed"] else FAIL
 
 

@@ -98,3 +98,48 @@ Commands of section 4, `--val-part eval`; outputs stay in `data/runs/` (not comm
 | CV choice on all val | ridge 100, prior zero | n/a |
 
 Reading (section 5, row 2): the shift / winner's-curse row, not double counting. On HI-Medium `dormant(ALERT.receiver, days=3)` flips direction (claimed LR 0.49 for `true`, validation LR 1.15). Naive fusion is reported as a pre-registered negative result; `per_family`, `prior="zero"`, `fit_cv` is the proposed v1 default; G2 is not met either way (team decision pending, `docs/schedule_nov10.md` rule 6). All intervals are wide: "inconclusive" is the honest word for the fitted fusion.
+
+## 7. The time confound and the replication check
+
+Source: GitHub issue #84 (T4 prototype, CPU, real HI-Medium train, descriptive, not a pre-registered result). Code: `ftm/eval/replication.py`, `scripts/replication_check.py`, the `--replication-filter` / `--replication-blocks` options of `scripts/g2_check.py` and `scripts/fusion_diagnostics.py` (off by default; nothing in the default runs changes).
+
+**The confound.** The back-test LR of the history-based questions (`dormant`, `new_account`) is a time confound (Simpson's paradox). For `dormant(ALERT.receiver, days=7)` at eps 2 (760 answers) the pooled log LR of `true` is -0.92, but in the two time halves of train it is +0.02 and -0.15: the launder rate jumps from 5% to 37% and the share of `true` answers from 88% to 15% between the halves (very likely ledger warm-up: early in the data an account has little history). Inside each half the question carries almost no signal; the pooled number is the drift. The label-permutation e-value assumes labels are exchangeable given the answers, which fails when both drift with time, so such a question can pass e-BH.
+
+**The rule.** For each accepted question take the cell with the largest |pooled log LR| (alpha 0.01 smoothing as in `estimate_lr`, no ceiling clip), compute its log LR in each of K equal-count time blocks (K = 2 halves by default, `--blocks 4` for quarters) and keep the question only if pooled and every block have the same strictly non-zero sign. A zero or undefined log LR, or a block with fewer than 30 answers or fewer than 5 launder or clean answers, counts as "does not replicate". The report also gives a Mantel-Haenszel time-stratified log LR over 4 blocks (`--mh-blocks`). Train data only; no val label enters the rule.
+
+**Real HI-Medium (23 accepted questions, namespace `7df6bad5337d`).**
+
+| | all 23 | replicating (12) | not replicating (11) |
+|---|---|---|---|
+| families | | `returns_home`, `cross_currency_out`, `inflow_bucket`, `time_to_forward`, `n_banks` | `dormant` (sender, receiver, days 3 and 7), `new_account` (days 2 and 5), `n_repeated`, `n_new_counterparties`, `volume_spike` |
+| val `eval` direction agrees with train | 14/23 (61%) | 10/12 (83%) | 4/11 (36%) |
+
+Mean |log LR|: 0.82 as claimed, 0.46 Mantel-Haenszel, 0.50 observed on val (the stratified number is the one that matches val). Caveats: small val cells (5 to 81 answers), and the 23 questions are not independent (about 9 families repeated over eps and subject).
+
+G2 with the 11 non-replicating questions made ineligible (e_value = 1 before e-BH, m unchanged, 12 accepted; 2,000 resamples; descriptive):
+
+| val part | fusion | all 23 accepted | replicating only (12) |
+|---|---|---|---|
+| eval | naive | -0.0008 [-0.013, +0.011] | +0.0073 [-0.003, +0.018] |
+| eval | per_family, cv | +0.0053 [-0.040, +0.054] | +0.0238 [-0.005, +0.058] |
+| cal | naive | -0.0013 [-0.017, +0.014] | +0.0086 [-0.001, +0.018] |
+| cal | per_family, cv | -0.0027 [-0.028, +0.025] | +0.0054 [-0.019, +0.031] |
+
+**Status.** This is a lead, not a G2 pass: every interval contains 0, and `eval` was looked at for two variants (all accepted vs replicating only), so its numbers are descriptive. Adopting the filter needs T2's agreement (it is a change to what is accepted; the cleaner fixes are label permutation within time blocks in the e-process or a Mantel-Haenszel LR, both in T2's `ftm/backtest/`, which this PR does not touch) and the rule fixed in the pre-registration before the 30 Oct freeze, then reported once. If it is not adopted, the confound is reported as a finding (claimed 0.82 vs stratified 0.46 vs val 0.50) and G2 stays not met. Note that after the filter e-BH is re-run over the same m, so a kept question can in principle lose acceptance (rank effect); the output states `accepted_before` and `accepted_after`.
+
+**Reproduce (a machine with `data/`; about 30 min of CPU, no GPU, no LLM; not run in CI).**
+
+```
+# smoke test, no data
+python scripts/replication_check.py --synthetic
+# the table (writes outputs/replication/hi_medium.{json,md}); add --val-part eval for the val direction column, --blocks 4 for quarters
+python scripts/replication_check.py --data hi_medium --backtest-dir data/backtest/hi_medium/7df6bad5337d --val-part eval
+# G2 with the filter, from that JSON (the output JSON gets a "replication_filter" block: filter used, n_dropped, accepted before and after)
+python scripts/g2_check.py --world real --data hi_medium --val-part eval --backtest-dir data/backtest/hi_medium/7df6bad5337d --replication-filter outputs/replication/hi_medium.json --out data/runs/g2_hi_medium_repl.json
+python scripts/g2_check.py --world real --data hi_medium --val-part eval --fusion per_family --fusion-select cv --backtest-dir data/backtest/hi_medium/7df6bad5337d --replication-filter outputs/replication/hi_medium.json --out data/runs/g2_hi_medium_cv_repl.json
+# the same for the diagnostics, and for the cal part as the independent check
+python scripts/fusion_diagnostics.py --world real --data hi_medium --val-part eval --backtest-dir data/backtest/hi_medium/7df6bad5337d --replication-filter outputs/replication/hi_medium.json --out data/runs/fusion_diagnostics_hi_medium_repl.json
+python scripts/g2_check.py --world real --data hi_medium --val-part cal --backtest-dir data/backtest/hi_medium/7df6bad5337d --replication-filter outputs/replication/hi_medium.json --out data/runs/g2_hi_medium_cal_repl.json
+```
+
+`--replication-blocks K` instead of `--replication-filter` recomputes the flags inside the run (it loads the train world, so it is slower). Do not run it on the test split; it cannot (the test lock stays).
