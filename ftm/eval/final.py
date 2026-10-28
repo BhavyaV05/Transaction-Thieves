@@ -681,9 +681,11 @@ class Panel:
             return fixed, "fixed on validation"
         if self.split == "test":
             raise Missing("best_simple_planner is not fixed: run --split val first and pass its fixed_on_val.json")
-        names = [r for r in self.systems_cfg.get("simple_planners", []) if self.try_role(r) is not None]
+        # random is the reference of the margin (plan 9.3: 0.5 * |B(random) - B(best simple planner)|), not a candidate: when random
+        # is the best, the margin would be exactly 0 (seen on the validation dry run of 28 Oct, 806 alerts)
+        names = [r for r in self.systems_cfg.get("simple_planners", []) if r != "random" and self.try_role(r) is not None]
         if not names:
-            raise Missing("no simple planner (random, fixed_order, eig, learned) in the run")
+            raise Missing("no simple planner besides random (fixed_order, eig, learned) in the run")
         brier = {r: float(np.nanmean(self.role(r).se_e2e)) for r in names}
         best = min(brier, key=brier.get)
         self.fixed_derived["best_simple_planner"] = best
