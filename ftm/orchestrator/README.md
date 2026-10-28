@@ -92,3 +92,8 @@ python scripts/async_study.py --data hi_medium --split val --table <lr_table.jso
 ```
 
 A real E13 row needs accepted questions at low eps in the back-test table (or a larger per-alert budget for both arms), as T3 noted. Not run on real data (no `data/`).
+
+## The final run (weeks 12-13, G5)
+
+`scripts/final_non_llm.py` is the command behind T2's jobs of the G5 plan (`nonllm.<arm>.<subset|full_test>` and `raw_share.raw_share.*`): it builds an arm with `ablations.prepare_arm`, the function the G4 table uses, and runs it blind (`run_alerts(..., blind=True)`: no label in any row, no Brier in the summary) on the frozen ids, writing a run-log v1 file. Fits (fusion, learned policy) stay on the `fit` half of validation; question tables come from `configs/final/non_llm.yaml` and are not rebuilt. Alerts with no modelled partner bank get a verdict row without probability (scored as p0). Full description, decisions and the rehearsal on validation: `docs/t2_final_run.md`. Tested on the synthetic world only (`tests/test_final_non_llm.py`); the real tables and numbers need `data/`.
+

@@ -60,9 +60,12 @@ class RunResult:
 
 
 def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Limits, base: dict,
-               split: str = "val") -> RunResult:  # fmt: skip
+               split: str = "val", blind: bool = False) -> RunResult:  # fmt: skip
     """Investigate every alert in a fresh harness session and score the verdicts against the labels. The run-log rows
-    are v1: p0, eps spent, simulated days and the stop reason on the verdict row; family, kind and log LR per answer."""
+    are v1: p0, eps spent, simulated days and the stop reason on the verdict row; family, kind and log LR per answer.
+
+    `blind` is the final run (G5): no label goes into a row and the summary carries no Brier score, so nothing here can
+    print or write a test result. The analysis joins the labels in later."""
     tools = harness.toolbox()
     system = tools.wrap(planner)
     rows, verdicts, p0s, ps, ys, secs, sims = [], [], [], [], [], [], []
@@ -74,17 +77,18 @@ def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Lim
         sims.append(tools.last_elapsed_days)
         facts = {"eps_spent": tools.eps_spent, "sim_days": tools.last_elapsed_days,
                  "stop_reason": getattr(planner, "last_stop_reason", None)}  # fmt: skip
-        rows += verdict_rows(v, {**base, "split": split, "alert_id": a.alert_id}, int(a.label), ctx=ctx,
+        rows += verdict_rows(v, {**base, "split": split, "alert_id": a.alert_id}, None if blind else int(a.label), ctx=ctx,
                              pool=getattr(planner, "pool", None), facts=facts)  # fmt: skip
         verdicts.append(v)
         p0s.append(a.p0)
         ps.append(a.p0 if v.probability is None else v.probability)
-        ys.append(float(a.label))
+        ys.append(float("nan") if blind else float(a.label))
     p0s, ps, ys = np.array(p0s), np.array(ps), np.array(ys)
     n_q = [sum(e.gate_decision == "allowed" and e.response is not None for e in v.questions_log) for v in verdicts]
     summary = {
-        "system": base["system"], "alerts": len(alerts), "positives": int(ys.sum()),
-        "brier_p0": float(np.mean((p0s - ys) ** 2)), "brier_final": float(np.mean((ps - ys) ** 2)),
+        "system": base["system"], "alerts": len(alerts), "positives": None if blind else int(ys.sum()),
+        "brier_p0": None if blind else float(np.mean((p0s - ys) ** 2)),
+        "brier_final": None if blind else float(np.mean((ps - ys) ** 2)),
         "mean_questions": float(np.mean(n_q)) if n_q else 0.0,
         "mean_eps": float(np.mean([sum(e.eps for e in v.questions_log if hasattr(e.response, "eps_spent"))
                                    for v in verdicts])) if verdicts else 0.0,
@@ -93,7 +97,7 @@ def run_alerts(planner, alerts: Sequence[BtAlert], harness: Harness, limits: Lim
         "p95_sim_days": float(np.percentile(sims, 95)) if sims else 0.0,
         "eps_cal": None,
     }  # fmt: skip
-    summary["brier_gain"] = summary["brier_p0"] - summary["brier_final"]
+    summary["brier_gain"] = None if blind else summary["brier_p0"] - summary["brier_final"]
     return RunResult(rows, summary, verdicts)
 
 
