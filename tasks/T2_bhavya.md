@@ -56,7 +56,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] ModernBERT/DeBERTa + RouteLLM-style baselines (secondary): `ftm/fastmodel/{encoder,router}.py`, `scripts/encoder_baseline.py`, `ftm/fastmodel/BASELINES.md`; training on the 3050 Ti and real numbers need the decision set, the 8B scores and a CUDA torch
 
 ## Week 11
-- [ ] Stretch external agents if time
+- [x] Stretch external agents (one): MediQ port (`ftm/external/mediq.py`, `ftm/external/GROUPC_T2.md`); not in the locked external list, so exploratory unless the TA adds it. CodeAct, GraphDx, NOL*, ExpeL, AWM not ported (reasons in the doc)
+- [x] T1's flag from hand-off A4: `cross_currency_out(..., window=after(72))` cannot see the future (`tests/test_window_future.py`: the ledger is cut at the answer time, checked through the bank and the harness clock)
 
 ## Week 12–13
 - [ ] Final configs
