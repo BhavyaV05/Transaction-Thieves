@@ -37,7 +37,8 @@ VALUE = (
     "candidate, judge how useful it is for reaching a correct, well-supported probability with little privacy "
     "budget. Reply with one line per candidate: 'Candidate <i>: <score 1-10>'."
 )
-_SCORE = re.compile(r"Candidate\s*(\d+)\s*:\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
+_SCORE = re.compile(r"Candidate\s*(\d+)\s*:\s*\**(\d+(?:\.\d+)?)(?:\s*/\s*10)?\b(?![ \t]*[A-Za-z])", re.IGNORECASE)
+_SCORES_LINE = re.compile(r"scores?\s*:\s*([-\d.,;\s/]+)$", re.IGNORECASE | re.MULTILINE)
 _FAILED = ("Invalid", "Unknown bank", "eps must be", "declined", "did not answer", "blocked", "already asked",
            "over budget", "needs three arguments", "finish needs")  # fmt: skip
 
@@ -49,10 +50,18 @@ def failed(observation: str) -> bool:
 
 
 def parse_scores(text: str, n: int) -> list[float]:
+    """Scores 0-10 per candidate: the last 'Candidate i: s' per index (prose like 'Candidate 1: 30 days' is not a score), else the last
+    'Scores: a, b, c' line holding n numbers; a candidate without a score gets 1.0."""
     scores = [1.0] * n
-    for i, s in _SCORE.findall(text):
-        if 1 <= int(i) <= n:
-            scores[int(i) - 1] = float(s)
+    hits = [(int(i), float(s)) for i, s in _SCORE.findall(text) if 1 <= int(i) <= n and float(s) <= 10]
+    if hits:
+        for i, s in hits:
+            scores[i - 1] = s
+        return scores
+    for line in reversed(_SCORES_LINE.findall(text)):
+        nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", line)]
+        if len(nums) == n and all(x <= 10 for x in nums):
+            return nums
     return scores
 
 
@@ -78,9 +87,10 @@ class Lats(React):
                     if r.text.strip() and r.text.strip() not in children:
                         children.append(r.text.strip())
                 listing = "\n\n".join(f"Candidate {i + 1}:\n{c}" for i, c in enumerate(children))
+                # value call: room for a short justification before the score lines (a model that reasons first is cut at 16/child)
                 v = budget.chat([{"role": "system", "content": VALUE},
                                  {"role": "user", "content": "\n".join(m["content"] for m in messages[1:]) + "\n\n" + listing}],
-                                max_tokens=16 * len(children), temperature=0.0, seed=self.seed, extra=self.extra)  # fmt: skip
+                                max_tokens=512 + 32 * len(children), temperature=0.0, seed=self.seed, extra=self.extra)  # fmt: skip
                 frontier: list[tuple[float, int, str]] = []  # this expansion's siblings: (-score, tiebreak, child text)
                 for tick, (c, s) in enumerate(zip(children, parse_scores(v.text, len(children)), strict=True)):
                     heapq.heappush(frontier, (-s, tick, c))

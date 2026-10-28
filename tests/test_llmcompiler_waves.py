@@ -4,6 +4,7 @@ import pytest
 
 from ftm.external.llmcompiler import LlmCompiler
 from ftm.harness import make_toolbox
+from ftm.harness.interface import ScriptedToolBox
 from ftm.llm.investigation import DuplicateQuestion, Investigation
 from ftm.llm.mock import MockLLM
 from ftm.planners.llm_dsl import V0Dsl
@@ -124,3 +125,18 @@ def test_llmcompiler_end_to_end_on_harness_mock():
     lat = [e.response.latency_days for e in answered]
     assert max(lat) < sum(lat)
     assert tb.last_elapsed_days == pytest.approx(max(lat))
+
+
+@pytest.mark.parametrize("join,p", [("The results are mixed, 30 days of history.\nAction: finish[0.35]", 0.35),
+                                    ("Results show 3 banks agree.\nAction: finish[0.8]", 0.8)])
+def test_llmcompiler_joiner_prose_then_finish(join, p):
+    llm = MockLLM(script=["1. join()", join])
+    v = LlmCompiler(llm).investigate(ALERT, ScriptedToolBox([]), Limits())
+    assert v.probability == p and llm.requests[1]["max_tokens"] >= 512
+
+
+def test_llmcompiler_joiner_prose_then_replan_then_finish():
+    llm = MockLLM(script=["1. join()", "Only 2 of 5 banks answered, so I need more.\nAction: replan ask the other banks", "1. join()",
+                          "Now it is clear.\nAction: finish[0.6]"])  # fmt: skip
+    v = LlmCompiler(llm).investigate(ALERT, ScriptedToolBox([]), Limits())
+    assert v.probability == 0.6 and v.llm_calls == 4

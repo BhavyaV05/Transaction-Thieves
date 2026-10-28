@@ -57,12 +57,12 @@ def parse_plan(text: str) -> list[tuple[str, int, ToolCall]]:
 
 
 def solver_probability(answer: str | None) -> float | None:
-    """finish[p], or an answer that is only a number. Anything else is no answer (never the first stray number)."""
+    """The LAST finish[p] (prose may come first), or an answer that is only a number. Anything else is no answer (never a stray number)."""
     if not answer:
         return None
-    m = re.search(r"finish\s*\[(.*?)\]", answer)
-    if m:
-        return parse_probability(m.group(1))
+    found = re.findall(r"finish\s*\[(.*?)\]", answer)
+    if found:
+        return parse_probability(found[-1])
     bare = answer.strip().rstrip(".")
     return parse_probability(bare) if re.fullmatch(r"[-+]?\d*\.?\d+\s*%?", bare) else None
 
@@ -71,7 +71,7 @@ class Rewoo:
     name = "rewoo"
 
     def __init__(self, llm: ChatClient, *, dsl: DslAdapter | None = None, fusion: Fusion | None = None,
-                 plan_tokens: int = 512, solve_tokens: int = 32, max_steps: int = 8, temperature: float = 0.0,
+                 plan_tokens: int = 512, solve_tokens: int = 512, max_steps: int = 8, temperature: float = 0.0,
                  seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm = llm
         self.dsl = dsl or V0Dsl()

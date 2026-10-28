@@ -230,3 +230,19 @@ def test_records_from_runs_gain_is_brier_change_per_answered_step():
     assert recs[0]["gain"] == pytest.approx(0.8**2 - 0.5**2) and recs[0]["accepted"]
     assert recs[1]["gain"] == pytest.approx(0.5**2 - 0.1**2) and not recs[1]["accepted"]
     assert records_from_runs(steps, {"V1": {**alerts["V1"], "label": None}}, lambda c, e: True) == []
+
+
+@pytest.mark.parametrize("text,p", [
+    ("The alert shows a large 30 day outflow of 0.9 of the balance, so it is suspicious.\nfinish[0.35]", 0.35),
+    ("Action: finish[0.8]", 0.8),
+    ("Maybe finish[0.9]? No: after the noise I settle on\nfinish[0.2]", 0.2),
+    ("The transfer is 12 percent of the balance and the answer is unclear.", None)])  # fmt: skip
+def test_solver_probability_takes_the_last_finish_after_prose(text, p):
+    assert solver_probability(text) == p
+
+
+def test_rewoo_solver_gets_room_for_prose():
+    prose = "The alert involves a significant outgoing transfer of 30 days of funds. Evidence is mixed.\nfinish[0.35]"
+    llm = MockLLM(script=["Plan: none", prose])
+    v = Rewoo(llm).investigate(ALERT, ScriptedToolBox(), Limits())
+    assert v.probability == 0.35 and llm.requests[1]["max_tokens"] >= 512
