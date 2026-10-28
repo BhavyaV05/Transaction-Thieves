@@ -131,30 +131,45 @@ def sample_order(height: int, seed: int, n: int, offset: int = 0) -> list[int]:
     return order[offset:offset + n]
 
 
+def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: int, n: int, offset: int = 0) -> pl.DataFrame:
+    """The alert rows a run takes, in run order. `val_part` "all" (E18 stage 2, prereg/e18_decision.yaml): every val
+    part, the eval alerts first in the seeded order a `--val-part eval` run uses (so that run's alerts are a prefix),
+    then fit + cal in their own seeded order."""
+    if split == "val" and val_part == "all":
+        ev, rest = alerts.filter(pl.col("val_part") == "eval"), alerts.filter(pl.col("val_part") != "eval")
+        alerts = pl.concat([ev[sample_order(ev.height, seed, ev.height)], rest[sample_order(rest.height, seed, rest.height)]])
+        return alerts[offset:offset + n]
+    if split == "val":
+        alerts = alerts.filter(pl.col("val_part") == val_part)
+    return alerts[sample_order(alerts.height, seed, n, offset)]
+
+
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
-                only_ids: set[str] | None = None, offset: int = 0) -> list[tuple[AlertContext, int | None]]:
+                only_ids: set[str] | None = None, offset: int = 0,
+                evidence_view: str | None = None) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
-    Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`."""
+    Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`.
+    `evidence_view` (E8 / H6): replace the week-2 stub's trail with T1's `evidence_views.view(alert, name, k)` text."""
     from ftm.data import alias, io
-    from ftm.retrieval import views
+    from ftm.retrieval import evidence_views, views
 
     if split == "test":
         guards.require_final_run("test alerts")
     cfg = io.load_config(data)
     alerts_path = ROOT / "data" / "alerts" / data / f"{split}.parquet"
     alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
-    if split == "val":
-        alerts = alerts.filter(pl.col("val_part") == val_part)
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
+    alerts = select_alerts(alerts, split, val_part, seed, n, offset)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
     banks = io.read_banks(cfg["views_dir"])["bank"].to_list()
     out = []
-    for i in sample_order(alerts.height, seed, n, offset):
-        a = alerts.row(i, named=True)
+    for a in alerts.iter_rows(named=True):
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
         _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
+        if evidence_view is not None:  # same aliases (seed 0); the stub call above still sets home_bank for alert_summary
+            trail = evidence_views.view(a, evidence_view, k, data=data).text
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
         edges = receiver_edges(cfg["views_dir"], a["bank"], row["dst_id"], row["timestamp"])  # not the evidence view
@@ -174,7 +189,8 @@ def exemplar_pool(a) -> ExemplarPool:
     return ExemplarPool.from_alerts([c for c, _ in train], [y for _, y in train], seed=a.seed)
 
 
-def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic"):
+def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic", eps_per_alert: float | None = None,
+                 no_noise: bool = False):  # the dev toolbox (dry runs) has no accountant and ignores both
     """dev: random answers, no gate (variant devtools). harness: T2's toolbox, gate + accountant + clock in front of
     every bank. Real alerts (train/val) get the real partner banks (mode "world"); synthetic alerts have no ledger,
     so they get the harness's mock banks (variant harness_mock). Returns (toolbox, variant)."""
@@ -185,9 +201,10 @@ def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "syn
     if split in ("train", "val", "test"):
         if split == "test":
             guards.require_final_run("the test world")  # final run only (scripts/run_final.py)
-        return harness_toolbox(seed=seed, mode="world", data=data, split=split), "harness"
+        return harness_toolbox(seed=seed, mode="world", data=data, split=split, eps_per_alert=eps_per_alert,
+                               no_noise=no_noise), "harness"
     if split == "synthetic":
-        return harness_toolbox(seed=seed, mode="mock"), "harness_mock"
+        return harness_toolbox(seed=seed, mode="mock", eps_per_alert=eps_per_alert, no_noise=no_noise), "harness_mock"
     raise SystemExit(f"--toolbox harness has no world for --alerts {split}")
 
 
@@ -279,13 +296,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
-    ap.add_argument("--val-part", choices=["fit", "cal", "eval"], default=None,
-                    help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks")
+    ap.add_argument("--val-part", choices=["fit", "cal", "eval", "all"], default=None,
+                    help="required with --alerts val: fit = tuning (MIPROv2, fine-tune checks), eval = selection and G-checks; "
+                         "all = every part, eval alerts first (E18 stage 2 only: HI-Medium eval has 160 askable alerts)")
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")
     ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
+    ap.add_argument("--evidence-view", default=None,
+                    help="E8 / H6: amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (T1's view(); "
+                         "default: the week-2 stub)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
     ap.add_argument("--record", type=Path, default=None, help="record LLM calls to this cassette")
     ap.add_argument("--replay", type=Path, default=None, help="replay a cassette (implies --llm mock, strict)")
@@ -296,6 +317,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="per-step output budget (E18 thinking arm: 1024, counted in tokens_out and latency)")
     ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens, help="Limits.max_tokens, the prompt cap")
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
+    ap.add_argument("--eps-per-alert", type=float, default=None,
+                    help="E2 (privacy-detection curve): per-alert eps budget in Limits AND in the harness accountant "
+                         f"(default {Limits.eps_per_alert:g}; the sweep runs 0.5, 1, 4 besides the default)")
+    ap.add_argument("--no-noise", action="store_true",
+                    help="E2 eps = inf arm: the harness answers every ask exactly and free (Harness.exact_all), per-alert eps unlimited. "
+                         "The fusion still reads the back-test LR of the level the system named (the noisy table): a lower bound")
     ap.add_argument("--endpoint", default=None, help="OpenAI-compatible base URL (default: FTM_LLM_ENDPOINT)")
     ap.add_argument("--model", default=None, help="served model name (default: FTM_LLM_MODEL, else the server's first)")
     ap.add_argument("--serving-stack", default=None, help="vllm | llama.cpp, recorded in summary.json (plan.md 6.11)")
@@ -313,10 +340,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--batch-schedule", default=None,
                     help="planner, E13 / H8: comma-separated wave sizes, e.g. 2,1 = the first step proposes 2 questions asked "
                          "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
+    ap.add_argument("--dspy-program", type=Path, default=None,
+                    help="dspy_react: the MIPROv2-optimised program saved by scripts/optimize_dspy.py (its sha256 is recorded in summary.json)")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--alert-ids", type=Path, default=None,
-                    help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set; "
-                         "scripts/run_final.py checks its hash)")
+                    help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set, "
+                         "whose hash scripts/run_final.py checks; also re-runs of alerts a fixed bug ended early)")
     ap.add_argument("--blind", action="store_true",
                     help="final run: no Brier in summary.json or on the console and no label in per_alert.jsonl (no result peeking)")
     ap.add_argument("--seed", type=int, default=0)
@@ -332,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
     schedule = tuple(int(x) for x in a.batch_schedule.split(",")) if a.batch_schedule else None
     if schedule and a.system != "planner":
         ap.error("--batch-schedule applies to --system planner only")
+    if a.no_noise and a.eps_per_alert is not None:
+        ap.error("--no-noise and --eps-per-alert exclude each other (no-noise is the eps = inf arm)")
+    eps_budget = math.inf if a.no_noise else (a.eps_per_alert if a.eps_per_alert is not None else Limits.eps_per_alert)
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.run_dir or a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -373,10 +405,13 @@ def main(argv: list[str] | None = None) -> int:
         system_name = system.system_name
     else:
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
+        if a.dspy_program is not None and a.system != "dspy_react":
+            ap.error("--dspy-program applies to --system dspy_react only")
+        kw = {"program_path": str(a.dspy_program)} if a.dspy_program is not None else {}
         system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
-                                                  **({"pool": pool} if a.system in GROUP_C else {}))
+                                                  **({"pool": pool} if a.system in GROUP_C else {}), **kw)
         system_name = a.system
-    tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts)
+    tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
     refuse_devtools_test(variant, a.alerts)
     session = tools if a.toolbox == "harness" else None  # begin/end around each alert
     only_ids = askable_ids(tools) if variant == "harness" else None
@@ -390,7 +425,7 @@ def main(argv: list[str] | None = None) -> int:
         if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
-        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset)
+        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset, a.evidence_view)
         if variant == "harness":  # offer only banks the harness can answer for (the first run offered 29, the world has 27)
             world = modelled_banks(tools)
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
@@ -401,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
         if not library.frozen:
             raise SystemExit(f"{a.library} is not frozen; freeze it before using it in a run (plan.md 6.13)")
         library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
-    limits = Limits(max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
+    limits = Limits(eps_per_alert=eps_budget, max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": variant, "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
             "thinking": int(a.thinking), "mode": "native" if a.system.endswith("_native") else "ported"}  # fmt: skip
@@ -438,13 +473,15 @@ def main(argv: list[str] | None = None) -> int:
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
-               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking,
+               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view,
                "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,
                "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
+               "eps_per_alert": None if a.no_noise else limits.eps_per_alert, "no_noise": a.no_noise,
                "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
                "brier": sq / n_scored if n_scored and not a.blind else None, "blind": a.blind,
                "alert_ids_file": str(a.alert_ids) if a.alert_ids else None, "questions_exported": batches.n, "library_hash": library_hash,
+               "dspy_program_sha256": hashlib.sha256(a.dspy_program.read_bytes()).hexdigest() if a.dspy_program else None,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip
     steps = df.filter(pl.col("event") == "step")
     summary["questions"] = {  # what the toolbox did with the asks (engineering counts; a mock-LLM run is not a result)

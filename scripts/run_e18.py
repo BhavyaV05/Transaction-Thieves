@@ -75,6 +75,14 @@ def arm_settings(cfg: dict, cand: e18.Candidate, thinking: bool) -> dict:
     return out
 
 
+def run_settings(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, thinking: bool) -> dict:
+    """arm_settings plus a sensitivity override of the output cap (`--max-output-tokens`, never a prereg arm)."""
+    s = arm_settings(cfg, cand, thinking)
+    if getattr(a, "max_output_tokens", None):
+        s["max_output_tokens"] = a.max_output_tokens
+    return s
+
+
 def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, thinking: bool, run_dir: Path) -> list[str]:
     lim = llm_limits()
     argv = ["--system", "planner", "--mode", "compose", "--alerts", a.alerts, "--n", str(n), "--k", "40",
@@ -83,7 +91,7 @@ def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, th
             "--max-prompt-tokens", str(lim["max_tokens"]), "--max-llm-calls", str(lim["max_llm_calls"]),
             "--serving-stack", cand.stack, "--candidate", cand.name]  # fmt: skip
     if a.alerts == "val":
-        argv += ["--val-part", a.val_part, "--data", a.data]
+        argv += ["--val-part", a.val_part, "--data", a.data, "--backtest", str(a.backtest)]
     else:
         argv += ["--synthetic-labels"]
     endpoint = a.endpoint or cand.endpoint
@@ -91,7 +99,7 @@ def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, th
         argv += ["--endpoint", endpoint]
     if cand.served_model:
         argv += ["--model", cand.served_model]
-    s = arm_settings(cfg, cand, thinking)
+    s = run_settings(cfg, cand, a, thinking)
     if s.get("thinking"):
         argv += ["--thinking"]
     if "reasoning_effort" in s:
@@ -102,12 +110,13 @@ def agent_argv(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, n: int, th
 
 
 def expected_summary(cfg: dict, cand: e18.Candidate, a: argparse.Namespace, thinking: bool) -> dict:
-    s = arm_settings(cfg, cand, thinking)
+    s = run_settings(cfg, cand, a, thinking)
     lim = llm_limits()
     return {"seed": cfg["seed"], "alerts": a.alerts, "val_part": a.val_part, "candidate": cand.name,
             "thinking": bool(s.get("thinking")), "reasoning_effort": s.get("reasoning_effort"),
             "max_output_tokens": s.get("max_output_tokens"),
-            "limits": {"max_tokens": lim["max_tokens"], "max_llm_calls": lim["max_llm_calls"]}}  # fmt: skip
+            "limits": {"max_tokens": lim["max_tokens"], "max_llm_calls": lim["max_llm_calls"]},
+            **({"backtest": {"path": str(a.backtest)}} if a.alerts == "val" else {})}  # fmt: skip
 
 
 def served(cand: e18.Candidate, endpoint: str | None) -> tuple[bool, str]:
@@ -146,7 +155,7 @@ def plan_table(cfg: dict, cands: list[e18.Candidate], a: argparse.Namespace, n: 
             "thinking": thinking, "machine": a.machine, "prereg": prereg_state(),
             "candidates": [{"name": c.name, "stack": c.stack, "quant": c.quant, "active_b": c.active_b,
                             "size_gb": c.size_gb_est[0], "endpoint": a.endpoint or c.endpoint or "FTM_LLM_ENDPOINT",
-                            **arm_settings(cfg, c, thinking)} for c in cands],
+                            **run_settings(cfg, c, a, thinking)} for c in cands],
             "estimate": est, "plan_total_gpu_h": cfg["budget"]["plan_total_gpu_h"]}  # fmt: skip
 
 
@@ -188,9 +197,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("stage", choices=list(STAGE_DIRS))
     ap.add_argument("--config", type=Path, default=CONFIG)
     ap.add_argument("--alerts", default="val", help="val | synthetic (smoke test, random labels); test is refused")
-    ap.add_argument("--val-part", choices=["fit", "cal", "eval"], default=None,
-                    help="required with --alerts val; not fixed by plan.md / T4 decisions item 9, so no default")
+    ap.add_argument("--val-part", choices=["fit", "cal", "eval", "all"], default=None,
+                    help="required with --alerts val; prereg/e18_decision.yaml: stage 1 eval (160 askable HI-Medium "
+                         "alerts), stage 2 and thinking all (460, eval alerts first)")
     ap.add_argument("--data", default=None, help="default: the config's data (hi_medium)")
+    ap.add_argument("--backtest", type=Path, default=None,
+                    help="LR table for the planner's select menu and fusion (val alerts; default: the config's backtest)")
     ap.add_argument("--n", type=int, default=None, help="override the stage's alert count (smoke tests)")
     ap.add_argument("--sets", default="core", help="stage 1: candidate sets, e.g. core or core,if_time")
     ap.add_argument("--only", default=None, help="run only these candidates of the stage (one server at a time); the decision still waits for all")
@@ -206,10 +218,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--summarize-only", action="store_true", help="no runs: tabulate and decide from complete run dirs")
     ap.add_argument("--allow-draft-prereg", action="store_true", help="prereg/e18_decision.yaml must be committed before stage 1")
+    ap.add_argument("--max-output-tokens", type=int, default=None,
+                    help="sensitivity arm only (needs a non-default --out): output cap per step for every candidate run "
+                         "here, e.g. 1024 for gpt-oss, whose low-effort reasoning does not fit the JSON-sized default")
     a = ap.parse_args(argv)
 
     if a.alerts == "test":
         raise SystemExit("E18 uses validation only and never touches the test split")
+    if a.max_output_tokens and a.out.resolve() == (ROOT / "outputs" / "e18").resolve():
+        ap.error("--max-output-tokens is a sensitivity arm: write it to its own --out, never the pre-registered stages")
     if a.alerts not in ("val", "synthetic"):
         ap.error("--alerts must be val or synthetic")
     if (a.alerts == "val") != (a.val_part is not None):
@@ -220,6 +237,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--toolbox dev answers randomly: synthetic alerts only, never a result")
     cfg = e18.load_config(a.config)
     a.data = a.data or cfg["data"]
+    if a.alerts == "val":  # without the table the planner has no accepted questions and every verdict is p0
+        a.backtest = a.backtest or (Path(cfg["backtest"]) if cfg.get("backtest") else None)
+        if a.backtest is None or not (ROOT / a.backtest if not a.backtest.is_absolute() else a.backtest).exists():
+            raise SystemExit(f"--backtest (or the config's backtest) must name an existing LR table, got {a.backtest}")
     a.n_boot = a.n_boot or cfg["decision"]["n_boot"]
     if llm_limits()["max_tokens"] != cfg["parity"]["max_prompt_tokens"]:
         raise SystemExit("configs/llm/default.yaml limits.max_tokens and parity.max_prompt_tokens disagree")

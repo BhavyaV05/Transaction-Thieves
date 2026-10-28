@@ -20,7 +20,7 @@ def test_parse_command():
 def test_committed_configs_are_complete_and_name_real_scripts():
     problems, final = chk.check(artefacts=False, run_help=False)
     assert problems == []
-    assert len(final) >= 7 and all("to_build" in line or "ready" in line or "done" in line for line in final)
+    assert len(final) >= 7 and all("to_build" in line or "needs_val_run" in line or "ready" in line or "done" in line for line in final)
     for name in chk.REQUIRED:  # every flag named in a val_command is in the script source (CI has no torch for --help)
         cfg = chk.yaml.safe_load((chk.CONFIGS / f"{name}.yaml").read_text())
         for key, val in chk.walk(cfg):
@@ -43,3 +43,10 @@ def test_refuses_the_final_run(monkeypatch):
     monkeypatch.setenv("FTM_FINAL_RUN", "1")
     with pytest.raises(SystemExit):
         chk.check()
+
+
+def test_items_waiting_for_a_val_run_are_listed_as_expected_states_not_problems():
+    w = chk.waiting()
+    assert any(line.startswith("fraudgt.final_entry") and line.endswith("needs_val_run") for line in w)
+    problems, _ = chk.check(artefacts=False, run_help=False)
+    assert problems == []

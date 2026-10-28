@@ -143,7 +143,8 @@ def cmd_report(a) -> int:
     fast_by = {id(ex): fast[r["i"]]["logps"] for ex, r in zip(exs, rows, strict=True)}
     large_by = {id(ex): large[r["i"]]["logps" if from_logps else "probs"] for ex, r in zip(exs, rows, strict=True)
                 if r["i"] in large}  # fmt: skip
-    temps, _, report = calibrate_cascade(exs, parts, _CachedFast(fast_by), _CachedLarge(large_by, from_logps=from_logps), alpha=a.alpha)
+    temps, cascade, report = calibrate_cascade(exs, parts, _CachedFast(fast_by), _CachedLarge(large_by, from_logps=from_logps), alpha=a.alpha)
+    report["conformal_q"] = {"fast": cascade.fast_sets.q, "large": cascade.large_sets.q}  # the frozen thresholds (E10 freeze)
     for d, r in report["decisions"].items():
         r["labels"] = list(DECISIONS[d].labels)
     # the plain accuracy of each tier on eval (uncalibrated argmax), for context

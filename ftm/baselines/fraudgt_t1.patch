@@ -1,3 +1,26 @@
+diff --git a/fraudGT/head/hetero_edge.py b/fraudGT/head/hetero_edge.py
+index 5cb7c4c..68db7cc 100644
+--- a/fraudGT/head/hetero_edge.py
++++ b/fraudGT/head/hetero_edge.py
+@@ -9,6 +9,9 @@ from fraudGT.graphgym.config import cfg
+ from fraudGT.graphgym.models.layer import MLP
+ 
+ 
++T1_LAST_EID = None
++
++
+ @register_head('hetero_edge')
+ class HeteroGNNEdgeHead(nn.Module):
+     '''Head of Hetero GNN, edge prediction'''
+@@ -36,6 +39,8 @@ class HeteroGNNEdgeHead(nn.Module):
+         #                   getattr(self, f'{batch.split}_inds')[batch[task].input_id])
+         mask = torch.isin(batch[task].e_id, 
+                           getattr(self, f'{batch.split}_inds')[batch[task].input_id])
++        global T1_LAST_EID  # T1 patch: the edge ids of the scored rows, read by the prediction dump (custom_train.py)
++        T1_LAST_EID = batch[task].e_id[mask]
+ 
+         task = cfg.dataset.task_entity
+         edge_index = batch[task].edge_index
 diff --git a/fraudGT/sampler/custom_sampler.py b/fraudGT/sampler/custom_sampler.py
 index f354736..3232da1 100644
 --- a/fraudGT/sampler/custom_sampler.py
@@ -33,7 +56,7 @@ index f354736..3232da1 100644
      mask = data[task].split_mask
      edge_label_index = data[task].edge_index[:, mask]
 diff --git a/fraudGT/train/custom_train.py b/fraudGT/train/custom_train.py
-index a151f9c..3c0c3b9 100644
+index a151f9c..da95aaa 100644
 --- a/fraudGT/train/custom_train.py
 +++ b/fraudGT/train/custom_train.py
 @@ -185,6 +185,9 @@ def train_epoch(cur_epoch, logger, loader, model, optimizer, scheduler, batch_ac
@@ -46,7 +69,82 @@ index a151f9c..3c0c3b9 100644
      model.eval()
      pbar = tqdm(total=len(loader), disable=not cfg.val.tqdm)
      iterator = iter(loader)
-@@ -297,6 +300,18 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
+@@ -230,6 +233,63 @@ def eval_epoch(logger, loader, model, split='val'):
+                 raise
+ 
+ 
++_T1_BEST_F1 = [-1.0]
++
++
++@torch.no_grad()
++def _t1_dump(loaders, model):
++    """T1 patch: score EVERY edge of the val split (and of the test split only when T1_EVAL_TEST=1) with the best-val-F1 weights
++    and write T1_OUT/pred_<split>.csv: tx_id (= row of the raw CSV = ftm's tx_id), label, score (P(laundering), uncalibrated)."""
++    import json as _json, os as _os
++    import pandas as _pd
++    from fraudGT.head import hetero_edge as _he
++    out = _os.environ.get('T1_OUT', '.')
++    ck = torch.load(_os.path.join(out, 'best.pt'), map_location=cfg.device)
++    model.load_state_dict(ck['model'])
++    model.eval()
++    rows = _pd.read_csv(_os.path.join(cfg.dataset.dir, cfg.dataset.format, 'formatted_transactions.csv'),
++                        usecols=['EdgeID', 'Is Laundering'])
++    meta = {'best_epoch': ck['epoch'], 'best_val_f1': ck['val_f1']}
++    for split, wrapper in zip(['val', 'test'], loaders[1:]):
++        if split == 'test' and _os.environ.get('T1_EVAL_TEST') != '1':
++            continue  # the test loader reads val data (custom_sampler.py); test is scored only in the final run
++        torch.manual_seed(cfg.seed)  # neighbour sampling is random: fix it so the dump is reproducible
++        eids, labels, scores, skipped = [], [], [], 0
++        for batch in wrapper.loader:  # the full loader, not the iter_per_epoch-capped wrapper
++            batch.split = split
++            batch.to(torch.device(cfg.device))
++            try:
++                pred, true = model(batch)[:2]
++            except RuntimeError as e:
++                if "cannot sample n_sample <= 0 samples" not in str(e):
++                    raise
++                skipped += 1
++                continue
++            pred, true = pred.squeeze(-1), true.squeeze(-1)  # as in compute_loss: [n, 1] logits are the binary case
++            score = torch.softmax(pred, dim=-1)[:, 1] if pred.ndim > 1 else torch.sigmoid(pred)
++            eids.append(_he.T1_LAST_EID.cpu())
++            labels.append(true.cpu())
++            scores.append(score.float().cpu())
++        df = _pd.DataFrame({'row': torch.cat(eids).numpy(), 'label': torch.cat(labels).numpy(),
++                            'score': torch.cat(scores).numpy()}).drop_duplicates('row')
++        # the edge ids index the time-sorted formatted CSV; its labels must match the model's, else the mapping is wrong
++        assert (rows['Is Laundering'].to_numpy()[df['row']] == df['label']).all(), 'edge id -> CSV row mapping is wrong'
++        df.insert(0, 'tx_id', rows['EdgeID'].to_numpy()[df['row']])
++        df = df.drop(columns='row').sort_values('tx_id').reset_index(drop=True)
++        path = _os.path.join(out, f'pred_{split}.csv')
++        if _os.environ.get('T1_DUMP_ONLY') == '1' and _os.path.exists(path):  # final run: the stored val scores must reproduce
++            old = _pd.read_csv(path)
++            diff = float((old['score'] - df['score']).abs().max()) if old['tx_id'].equals(df['tx_id']) else float('inf')
++            meta[f'{split}_max_abs_diff'] = diff  # GPU scatter is not bit-exact: about 1e-4 between two identical dumps
++            assert diff < 1e-3, f'{path} does not reproduce (max abs diff {diff}): do not use these scores'
++        else:
++            df.to_csv(path, index=False)
++        meta[split] = {'n_scored': len(df), 'n_expected': len(wrapper.loader.dataset), 'skipped_batches': skipped}
++        logging.info(f"T1 dump {split}: {meta[split]}")
++    with open(_os.path.join(out, 'pred_meta.json'), 'w') as fh:
++        _json.dump(meta, fh, indent=1)
++
++
+ @register_train('custom')
+ def custom_train(loggers, loaders, model, optimizer, scheduler):
+     """
+@@ -243,6 +303,10 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
+         scheduler: PyTorch learning rate scheduler
+ 
+     """
++    import os as _os
++    if _os.environ.get('T1_DUMP_ONLY') == '1':  # T1 patch: no training, score with T1_OUT/best.pt (the final run)
++        _t1_dump(loaders, model)
++        return
+     start_epoch = 0
+     if cfg.train.auto_resume:
+         start_epoch = load_ckpt(model, optimizer, scheduler,
+@@ -297,6 +361,24 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
                  and is_ckpt_epoch(cur_epoch):
              save_ckpt(model, optimizer, scheduler, cur_epoch)
  
@@ -58,6 +156,12 @@ index a151f9c..3c0c3b9 100644
 +                _fh.write(_json.dumps({'epoch': cur_epoch, 'elapsed_s': time.time() - _t0,
 +                                       'val': {k: float(v) for k, v in perf[1][-1].items() if isinstance(v, (int, float))},
 +                                       'test': {k: float(v) for k, v in perf[2][-1].items() if isinstance(v, (int, float))}}) + '\n')
++            if perf[1][-1]['f1'] > _T1_BEST_F1[0]:  # T1 patch: keep the best-val-F1 weights for the prediction dump
++                _T1_BEST_F1[0] = perf[1][-1]['f1']
++                _out = _os.environ.get('T1_OUT', '.')
++                _os.makedirs(_out, exist_ok=True)
++                torch.save({'epoch': cur_epoch, 'val_f1': perf[1][-1]['f1'], 'model': model.state_dict()},
++                           _os.path.join(_out, 'best.pt'))
 +        if time.time() - _t0 > float(_os.environ.get('T1_BUDGET_S', '1e18')) and is_eval_epoch(cur_epoch, start_epoch):
 +            logging.info('T1 time budget reached, stopping')
 +            break
@@ -65,3 +169,11 @@ index a151f9c..3c0c3b9 100644
          if cfg.wandb.use:
              run.log(flatten_dict(perf), step=cur_epoch)
  
+@@ -353,6 +435,7 @@ def custom_train(loggers, loaders, model, optimizer, scheduler):
+                             gtl.attention.gamma.requires_grad:
+                         logging.info(f"    {gtl.__class__.__name__} {li}: "
+                                      f"gamma={gtl.attention.gamma.item()}")
++    _t1_dump(loaders, model)
+     logging.info(f"Avg time per epoch: {np.mean(full_epoch_times):.2f}s")
+     logging.info(f"Total train loop time: {np.sum(full_epoch_times) / 3600:.2f}h")
+     for logger in loggers:

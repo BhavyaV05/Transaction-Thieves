@@ -33,7 +33,6 @@ import contextlib
 import importlib.util
 import json
 import os
-import shlex
 import subprocess
 import sys
 import time
@@ -148,7 +147,7 @@ def load_test_alerts(a: argparse.Namespace, cfg: dict, log=say) -> pl.DataFrame:
             raise SystemExit(f"{path} does not exist: the T1 `pre` steps (t1.gfp_one_bank, t1.intake) build it, run them on this "
                              "machine (--machine s1 or --only t1.*) or copy the file from the machine that did")
         log(f"building the test alert set: {cmd}")
-        rc = subprocess.run(shlex.split(cmd.format(data=cfg["data"], out=str(path))), cwd=ROOT).returncode
+        rc = subprocess.run(t1._cmd_argv(cmd.format(data=cfg["data"], out=str(path))), cwd=ROOT).returncode  # `python` = this interpreter
         if rc != 0 or not path.exists():
             raise SystemExit(f"test_alerts.cmd failed (exit {rc}) or did not write {path}")
     df = pl.read_parquet(path, columns=["alert_id", "bank", "p0", "test_tail"])  # time-guard: not transactions; no label column is read

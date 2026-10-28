@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 import types
 from dataclasses import replace
 from pathlib import Path
@@ -239,4 +240,4 @@ def test_command_templates_keep_windows_paths_intact():
     ids = Path(r"C:\Users\x y\run\subset_ids.txt")
     argv = rn.command_for(job, ctx, out, ids, 0)
     assert argv[-1] == str(out) and argv[-3] == str(ids)
-    assert argv[:3] == ["python", "scripts/final_non_llm.py", "--arm"]
+    assert argv[:3] == [sys.executable, "scripts/final_non_llm.py", "--arm"]  # a leading `python` is the running interpreter

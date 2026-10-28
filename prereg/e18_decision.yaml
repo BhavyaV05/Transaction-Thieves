@@ -2,23 +2,33 @@
 # T4 owns the rule, T3 runs the sweep. The run config is configs/experiments/e18_backbone_sweep.yaml; if the two
 # disagree, this file wins. Validation only: no test alert is touched.
 
-status: draft            # becomes "committed" in the commit made before stage 1; that hash goes in the E18 run log
+status: committed        # committed before stage 1 (2026-10-25); this commit's hash goes in the E18 run log
+# Amended 2026-10-25 before any E18 run (T3, for T4 review): the 200 / 500 alert counts do not exist in the data.
+# HI-Medium val has 460 askable alerts (a partner bank in the 30 modelled views): fit 191, cal 109, eval 160.
+# Stage 1 therefore uses every askable eval alert (160) and stage 2 every askable val alert (460, eval alerts first).
 data: HI-Medium validation alerts (docs/t4_decisions_week2.md item 9), fixed seed 0
 statistic: Brier of the planner (compose mode) on the same alerts for every model, paired cluster bootstrap
 clusters: attempt+accounts
 bootstrap: {resamples: 10000, level: 0.95, seed: 0}
+fusion: >-
+  the planner's default (naive summed back-tested log LRs) in every run. The run log keeps each answer's family and
+  log LR, so if the G2 decision (due 27 Oct, docs/schedule_nov10.md rule 6) adopts a fitted fusion as the system
+  default, every E18 table and decision is recomputed under that fusion from the same run logs, with no new model
+  call, and that recomputed decision is the one used. Fixed here before stage 1.
 
 stage1:
-  alerts: 200
+  alerts: 160            # every askable HI-Medium val `eval` alert (was 200; only 160 exist)
+  val_part: eval
   drop_if:
     - "valid-DSL output rate < 0.95"
     - "95% CI of Brier(model) - Brier(best model) lies entirely above 0"
 stage2:
   models: top 3 by stage-1 Brier among the survivors
-  alerts: 500            # stage-1 alerts included
+  alerts: 460            # every askable HI-Medium val alert, fit + cal + eval (was 500; only 460 exist)
+  val_part: all          # the 160 stage-1 (eval) alerts come first, in the same seeded order, then fit + cal
 pick:
   rule: "smallest model (active parameters) whose 95% CI upper bound of Brier(model) - Brier(best) is below the equivalence margin"
-  margin: "plan.md 9.3: 0.5 * |Brier(random) - Brier(best simple planner)| on the same 500 alerts"
+  margin: "plan.md 9.3: 0.5 * |Brier(random) - Brier(best simple planner)| on the same 460 alerts"
   tie_break: [lower median seconds per alert on the reference machine, fewer total parameters]
   latency: "must meet 8-20 s per alert (median, reference machine); if none qualifies, take the best that meets it"
 thinking:
