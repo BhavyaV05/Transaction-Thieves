@@ -60,7 +60,7 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [x] T1's flag from hand-off A4: `cross_currency_out(..., window=after(72))` cannot see the future (`tests/test_window_future.py`: the ledger is cut at the answer time, checked through the bank and the harness clock)
 
 ## Week 12–13
-- [x] Final configs: the non-LLM arms and raw sharing as G5 jobs (`scripts/final_non_llm.py`, `ftm/orchestrator/final_nonllm.py`, `configs/final/non_llm.yaml`, `configs/final/jobs.yaml`, `docs/t2_final_run.md`); same `prepare_arm` as the G4 table, blind. **Open before 31 Oct:** the `tables:` paths in `configs/final/non_llm.yaml` (`final_non_llm.py --check`) and the val rehearsal, both need `data/`
+- [x] Final configs: the non-LLM arms and raw sharing as G5 jobs (`scripts/final_non_llm.py`, `ftm/orchestrator/final_nonllm.py`, `configs/final/non_llm.yaml`, `configs/final/jobs.yaml`, `docs/t2_final_run.md`); same `prepare_arm` as the G4 table, blind. The `realistic` and `exact_labels` paths are set (28 Oct); still open before 31 Oct: the `enumerator` table, the raw-sharing refit and the time-block decision (`docs/t2_final_run.md`) (`final_non_llm.py --check`) and the val rehearsal, both need `data/`
 - [x] buffer: Windows fix in T4's `command_for` (backslashes in `{alert_ids}`/`{out}`), `run_alerts(blind=True)`, `synthetic_env(enumerator=False)`
 
 ## Week 14
