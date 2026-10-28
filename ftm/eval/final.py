@@ -48,6 +48,8 @@ EXPLORATORY = ["H5", "H8"]
 ALPHA = 0.05
 UPPERS = ("gfp_see_everything", "best_sota_see_everything")
 MDE_MULTIPLIER = 2.80  # z(0.975) + z(0.80): two-sided alpha 0.05, power 0.8
+POWER_TARGET = 0.01  # the Brier difference of the G2 target (issue 86): alerts needed to detect it
+PROJECTED_TEST_ALERTS = 3475  # HI-Medium test projection from validation (docs/report/00_outline.md n_alerts); inputs.yaml power.projected_test_alerts overrides
 PLAN_MDE = {"n": 4000, "brier": 0.011}  # plan.md 9.3: with ~4,000 test alerts, Brier improvements of about 0.011
 
 
@@ -828,6 +830,31 @@ def power_statement(n_alerts: int, n_subset: int | None, mde_value: float | None
     return " ".join(parts)
 
 
+def power_details(n_alerts: int, mde_value: float | None, target: float = POWER_TARGET, n_projected: int = PROJECTED_TEST_ALERTS) -> dict:
+    """Machine-readable power numbers at this run's own paired standard error (80% power, two-sided 5%).
+
+    mde = 2.8 * SE and SE scales with 1/sqrt(n): the alerts needed for a difference of `target` is n * (mde / target)^2, and the detectable
+    difference at `n_projected` alerts is mde * sqrt(n / n_projected). Only this run's scores and its cluster bootstrap enter.
+    """
+    out = {"target_brier_difference": target, "n_alerts": int(n_alerts), "projected_test_alerts": int(n_projected), "power": 0.8, "alpha": ALPHA}
+    if mde_value is None or not math.isfinite(mde_value) or mde_value <= 0:
+        return {**out, "mde_at_n": None, "se_paired_difference": None, "alerts_needed_for_target": None, "mde_at_projected": None}
+    return {**out, "se_paired_difference": mde_value / MDE_MULTIPLIER, "mde_at_n": mde_value,
+            "alerts_needed_for_target": int(math.ceil(n_alerts * (mde_value / target) ** 2)),
+            "mde_at_projected": mde_value * math.sqrt(n_alerts / n_projected)}  # fmt: skip
+
+
+def power_sentence(d: dict, source: str | None = None) -> str:
+    """The needed-n and projected-size sentences of power.txt (empty when there is no standard error)."""
+    if d.get("alerts_needed_for_target") is None:
+        return ""
+    src = f" ({source})" if source else ""
+    return (f"At this run's own paired standard error{src} of {d['se_paired_difference']:.4f} Brier, detecting a difference of "
+            f"{d['target_brier_difference']:.2f} (80% power, two-sided 5%) needs about {d['alerts_needed_for_target']} alerts, against {d['n_alerts']} here; "
+            f"at the projected test size of {d['projected_test_alerts']} alerts the detectable difference is about {d['mde_at_projected']:.4f} Brier. "
+            f"Where the target is far below the detectable difference, 'not met' and 'not detectable' look the same.")  # fmt: skip
+
+
 def _fmt(x, nd: int = 3) -> str:
     return "n/a" if x is None or (isinstance(x, float) and not math.isfinite(x)) else f"{x:.{nd}f}"
 
@@ -1347,6 +1374,8 @@ def fixed_from_run(panel: Panel, hyp: dict) -> dict:
     out["largest_cluster_share"] = cl["largest_share"]
     for k in ("best_simple_planner", "equivalence_margin", "margin_gap", "best_ported_external"):
         out.setdefault(k, panel.fixed.get(k))
+    if "review_capacity" in panel.fixed:  # S1: the capacity a later run reads back (a --split val run writes the default when absent)
+        out.setdefault("review_capacity", panel.fixed["review_capacity"])
     return out
 
 

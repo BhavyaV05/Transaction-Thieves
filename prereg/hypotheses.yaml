@@ -109,3 +109,26 @@ hypotheses:
     tier: exploratory
     claim: "Two questions at once, then one more, keeps 80% of the benefit in 60% of the time."
     experiment: E13
+
+# Additional secondary / sensitivity analyses (T4, issues #87 and #88; listed here before the freeze so they are pre-registered, not post hoc).
+# They are NOT hypotheses: not part of H1-H10, not in any Holm family (the `hypotheses` block above and the correction families are unchanged),
+# they never change a verdict, and they are reported next to the primary results. Code: ftm/eval/final_additions.py; tables review_capacity
+# and adjusted_estimates of scripts/final_analysis.py. The power statement (power.txt) and the eps = infinity row are descriptive, not tests.
+sensitivity:
+  S1:
+    tier: sensitivity
+    title: "Precision and recall at a fixed review capacity"
+    claim: "Questions may change the ranking at the top of the queue while barely moving Brier: report it, do not test it."
+    statistic: "precision and recall among the top-K alerts by score, per system, and their paired differences to the one-bank score (p0)"
+    capacity: {kind: top_fraction, fraction: 0.10, status: "PLACEHOLDER, to be confirmed before the freeze"}   # also written to fixed_on_val.json (review_capacity) by --split val; test reads it from there
+    ties: "broken by alert order"
+    interval: "95% paired cluster bootstrap, the capacity re-applied to every resample; descriptive, no p-value, no verdict"
+    experiment: E2
+  S2:
+    tier: sensitivity
+    title: "p0-adjusted paired Brier differences"
+    claim: "Regression adjustment for p0 and the number of answered questions should narrow the CI of the paired Brier differences of H1 and H3 without changing the estimand."
+    statistic: "per-alert Brier difference regressed (OLS) on p0 and the number of answered questions of our system; the fit evaluated at the original covariate means"
+    interval: "95% cluster bootstrap, the regression refitted on every resample of whole clusters"
+    rule: "the unadjusted difference stays primary; S2 is reported next to it as 'sensitivity, unadjusted is primary'"
+    experiment: E2

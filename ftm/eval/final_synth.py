@@ -194,7 +194,11 @@ def build_run(root: Path, w: World | None = None, split: str = "val", drop_jobs:
     rows_df = rows_df.with_columns(pl.col("p0").alias("p_gfp_see_everything"))
     rows_df.write_parquet(inp / "rows.parquet")
     (inp / "fast.json").write_text(json.dumps({"decision_types": [{"name": "stop", "alpha": 0.05, "error_marginal": 0.04, "kept": 0.6, "speedup": 12.0}]}))
+    sweep = [{"system": "eig", "alerts": 460, "positives": 208, "brier_p0": 0.17, "brier_final": 0.17 - g, "brier_gain": g, "mean_questions": q, "budget": b}
+             for b, g, q in ((0.5, 0.0, 0.0), (1.0, -0.010, 0.9), (2.0, -0.006, 1.6), (4.0, -0.015, 2.2), (float("inf"), -0.029, 6.0))]  # the format of scripts/eps_sweep.py
+    (inp / "eps_sweep.json").write_text(json.dumps(sweep, indent=1))  # budget inf is written as Infinity, as the real file does
     inputs = {
+        "eps_sweep": {"path": str(inp / "eps_sweep.json")},
         "alerts": {"path": str(inp / "alerts.parquet"), "account_cols": ["src_id", "dst_id"], "headline": {}, "tail": {}},
         "scores": {"one_bank": {"path": None}, **{n: {"path": p, "key": ["alert_id"], "value": "p0", "filter": {}} for n, p in paths.items()}},
         "rows": {"path": str(inp / "rows.parquet")}, "fast_model": {"path": str(inp / "fast.json")},

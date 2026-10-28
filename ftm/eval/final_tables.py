@@ -23,6 +23,7 @@ import polars as pl
 
 from ftm.eval import bootstrap as bs
 from ftm.eval import final as fn
+from ftm.eval import final_additions as fadd
 from ftm.eval import metrics as mt
 from ftm.eval.final import Missing, Panel, Scores, _fci, _fmt
 from ftm.fusion import fuse
@@ -59,15 +60,16 @@ class Writer:
         self.figures: dict[str, dict] = {}
         self.status: dict[str, dict] = {}
 
-    def table(self, stem: str, rows: list[dict], cols: list[str], title: str = "") -> str:
+    def table(self, stem: str, rows: list[dict], cols: list[str], title: str = "", note: str = "") -> str:
+        """Write `stem`.md / .csv. `note` (a reading or a caveat) goes under the table in the .md and into numbers.json beside it."""
         md = md_table(rows, cols)
-        (self.out / f"{stem}.md").write_text((f"## {title}\n\n" if title else "") + md + "\n", encoding="utf-8")
+        (self.out / f"{stem}.md").write_text((f"## {title}\n\n" if title else "") + md + "\n" + (f"\n{note}\n" if note else ""), encoding="utf-8")
         with (self.out / f"{stem}.csv").open("w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(cols)
             for r in rows:
                 w.writerow([_cell(r.get(c)) for c in cols])
-        self.tables[stem] = {"rows": rows, "cols": cols, "md": md, "file": f"{stem}.md"}
+        self.tables[stem] = {"rows": rows, "cols": cols, "md": md, "file": f"{stem}.md", "note": note}
         self.status[stem] = {"status": "ok", "file": f"{stem}.md", "csv": f"{stem}.csv", "rows": len(rows)}
         return md
 
@@ -916,6 +918,7 @@ TABLE_IDS = {  # id -> table stem (Writer.tables)
     "tab_5a": "table_5a", "tab_5b": "table_5b", "tab_baselines": "table_baselines", "n_alerts": "n_alerts", "typology_breakdown": "breakdown_typology",
     "error_tags": "error_tags", "case_studies": "case_studies", "compute_table": "compute", "inj_results": "injection_summary", "e18_sweep": "e18_sweep",
     "fusion_calibration": "fusion_calibration", "shuffled_answers": "shuffled_answers", "hypothesis_verdicts": "hypotheses",
+    "eps_infinity": "eps_infinity", "review_capacity": "review_capacity", "adjusted_estimates": "adjusted_estimates",
 }
 GROUP_IDS = {"planner_comparison": ["reference", "planners", "llm"], "ft_planner": ["e16"], "library_shape": ["e11"]}  # Table 5b groups
 FIGURE_IDS = {"fig_privacy_curve": ["privacy_curve"], "fig_pareto": ["pareto", "external_gap"]}
@@ -989,7 +992,7 @@ def build_numbers(res: dict, w: Writer, panel: Panel, power: str) -> dict:
     for i, stem in TABLE_IDS.items():
         t = w.tables.get(stem)
         if t:
-            ok(i, t["md"], file=t["file"], kind="table")
+            ok(i, t["md"] + (f"\n\n{t['note']}" if t.get("note") else ""), file=t["file"], kind="table")
         else:
             nr(i, (w.status.get(stem) or {}).get("reason", f"{stem} was not produced"))
     for i, groups in GROUP_IDS.items():
@@ -1012,6 +1015,7 @@ def build_numbers(res: dict, w: Writer, panel: Panel, power: str) -> dict:
         else:
             nr(i, (w.status.get(figs[0]) or {}).get("reason", "figure not produced"))
     out["_power_statement"] = {"status": "ok", "text": power}
+    out["power_statement"] = {"status": "ok", "text": power, "file": "power.txt", **{k: v for k, v in w.status.get("power", {}).items() if k not in ("status", "file")}}
     out["_hypothesis_verdicts_short"] = {"status": "ok", "text": "; ".join(f"{h} {res[h]['verdict']}" for h in res)}
     return out
 
@@ -1105,13 +1109,18 @@ def run_all(panel: Panel, inputs: dict, outdir: Path, figures: bool = True, outl
     if fa:
         w.table("h4_fdr_audit", fa, list(fa[0]), "H4 FDR audit: accepted questions asked at least 30 times")
     # power
-    ours_ob = None
-    r1 = res["H1"]
-    if r1["status"] == "tested":
-        ours_ob = r1.get("mde_brier")
+    ours_ob, mde_src = None, None
+    for hid, what in (("H1", "ours minus one bank, H1"), ("H3", "ours minus the best simple planner, H3"), ("H2", "ours minus one bank, H2")):
+        if res[hid]["status"] == "tested" and res[hid].get("mde_brier") is not None:
+            ours_ob, mde_src = res[hid]["mde_brier"], what
+            break
     n_sub = len(panel.run.subset_ids) if panel.run and panel.run.subset_ids else None
-    power = fn.power_statement(len(panel.y), n_sub, ours_ob)
+    pw = inputs.get("power") or {}
+    pdet = fn.power_details(res["H1"].get("n_alerts") or len(panel.y), ours_ob, float(pw.get("target_brier_difference", fn.POWER_TARGET)),
+                            int(pw.get("projected_test_alerts", fn.PROJECTED_TEST_ALERTS)))  # fmt: skip
+    power = " ".join(x for x in (fn.power_statement(len(panel.y), n_sub, ours_ob), fn.power_sentence(pdet, mde_src)) if x)
     (outdir / "power.txt").write_text(power + "\n", encoding="utf-8")
+    w.status["power"] = {"status": "ok", "file": "power.txt", "source": mde_src, **pdet}
     w.attempt("table_5a", lambda: table_5a(panel, w))
     t5a = w.tables.get("table_5a", {}).get("rows", [])
     w.attempt("table_5b", lambda: table_5b(panel, w))
@@ -1135,6 +1144,9 @@ def run_all(panel: Panel, inputs: dict, outdir: Path, figures: bool = True, outl
     w.attempt("error_tags", lambda: error_tags_table(panel, w))
     w.attempt("fusion_calibration", lambda: calibration_table(panel, w))
     w.attempt("shuffled_answers", lambda: shuffled_answers(panel, w))
+    w.attempt("eps_infinity", lambda: fadd.eps_infinity(inputs, panel.split, w))
+    w.attempt("review_capacity", lambda: fadd.review_capacity(panel, w))
+    w.attempt("adjusted_estimates", lambda: fadd.adjusted_estimates(panel, w))
     # figures
     def fig(name, builder, cols, drawer, caption):
         rows = w.attempt(name, builder)

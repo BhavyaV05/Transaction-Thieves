@@ -18,6 +18,8 @@ python scripts/final_analysis.py --split val --run outputs/final_synthetic/<id>
 python scripts/final_analysis.py --split val --run outputs/final/<val_run_id> --inputs configs/analysis/inputs.yaml
 ```
 
+The additions (`power.txt` needed-n line, `eps_infinity`, `review_capacity`, `adjusted_estimates`; code `ftm/eval/final_additions.py`, tests `tests/test_final_additions.py`) all come out of any of the three commands above; on real val logs add the sweep file to a copy of `inputs.yaml` (`eps_sweep: {path: data/runs/eps_sweep_hi_medium.json}`). S1 and S2 are listed under `sensitivity:` in `prereg/hypotheses.yaml`, not under `hypotheses:`: the file's tests tie that block to the three tiers and the Holm families (`tests/test_prereg.py`), and these two analyses are neither.
+
 A synthetic result is stamped on top of `index.md` and is never a result. A manifest with `synthetic: true` is analysed like val (its logs say `split=synthetic`); its labels come from the logs themselves, because no alert table exists for it. Most tables of a mock-LLM rehearsal come out `not_run` (no upper limits, no per-alert score tables): that is the point, the reasons are listed.
 
 ## The final run
@@ -63,7 +65,10 @@ Every table is `.md` + `.csv`; every figure is `figures/<name>.png` + `figures/<
 | `injection`, `injection_summary` | checker on vs off, attack success per kind |
 | `case_studies`, `error_tags` | worst and best alerts with their question chains; error tags in pipeline order |
 | `fusion_calibration`, `shuffled_answers`, `table_baselines`, `e18_sweep` | calibration of the fused score; shuffled-answers control; Group A/B detection models one-bank vs see-everything; E18 table (T3's CSV) |
-| `power.txt` | the plan's rule of thumb (0.011 at 4,000 alerts, scaled by 1/sqrt(n)) and the detectable difference from this run's own bootstrap standard error |
+| `power.txt` (+ `status.json` key `power`) | the plan's rule of thumb (0.011 at 4,000 alerts, scaled by 1/sqrt(n)), the detectable difference from this run's own bootstrap standard error, **the number of alerts needed to detect a Brier difference of 0.01** (80% power, two-sided 5%) at that standard error, and the detectable difference at the projected test size (`inputs.yaml power.projected_test_alerts`, default 3,475). `status.json` holds the numbers: `se_paired_difference`, `mde_at_n`, `alerts_needed_for_target`, `mde_at_projected`, `source`. Id `power_statement` |
+| `eps_infinity` | Brier gain against eps per alert **including the no-noise row**, from the eps-sweep JSON of `scripts/eps_sweep.py` (`inputs.yaml eps_sweep.path`, e.g. `data/runs/eps_sweep_hi_medium.json`; null = `not_run` with the reason). Under the table, one machine-generated line: "Noise is / is not the limiter", from the no-noise gain against the eps 2 gain (limiter only if the no-noise gain beats the eps 2 gain by more than 0.005; descriptive, no CI, the sweep is a validation file). `status.json` keeps the line under `eps_infinity.reading` |
+| `review_capacity` (S1) | precision and recall among the top-K alerts by score (K = capacity fraction x alerts of the comparison, ties by alert order), per system, with paired cluster-bootstrap CIs of the difference to the one-bank score. Capacity = `review_capacity` in `fixed_on_val.json`; a `--split val` run writes the default `{kind: top_fraction, fraction: 0.10, status: placeholder}` when absent (a placeholder to be pre-registered), `--split test` refuses without it. Secondary / sensitivity, outside the Holm families, no verdict |
+| `adjusted_estimates` (S2) | for H1 (ours minus one bank) and the three H3 comparisons: the per-alert Brier difference regressed (OLS) on p0 and the number of answered questions of our system; unadjusted and adjusted estimate and CI width side by side, slopes with CIs, in-sample R2. Cluster bootstrap refits the regression on every resample of whole clusters. The adjusted estimate is the fit at the original covariate means, so it equals the unadjusted mean by construction (OLS with an intercept) and only its CI differs. Labelled "sensitivity, unadjusted is primary"; constant covariates (e.g. no step rows) are dropped and noted |
 | `numbers.json`, `status.json`, `hypotheses.json` | every number the report placeholders `{{TBD:id}}` ask for; per-output status; full hypothesis records |
 
 `numbers.json` keys are the report placeholder ids (`hypothesis_verdicts`, `gap_closed_gfp`, `tab_5a`, `tab_5b`, `fig_privacy_curve`, `fig_pareto`, `compute_table`, `inj_results`, ...); anything the outline asks for that has no producer is `unmapped`.
@@ -72,7 +77,7 @@ Rules built in: gap closed = (Brier(one bank) - Brier(system)) / (Brier(one bank
 
 ## Inputs that are not run logs (`configs/analysis/inputs.yaml`)
 
-The alert table (`label`, cluster keys, typology, home bank; build it once from T1's alert parquet with `--build-alert-table`), the one-bank `p0`, per-alert probabilities of the upper limits (GFP and best SOTA with see-everything), DP-FedAvg, Group A/B models, the all-rows table, the E18 summary, the fast-model table, the retrieval-view pattern-edge shares (H6) and the fusion parameters. A missing path makes only what needs it `not_run`.
+`eps_sweep.path` (the eps = infinity row) and `power.{target_brier_difference, projected_test_alerts}` (power.txt). The alert table (`label`, cluster keys, typology, home bank; build it once from T1's alert parquet with `--build-alert-table`), the one-bank `p0`, per-alert probabilities of the upper limits (GFP and best SOTA with see-everything), DP-FedAvg, Group A/B models, the all-rows table, the E18 summary, the fast-model table, the retrieval-view pattern-edge shares (H6) and the fusion parameters. A missing path makes only what needs it `not_run`.
 
 ## Not done / open
 
