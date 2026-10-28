@@ -14,9 +14,10 @@ The project report ("Follow the Money Without Moving the Data"), written as one 
 | `03_problem_approach.md` | Section 3: formal setting, the five invariants, Figure 1 (redrawn as text), one illustrative alert followed through, Table 3 (why each capability, how measured) | draft 1, 27 Oct |
 | `05_4_gate_fusion_decision.md` | Section 5.4: gate, privacy accounting at the gate, regulatory retrieval, fusion (with the G2 finding on validation), decision, T4's external ports | draft 1, 27 Oct |
 | `06_experiments.md` | Section 6: systems compared, fairness protocol, metrics, statistics, hypotheses table, test lock | draft 1, 27 Oct |
+| `08_safety.md` | Section 8: threat model, layers of defence, experiment E15 (injection with and without the checker, CaMeL-style comparison), expected table, limits | draft 1, 28 Oct |
 | `10_limitations.md` | Section 10: threats to validity, limits of the design, future work | draft 1, 27 Oct |
 | `../presentation/outline.md` | Slide-by-slide outline of the talk (not part of the report build) | draft 1, 27 Oct |
-| `04`, `05` (the other parts), `07`, `08`, `09`, `11` | The remaining sections | to be written (names below) |
+| `04`, `05` (the other parts), `07`, `09`, `11` | The remaining sections | to be written (names below) |
 
 Names for the remaining files, so that the build command below works unchanged: `03_problem_approach.md`, `04_data_setup.md`, `05_methods.md` (or one file per part of section 5, such as `05_1_...md` to `05_4_...md`; the glob `05_*.md` sorts them in order), `06_experiments.md`, `07_results.md`, `08_safety.md`, `09_failure_analysis.md`, `10_limitations.md`, `11_compute.md`, and `00_abstract.md` for the abstract.
 
@@ -91,6 +92,8 @@ Each row is one marker in the file named in the first column. Resolve it from th
 | 02_related_work.md | section 2.3 | the repo states this point only through the proposal's one-line summary of [15 |
 | 02_related_work.md | section 2.7 | describe what Spotlighting and StruQ do from the papers; the repo names them only as comparisons |
 | 02_related_work.md | section 2.8 | verify the summary of 31 CFR 1010.540 against the regulation text before it is quoted in the report |
+| 08_safety.md | section 8.2 | describe what Spotlighting does (delimiting, marking or encoding untrusted text) from the paper [66]; the repo names it only as a comparison |
+| 08_safety.md | section 8.3 | describe what StruQ does (structured queries, fine-tuning to separate instructions from data) from the paper [67]; the repo names it only as a comparison |
 | references.md | [5] | the proposal lists this entry as "FIA Framework" without authors; the title prefix and the author names are taken from docs/external_code_check.md, which says the arXiv title is "FAA Framework"; confirm the full title and the author initials on arXiv |
 | references.md | [9] | docs/t1_week0.md records that the arXiv page is now titled "Federated Layer-Wise Exchange for Cross-Client Money Laundering Pattern Detection"; decide which title to print, and add the initials |
 | references.md | [11] | authors missing in the proposal |
