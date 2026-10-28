@@ -139,6 +139,8 @@ def prepare_arm(arm: Arm, spec: AblationSpec, *, banks: dict, bindings: dict, fi
     pool = pools.get(s["pool"])
     if pool is None or not len(pool):
         return f"no {s['pool']!r} question table"
+    if s["pool"] == "exact_labels":  # its rows are eps = inf, which a bank refuses: offer the same LRs at the real levels
+        pool = pool.at_eps(spec.eps_levels)
     fusion = None
     if s["fusion"]:
         key = ("fusion", s["fusion"], s["pool"])

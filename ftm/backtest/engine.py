@@ -61,10 +61,14 @@ class BacktestConfig:
     max_bins: int = 6
     min_per_bin: int = 20
     shrink: float = 2.0  # e-process bet shrinkage toward the null
+    time_blocks: int = 1  # > 1: the e-process permutes labels within this many time blocks (drift), see evalue.py
     mode: str = "realistic"  # realistic | exact (labels and noise are decided by the caller; this names the cache)
 
     def namespace(self, alert_set_id: str, seed: int) -> str:
-        blob = json.dumps({**asdict(self), "alerts": alert_set_id, "seed": seed}, sort_keys=True)
+        fields = asdict(self)
+        if fields["time_blocks"] == 1:  # the default is not part of the name, so caches built before the option stay valid
+            del fields["time_blocks"]
+        blob = json.dumps({**fields, "alerts": alert_set_id, "seed": seed}, sort_keys=True)
         return hashlib.blake2b(blob.encode(), digest_size=6).hexdigest()
 
 
@@ -166,7 +170,7 @@ class Backtester:
             return entry
         bins = choose_bins(answers, cfg.max_bins, cfg.min_per_bin) if kind in ("count", "set_count") else ()
         est = estimate_lr(kind, answers, labels, eps, sensitivity(node), arity(node), cfg.alpha, bins)
-        log_e = log_evalue(cells_for(kind, answers, bins), labels, cfg.shrink)
+        log_e = log_evalue(cells_for(kind, answers, bins), labels, cfg.shrink, cfg.time_blocks)
         entry.update(bins=list(bins), lr=est.lr, ceiling=est.ceiling, log_e=log_e,
                      e_value=math.exp(log_e) if log_e < 700 else math.inf,
                      cells={k: list(v) for k, v in est.counts.items()})  # fmt: skip
