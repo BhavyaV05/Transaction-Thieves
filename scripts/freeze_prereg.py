@@ -52,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     for name, h in fr["files"].items():
         print(f"  {h}  {name}")
     print(f"\nCOMBINED HASH (send this to the TA):\n{fr['combined_sha256']}")
+    for n in fz.missing_extra(a.prereg_dir):
+        print(f"\nWARNING: {n} is not in the tree, so the freeze does not cover it")
     if unresolved:
         print(f"\nWARNING: {len(unresolved)} values are still fix_on_val: " + ", ".join(unresolved))
     print("\nnext: send the hash, then  python scripts/freeze_prereg.py --record-ta-sent <hash>  and commit FREEZE.json")
