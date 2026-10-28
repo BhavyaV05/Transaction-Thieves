@@ -2,7 +2,7 @@
 
 Run by `scripts/run_final.py` as three `external_cmd` jobs (configs/final/jobs.yaml, system `fast_model`), one per phase, each when its
 model is the one served at the endpoint (T4 swaps servers, as for E16): `fast_tier` (tuned Qwen3-4B adapter `fast-s0` on
-the `qwen3-4b-bnb` server), `large_tier` (Gemma 4 12B; scores only the rows the fast tier could not settle), `cascade` (CPU: applies the frozen
+the `qwen3-4b-lora` server), `large_tier` (Gemma 4 12B; scores only the rows the fast tier could not settle), `cascade` (CPU: applies the frozen
 temperatures and conformal thresholds of outputs/e10/fast.json and writes the decisions). BLIND, like the LLM jobs: no label and no Brier in any
 output file or on the console; the decision rows are rebuilt from the test alerts by the same deterministic builder as the validation set
 (`ftm/orchestrator/decision_set.py`, seed 0, threshold 0.3), identified by (alert_id, decision, k), and T4's analysis rebuilds the labels the

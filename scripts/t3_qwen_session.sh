@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Qwen servers for T3's fine-tuned models, one server at a time (the 16 GB card): E16 val runs and the E10 fast-tier scoring.
-#   scripts/t3_qwen_session.sh e16        qwen3-8b-bnb: prompted base + the 3 QLoRA students on the 160 val `eval` alerts -> outputs/t3_val/eval/e16_*
-#   scripts/t3_qwen_session.sh fast       qwen3-4b-bnb: untuned 4B + tuned seeds 0-2 score every val decision row   -> outputs/e10/<arm>/fast.jsonl
+#   scripts/t3_qwen_session.sh e16        qwen3-8b-lora: prompted base + the 3 QLoRA students on the 160 val `eval` alerts -> outputs/t3_val/eval/e16_*
+#   scripts/t3_qwen_session.sh fast       qwen3-4b-lora: untuned 4B + tuned seeds 0-2 score every val decision row   -> outputs/e10/<arm>/fast.jsonl
 #   scripts/t3_qwen_session.sh small      qwen3-1.7b: untuned small general LLM, same rows                          -> outputs/e10/untuned_1.7b/fast.jsonl
 # Latency per decision (one request at a time, 300 rows) is measured for every scored arm: outputs/e10/<arm>/latency.json.
 set -uo pipefail
@@ -47,7 +47,7 @@ PYEOF
 
 case $which in
   e16)
-    for spec in "e16_prompted|qwen3-8b-bnb" "e16_student_s0|planner-sft-s0" "e16_student_s1|planner-sft-s1" "e16_student_s2|planner-sft-s2"; do
+    for spec in "e16_prompted|qwen3-8b-lora" "e16_student_s0|planner-sft-s0" "e16_student_s1|planner-sft-s1" "e16_student_s2|planner-sft-s2"; do
       name=${spec%%|*}; m=${spec#*|}; dir=$OUT/eval/$name; mkdir -p "$dir"
       for off in 0 80; do
         c=$(printf "c%03d" $((off / 80))); [[ -f $dir/$c/summary.json ]] && continue
@@ -59,7 +59,7 @@ case $which in
       done
     done ;;
   fast)
-    score_arm untuned_4b qwen3-4b-bnb
+    score_arm untuned_4b qwen3-4b-lora
     for s in 0 1 2; do score_arm tuned_s$s fast-s$s; done ;;
   small) score_arm untuned_1.7b qwen3-1.7b ;;
 esac

@@ -68,12 +68,12 @@ ours:
     library_account: ["--library", "outputs/t3_library/frozen/account_gemma.json"]
     batched_2_1: ["--batch-schedule", "2,1"]
     # E16: another served model. Last argument wins, so --model here replaces the run's --model; the endpoint is the same URL, so
-    # T4 must stop the Gemma server and start `scripts/serve_llm.py --model qwen3-8b-lora` (one server: the quantised Qwen3-8B base
-    # and the three adapters) before `run_final.py --only 'ours.student_*' --only 'ours.prompted_*'`. Docs: docs/t3_finetune_fastmodel.md.
+    # T4 must stop the Gemma server and start `scripts/serve_llm.py --model qwen3-8b-lora` (one server: the AWQ Qwen3-8B base
+    # = the prompted arm, and the three LoRA adapters) before `run_final.py --only 'ours.student_*' --only 'ours.prompted_*'`. Docs: docs/t3_finetune_fastmodel.md.
     student_s0: ["--model", "planner-sft-s0"]
     student_s1: ["--model", "planner-sft-s1"]
     student_s2: ["--model", "planner-sft-s2"]
-    prompted_qwen3_8b: ["--model", "qwen3-8b-bnb"]
+    prompted_qwen3_8b: ["--model", "qwen3-8b-lora"]
   variant_alerts:
     eps_0.5: [full_test]
     eps_1: [full_test]
@@ -238,7 +238,7 @@ extra_jobs:
   - {system: raw_share, variant: raw_share, alerts: [subset, full_test], machine_class: cpu, est_hours: 1.5, owner: T2, tier: core,
      cmd: "python scripts/final_non_llm.py --arm raw_share --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"}
   # E10 (T3): the frozen fast model + conformal cascade on the small-decision rows of the full test set, blind (scripts/e10_final.py,
-  # docs/t3_e10.md). Three phases, each when its model is the served one (T4 swaps servers like for E16): fast_tier needs the `qwen3-4b-bnb`
+  # docs/t3_e10.md). Three phases, each when its model is the served one (T4 swaps servers like for E16): fast_tier needs the `qwen3-4b-lora`
   # server (adapter fast-s0), large_tier the Gemma server, cascade is CPU. The frozen thresholds are outputs/e10/fast.json (sha256 in docs/t3_e10.md).
   - {system: fast_model, variant: fast_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
      cmd: ".venv/bin/python scripts/e10_final.py --phase fast --model fast-s0 --alert-ids {alert_ids} --out {out}"}

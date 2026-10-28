@@ -6,7 +6,7 @@ Owner: T3 (Akshat). Spec: `tracks.md` §5.4 (fine-tuning steps 1–4), §5.6, `p
 
 ## 0. Environment (28 Oct)
 
-Training venv `~/projects/train-venv` (Python 3.12), separate from `.venv` and from the vLLM venv (vLLM 0.31.0 is untouched; only `bitsandbytes==0.50.2` was added to it, with `--no-deps`, for serving the 4-bit base):
+Training venv `~/projects/train-venv` (Python 3.12), separate from `.venv` and from the vLLM venv (vLLM 0.31.0 is untouched):
 
 | package | version |
 |---|---|
@@ -20,7 +20,7 @@ Training venv `~/projects/train-venv` (Python 3.12), separate from `.venv` and f
 
 Full freeze: `~/projects/train-venv/freeze.txt` (not committed). **Unsloth is not used**: pip resolves `unsloth` against torch 2.8.0 to 2025.7.2, a mid-2025 release that does not run with transformers 5. `scripts/train_planner.py train` therefore uses plain PEFT: 4-bit NF4 base with double quantisation and bf16 compute (bitsandbytes), LoRA r 16 / alpha 32 on all seven linear projections, gradient checkpointing, TRL `SFTTrainer` with prompt/completion pairs so that the loss covers the completion only (`responses_only`). The prompt is rendered exactly as inference sees it: Qwen3 chat template with `enable_thinking=False`, i.e. the generation prompt ends with the empty think block, and the completion is the assistant JSON (or the one label token) plus `<|im_end|>`.
 
-Base models (pinned, `models--Qwen--*` in `~/hf_cache`): Qwen3-8B `b968826d9c46dd6066d109eabc6255188de91218` (planner), Qwen3-4B `1cfa9a7208912126459214e8b04321603b3df60c` (fast model). Serving the students: vLLM profiles `qwen3-8b-bnb` and `qwen3-4b-bnb` (`configs/llm/serving.yaml`) load the bf16 checkpoint quantised to 4 bit at load (`--quantization bitsandbytes`, the training quantisation) with `--enable-lora`; one server serves the base ("same model prompted", the parity arm) and the adapters by name (`planner-sft-s0..2`, `fast-s0..2`). `scripts/t3_lora_check.sh` proves the adapters load.
+Base models (pinned, `models--Qwen--*` in `~/hf_cache`): Qwen3-8B `b968826d9c46dd6066d109eabc6255188de91218` (planner), Qwen3-4B `1cfa9a7208912126459214e8b04321603b3df60c` (fast model). **Serving the students (changed 28 Oct).** vLLM 0.31.0 has no bitsandbytes quantisation ("Unknown quantization method: bitsandbytes"; vLLM is not to be upgraded), so the bf16 base cannot be served 4-bit. Profiles `qwen3-8b-lora` and `qwen3-4b-lora` (`configs/llm/serving.yaml`) therefore serve the already-cached AWQ checkpoints (`Qwen/Qwen3-8B-AWQ` `4da05a8e...`, `Qwen/Qwen3-4B-AWQ` `74d4bd2b...`, the E18 Qwen3-8B candidate) with `--enable-lora`; one server serves the base ("same model prompted", the parity arm) and the adapters by name (`planner-sft-s0..2`, `fast-s0..2`). **Train/serve mismatch:** the adapters are trained on the NF4-quantised bf16 base and served on the AWQ-quantised base of the same model. The two quantisations differ, so a student can lose a little against what it was trained for; the prompted arm runs on the same AWQ base, so the comparison student vs prompted is like for like on the serving side. `scripts/t3_lora_check.sh` proves the adapters load (first queue step after the Gemma session). Fallback if LoRA on AWQ does not load: llama.cpp (`llama-server --lora`, Qwen3-8B GGUF Q4_K_M plus the adapters converted to GGUF LoRA); this page says which one was used.
 
 ## 1. Planner distillation (E16)
 

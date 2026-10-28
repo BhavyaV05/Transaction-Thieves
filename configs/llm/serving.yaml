@@ -56,24 +56,22 @@ models:
     gpu_memory_utilization: 0.84           # was 0.88: OOM in a thinking-arm prefill (26 Oct, 15.8 GB peak beside the desktop); KV cache only
     reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
     extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory
-  qwen3-8b-bnb:                            # E16 (planner QLoRA): the bf16 Qwen3-8B quantised to 4 bit at load (bitsandbytes), as in training;
-    repo: Qwen/Qwen3-8B                    # served alone it is the "same model prompted" arm, with the adapters (LoRA) the three students
-    revision: b968826d9c46dd6066d109eabc6255188de91218
+  qwen3-8b-lora:                           # E16 (planner QLoRA): the AWQ Qwen3-8B above with LoRA enabled. Served alone it is the "same model
+    repo: Qwen/Qwen3-8B-AWQ                #  prompted" arm; the adapters (trained as QLoRA on the bf16 base) are addressed by name in `model`.
+    revision: 4da05a8edb55c6046cce958586c33b61da07bb79   # vLLM 0.31.0 has no bitsandbytes quantisation, so the bf16 base cannot be served 4-bit
     licence: apache-2.0
-    quantization: bitsandbytes
     max_model_len: 8192
     gpu_memory_utilization: 0.85
     reasoning_parser: qwen3
     max_lora_rank: 16
-    lora_modules:                          # adapters trained by scripts/train_planner.py (gitignored, models/); an adapter is addressed by its name in `model`
+    lora_modules:                          # adapters trained by scripts/train_planner.py (gitignored, models/)
       planner-sft-s0: models/planner_sft/seed=0/adapter
       planner-sft-s1: models/planner_sft/seed=1/adapter
       planner-sft-s2: models/planner_sft/seed=2/adapter
-  qwen3-4b-bnb:                            # E10 (fast model): the bf16 Qwen3-4B quantised at load, the tuned adapters, the untuned base
-    repo: Qwen/Qwen3-4B
-    revision: 1cfa9a7208912126459214e8b04321603b3df60c
+  qwen3-4b-lora:                           # E10 (fast model): AWQ Qwen3-4B with LoRA enabled: the untuned base and the tuned adapters
+    repo: Qwen/Qwen3-4B-AWQ
+    revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
     licence: apache-2.0
-    quantization: bitsandbytes
     max_model_len: 8192
     gpu_memory_utilization: 0.60
     reasoning_parser: qwen3
@@ -82,3 +80,10 @@ models:
       fast-s0: models/fast_4b/seed=0/adapter
       fast-s1: models/fast_4b/seed=1/adapter
       fast-s2: models/fast_4b/seed=2/adapter
+  qwen3-1.7b:                              # E10 small general-LLM baseline (untuned, bf16: small enough not to need a quantised build)
+    repo: Qwen/Qwen3-1.7B
+    revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.45
+    reasoning_parser: qwen3

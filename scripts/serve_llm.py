@@ -109,7 +109,7 @@ def vllm_args(cfg: dict, name: str, port: int, host: str | None = None) -> list[
     if m.get("reasoning_parser"):
         args += ["--reasoning-parser", m["reasoning_parser"]]
     if m.get("quantization"):
-        args += ["--quantization", str(m["quantization"])]  # e.g. bitsandbytes: a bf16 checkpoint quantised at load (E16's QLoRA base)
+        args += ["--quantization", str(m["quantization"])]  # vLLM 0.31.0 rejects bitsandbytes; unused by the current profiles
     if m.get("lora_modules"):  # E16: one server for the quantised base ("same model prompted") and the QLoRA adapters
         args += ["--enable-lora", "--max-lora-rank", str(m.get("max_lora_rank", 16)), "--lora-modules",
                  *[f"{k}={(ROOT / v).resolve()}" for k, v in m["lora_modules"].items()]]  # fmt: skip

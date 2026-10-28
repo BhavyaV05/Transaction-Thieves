@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -32,6 +33,10 @@ sys.path.insert(0, str(ROOT))
 from omegaconf import OmegaConf  # noqa: E402
 
 from ftm.llm.budget import estimate_messages  # noqa: E402
+
+# Models resolve from the shared cache (FTM_HF_HOME, default ~/hf_cache) and never from the network: the revisions are pinned in the configs.
+os.environ.setdefault("HF_HOME", os.environ.get("FTM_HF_HOME", str(Path.home() / "hf_cache")))
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 REQUIRED = ("task", "base_model", "revision", "max_seq_length", "lora", "train", "seeds", "output_dir")
 
