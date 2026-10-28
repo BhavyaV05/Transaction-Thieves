@@ -15,11 +15,13 @@ The project report ("Follow the Money Without Moving the Data"), written as one 
 | `05_4_gate_fusion_decision.md` | Section 5.4: gate, privacy accounting at the gate, regulatory retrieval, fusion (with the G2 finding on validation), decision, T4's external ports | draft 1, 27 Oct |
 | `06_experiments.md` | Section 6: systems compared, fairness protocol, metrics, statistics, hypotheses table, test lock | draft 1, 27 Oct |
 | `08_safety.md` | Section 8: threat model, layers of defence, experiment E15 (injection with and without the checker, CaMeL-style comparison), expected table, limits | draft 1, 28 Oct |
+| `09_failure_analysis.md` | Section 9: error tags in pipeline order, how case-study candidates are chosen, the validation findings that explain why G2 is not met (T4's half; T3 writes the ten case studies) | draft 1, 28 Oct |
 | `10_limitations.md` | Section 10: threats to validity, limits of the design, future work | draft 1, 27 Oct |
+| `11_compute_reproducibility.md` | Section 11: machines, serving profiles, planned hours, seeds and caches, test lock, run-log v1, commands per table, licences | draft 1, 28 Oct |
 | `../presentation/outline.md` | Slide-by-slide outline of the talk (not part of the report build) | draft 1, 27 Oct |
-| `04`, `05` (the other parts), `07`, `09`, `11` | The remaining sections | to be written (names below) |
+| `04`, `05` (the other parts), `07` | The remaining sections | to be written (names below) |
 
-Names for the remaining files, so that the build command below works unchanged: `03_problem_approach.md`, `04_data_setup.md`, `05_methods.md` (or one file per part of section 5, such as `05_1_...md` to `05_4_...md`; the glob `05_*.md` sorts them in order), `06_experiments.md`, `07_results.md`, `08_safety.md`, `09_failure_analysis.md`, `10_limitations.md`, `11_compute.md`, and `00_abstract.md` for the abstract.
+Names for the remaining files, so that the build command below works unchanged: `03_problem_approach.md`, `04_data_setup.md`, `05_methods.md` (or one file per part of section 5, such as `05_1_...md` to `05_4_...md`; the glob `05_*.md` sorts them in order), `06_experiments.md`, `07_results.md`, `08_safety.md`, `09_failure_analysis.md`, `10_limitations.md`, `11_compute_reproducibility.md`, and `00_abstract.md` for the abstract.
 
 ## Who writes what
 
@@ -94,6 +96,10 @@ Each row is one marker in the file named in the first column. Resolve it from th
 | 02_related_work.md | section 2.8 | verify the summary of 31 CFR 1010.540 against the regulation text before it is quoted in the report |
 | 08_safety.md | section 8.2 | describe what Spotlighting does (delimiting, marking or encoding untrusted text) from the paper [66]; the repo names it only as a comparison |
 | 08_safety.md | section 8.3 | describe what StruQ does (structured queries, fine-tuning to separate instructions from data) from the paper [67]; the repo names it only as a comparison |
+| 09_failure_analysis.md | section 9.2 | T3 and T4 to agree, before the final run, which of the ten candidates are written up, so that the choice is fixed in advance and not made by reading the labels |
+| 09_failure_analysis.md | section 9.3 | once section 7 of docs/t4_fusion_findings.md holds the replication-filter results, cite it instead of GitHub issue #84 |
+| 11_compute_reproducibility.md | section 11.2 | T3 to confirm the cumulative GPU-hours, including the QLoRA training and the E15 runs, against the 250-hour budget before the abstract quotes a total |
+| 11_compute_reproducibility.md | section 11.7 | the repository has no licence file; the team chooses MIT or Apache-2.0 before release (docs/external_code_check.md lists this as open) |
 | references.md | [5] | the proposal lists this entry as "FIA Framework" without authors; the title prefix and the author names are taken from docs/external_code_check.md, which says the arXiv title is "FAA Framework"; confirm the full title and the author initials on arXiv |
 | references.md | [9] | docs/t1_week0.md records that the arXiv page is now titled "Federated Layer-Wise Exchange for Cross-Client Money Laundering Pattern Detection"; decide which title to print, and add the initials |
 | references.md | [11] | authors missing in the proposal |
