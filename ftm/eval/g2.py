@@ -91,6 +91,36 @@ def entries_from_cache(cache: BacktestCache, fdr: float = 0.10) -> list[dict]:
     return accept(cache.entries(), fdr)
 
 
+def apply_replication_filter(entries: Sequence[dict], replicates: dict, fdr: float = 0.10,
+                             source: dict | None = None) -> tuple[list[dict], dict]:  # fmt: skip
+    """Make the non-replicating questions ineligible for acceptance: their e_value becomes 1.0 BEFORE e-BH, so the
+    number of hypotheses m is unchanged (they stay in the batch, they just cannot be rejected). `replicates` maps
+    (program_canonical, eps) -> bool (`ftm.eval.replication.replicates_map`); an entry not in the map is not judged and
+    is left as it is. Returns (new entries with e-BH re-applied, info). The inputs are not modified.
+
+    info: the filter used (`source`), m, accepted before, n_dropped (accepted before and non-replicating),
+    n_non_replicating (judged False), accepted after the re-run of e-BH (the kept ones can only lose rank-based room, so
+    this can be below accepted_before - n_dropped; it is reported, not forced)."""
+    out = [dict(e) for e in entries]
+    before = sum(bool(e.get("accepted")) for e in out)
+    dropped = non_rep = judged = 0
+    for e in out:
+        key = (e["program_canonical"], e["eps"])
+        if key not in replicates:
+            continue
+        judged += 1
+        if not replicates[key]:
+            non_rep += 1
+            dropped += bool(e.get("accepted"))
+            e["e_value"], e["accepted"] = 1.0, False
+            if "log_e" in e:
+                e["log_e"] = 0.0
+    out = accept(out, fdr)
+    info = {**(source or {}), "m": len(out), "n_judged": judged, "n_non_replicating": non_rep, "n_dropped": dropped,
+            "accepted_before": before, "accepted_after": sum(bool(e["accepted"]) for e in out)}  # fmt: skip
+    return out, info
+
+
 # --- answers through fusion ---------------------------------------------------------------------------------------
 def answer_log_lrs(verdicts, pool: QuestionPool) -> tuple[list[str], list[str], list[float]]:
     """(alert ids, families, log LRs) of every answered question with a back-tested LR, from the harness's own log.
