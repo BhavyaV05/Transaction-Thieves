@@ -88,7 +88,8 @@ for st in $stages; do
     done ;;
   dspy)
     [[ -f $DSPY ]] || $PY scripts/optimize_dspy.py --data hi_medium --n "${DSPY_N:-40}" --model "$MODEL" > "$OUT/dspy.log" 2>&1
-    echo "$(date -Is) dspy: exit $? ($(sha256sum $DSPY 2>/dev/null | cut -c1-16))" ;;
+    if [[ -f $DSPY ]]; then echo "$(date -Is) dspy: program $(sha256sum "$DSPY" | cut -c1-16)"
+    else echo "$(date -Is) dspy: FAILED, no program saved (see $OUT/dspy.log)"; fi ;;
   eval)
     # name|args   (name = output dir; every system gets the frozen shape library, as the final run's common_args do)
     specs=(
@@ -110,6 +111,7 @@ for st in $stages; do
     for s in "${specs[@]}"; do
       name=${s%%|*}; args=${s#*|}
       [[ -n ${SPECS:-} && " $SPECS " != *" $name "* ]] && continue
+      [[ $name == dspy_react && ! -f $DSPY ]] && { echo "$(date -Is) skip dspy_react: no program at $DSPY"; continue; }
       # shellcheck disable=SC2086
       run_chunks "$OUT/eval/$name" eval 160 80 --library "$SHAPE" $args
     done ;;

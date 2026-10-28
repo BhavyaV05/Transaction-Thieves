@@ -228,7 +228,10 @@ def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, a
                        seed=seed, num_threads=num_threads)  # fmt: skip
     # Instruction search only (no few-shot demos): one demo carries a whole case (about 2,500 tokens), so a few demos would push every
     # call over the shared 6,000-token prompt cap and the optimiser would learn from failed alerts; the caps are the fairness protocol.
+    # The proposer sees neither a data summary nor bootstrapped traces: both put whole cases into the prompt model's prompt, which
+    # overflowed Gemma's 8,192-token context on 28 Oct (no program was saved). It still sees the program code and a prompting tip.
     program = opt.compile(Bound(), trainset=trainset, max_bootstrapped_demos=0, max_labeled_demos=0,
+                          data_aware_proposer=False, fewshot_aware_proposer=False,
                           requires_permission_to_run=False).react
     if compute_log is not None:
         rec = {"stage": "dspy_mipro_optimize", "part": "fit", "n_examples": len(examples), "auto": auto, "seed": seed,
