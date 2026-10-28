@@ -15,6 +15,14 @@ is what makes it safe under optional stopping. The guess is the running launder 
 shrunk toward the null, so a question whose cells separate the classes grows exponentially and a useless one stays
 near 1. Validity does not depend on the guess being good, only on its being computed from the past.
 
+**Time blocks (drift).** The permutation above is over *all* alerts, so it takes the launder rate to be constant in time. When both
+the launder rate and the answers drift with time (the ledger warm-up: early in the data an account has little history), a question
+the answer of which says nothing beyond the time passes as informative (Simpson's paradox; docs/t4_fusion_findings.md section 7).
+With `blocks` > 1 the alerts are cut into that many equal-count blocks in time order and the null permutes labels *within* each
+block, so the number of laundering alerts is fixed per block and a drifting rate is no evidence. The bet is the question's lift
+over each alert's own block rate (observed launderings in the cell over the launderings expected there), shrunk to 1, so it is
+still computed from the past and E_t is still a martingale. `blocks` = 1 is the process above, unchanged.
+
 e-BH over m hypotheses at level alpha rejects the k largest e-values where k is the largest index with
 e_(k) >= m / (alpha k). It controls FDR at alpha under *arbitrary* dependence, which matters because the same
 question at several eps, and overlapping questions, are dependent.
@@ -33,12 +41,14 @@ from dataclasses import dataclass, field
 Q_FLOOR = 1e-3  # keep the bet strictly inside (0, 1) so one surprise cannot zero the process
 
 
-def log_evalue_path(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0) -> list[float]:
+def log_evalue_path(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0, blocks: int = 1) -> list[float]:
     """log E_t after each alert t (the whole e-process). `cells[i]` is the answer cell of alert i, in a
-    label-independent order."""
+    label-independent order. `blocks` > 1: the null permutes labels within that many equal-count time blocks."""
     n = len(labels)
     if n != len(cells):
         raise ValueError("cells and labels differ in length")
+    if blocks > 1:
+        return _blocked_path(cells, labels, shrink, min(blocks, n))
     n_launder = sum(bool(y) for y in labels)
     seen_launder = 0
     counts: dict = defaultdict(lambda: [0, 0])  # cell -> [launder, total]
@@ -58,14 +68,38 @@ def log_evalue_path(cells: Sequence[Hashable], labels: Sequence[bool], shrink: f
     return path
 
 
-def log_evalue(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0) -> float:
+def _blocked_path(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float, blocks: int) -> list[float]:
+    n = len(labels)
+    edges = [round(b * n / blocks) for b in range(blocks + 1)]  # equal-count blocks in the given (time) order
+    seen: dict = defaultdict(lambda: [0.0, 0.0])  # cell -> [launderings seen, launderings the block rates expected there]
+    total, path = 0.0, []
+    for b in range(blocks):
+        lo, hi = edges[b], edges[b + 1]
+        n_launder, seen_launder = sum(bool(y) for y in labels[lo:hi]), 0
+        for t in range(lo, hi):
+            cell, y = cells[t], bool(labels[t])
+            remaining, rem_launder = hi - t, n_launder - seen_launder
+            null = rem_launder / remaining
+            if 0 < rem_launder < remaining:
+                o, e = seen[cell]
+                lift = (o + shrink * null) / (e + shrink * null)
+                q = min(max(null * lift, Q_FLOOR), 1 - Q_FLOOR)
+                total += math.log(q / null) if y else math.log((1 - q) / (1 - null))
+            seen[cell][0] += y
+            seen[cell][1] += null
+            seen_launder += y
+            path.append(total)
+    return path
+
+
+def log_evalue(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0, blocks: int = 1) -> float:
     """log of the final e-value (the end of `log_evalue_path`)."""
-    path = log_evalue_path(cells, labels, shrink)
+    path = log_evalue_path(cells, labels, shrink, blocks)
     return path[-1] if path else 0.0
 
 
-def evalue(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0) -> float:
-    le = log_evalue(cells, labels, shrink)
+def evalue(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0, blocks: int = 1) -> float:
+    le = log_evalue(cells, labels, shrink, blocks)
     return math.exp(le) if le < 700 else math.inf
 
 
@@ -84,7 +118,7 @@ def e_bh(evalues: Sequence[float], alpha: float = 0.1) -> list[bool]:
 
 
 def null_false_acceptance(cells_by_hypothesis: Sequence[Sequence[Hashable]], labels: Sequence[bool], n_rep: int,
-                          alpha: float = 0.10, seed: int = 0, shrink: float = 2.0) -> dict:  # fmt: skip
+                          alpha: float = 0.10, seed: int = 0, shrink: float = 2.0, blocks: int = 1) -> dict:  # fmt: skip
     """Control experiment: permute the labels (answers stay put), so every question is a null question, and count how
     often e-BH accepts anything. With all hypotheses null the FDR equals P(at least one acceptance) <= alpha."""
     import random
@@ -94,7 +128,7 @@ def null_false_acceptance(cells_by_hypothesis: Sequence[Sequence[Hashable]], lab
     any_accept, accepted = 0, 0
     for _ in range(n_rep):
         rng.shuffle(labels)
-        flags = e_bh([evalue(c, labels, shrink) for c in cells_by_hypothesis], alpha)
+        flags = e_bh([evalue(c, labels, shrink, blocks) for c in cells_by_hypothesis], alpha)
         any_accept += any(flags)
         accepted += sum(flags)
     return {"n_rep": n_rep, "false_acceptance_rate": any_accept / n_rep,

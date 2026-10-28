@@ -58,6 +58,46 @@ def test_evalue_is_valid_at_any_stopping_time():
     assert hits / 1500 <= 0.10 + 0.02
 
 
+def drift_run(rng, n=600, signal=0.0):
+    """Launder rate and answer share both change between the halves (T4's real HI-Medium confound: 5% -> 37% and 88% -> 15%);
+    given the half, the answer says nothing unless `signal` is added for launderings."""
+    late = [t >= n // 2 for t in range(n)]
+    y = [rng.random() < (0.37 if h else 0.05) for h in late]
+    cells = [int(rng.random() < min((0.15 if h else 0.88) + (signal if yy else 0.0), 1.0)) for h, yy in zip(late, y, strict=True)]
+    return cells, y
+
+
+def test_time_blocks_make_the_evalue_valid_under_drift():
+    rng = random.Random(7)
+    runs = [drift_run(rng) for _ in range(300)]
+    pooled = np.mean([evalue(c, y) >= 10 for c, y in runs])
+    blocked = np.array([evalue(c, y, blocks=4) for c, y in runs])
+    assert pooled > 0.5  # the permutation over all alerts takes the drift for signal: a null question passes
+    assert (blocked >= 10).mean() <= 0.10 and blocked.mean() < 1.15
+    peeking = np.mean([max(log_evalue_path(c, y, blocks=4)) >= math.log(10) for c, y in runs])
+    assert peeking <= 0.10  # and at every stopping time
+
+
+def test_time_blocks_keep_the_power_on_a_real_signal_under_drift():
+    rng = random.Random(8)
+    runs = [drift_run(rng, n=900, signal=0.25) for _ in range(200)]
+    blocked = np.mean([evalue(c, y, blocks=4) >= 10 for c, y in runs])
+    assert blocked > 0.8 and blocked > np.mean([evalue(c, y) >= 10 for c, y in runs])  # the confound hides it from the pooled one
+
+
+def test_one_block_is_the_original_process_and_blocks_are_clamped():
+    rng = random.Random(9)
+    c, y = random_null_run(rng, n=90)
+    assert log_evalue_path(c, y, blocks=1) == log_evalue_path(c, y)
+    assert len(log_evalue_path(c, y, blocks=4)) == 90 and len(log_evalue_path(c[:3], y[:3], blocks=10)) == 3
+    assert evalue([0, 1, 0], [True, False, False], blocks=2) > 0
+
+
+def test_time_blocks_are_part_of_the_namespace_only_when_used():
+    assert BacktestConfig().namespace("a", 0) == BacktestConfig(time_blocks=1).namespace("a", 0)
+    assert BacktestConfig(time_blocks=4).namespace("a", 0) != BacktestConfig().namespace("a", 0)
+
+
 def test_evalue_grows_when_the_answer_separates_the_classes():
     rng = random.Random(2)
     labels = [rng.random() < 0.2 for _ in range(200)]

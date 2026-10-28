@@ -8,7 +8,7 @@ Owner: T2 (Bhavya). Specs: `docs/schedule_nov10.md` (phase C: "all non-LLM arms,
 |---|---|---|
 | The non-LLM arms (19) and the raw-sharing arm, on the frozen ids | `scripts/final_non_llm.py`, `ftm/orchestrator/final_nonllm.py` | written, tested on the synthetic world, run through T4's `run_final.py --dry-run` |
 | The banks for every LLM arm (CPU) | `ftm/harness` through `scripts/run_llm_agent.py --toolbox harness` (T3/T4 call it) | nothing new: it is the code the validation runs use |
-| Question tables the arms read | `configs/final/non_llm.yaml` | **paths still empty**: they come from `scripts/backtest.py --assemble` on real data |
+| Question tables the arms read | `configs/final/non_llm.yaml` | realistic set; **enumerator and exact-label still empty** (hours of back-testing each) |
 | Job plan entries | `configs/final/jobs.yaml` (`external_cmd.templates.non_llm_arm`, `extra_jobs`) | filled in; hour estimates are guesses |
 
 ## One configuration, two runs
@@ -30,7 +30,7 @@ An arm is built by `ftm.orchestrator.ablations.prepare_arm`, the function the G4
 1. **Fits stay on validation.** The per-family / shared fusion and the learned policy are fitted on the `fit` half of val, exactly as in G4, not on all of val. A fit on all of val would use more labels but would not be the configuration the G4 table validated. (The learned policy can instead be a fitted file: `policy:` in `configs/final/non_llm.yaml`.)
 2. **An alert with no modelled partner bank gets a verdict row with no probability** (`stop_reason` = `no_partner_bank`, `p0` from the alert table), so every arm covers exactly the ids in the file and the analysis scores those rows as p0, like any no-verdict. `load_world` drops such alerts silently; here they are counted (`summary.json`).
 3. **The per-account cap is per job.** The accountant is built fresh for each job, so the arms with a cap (`eig_cap_2`, `eig_cap_8`) spend the cap over the alerts of that job only: the subset job sees 1,000 alerts, the full-test job all of them. Alerts are processed in time order.
-4. **Raw sharing is fitted on train.** `raw_share` fits its ridge model on the train alerts through the train banks, then applies it to the frozen ids through the test banks. It is the only arm that asks the gate for `request_records` (`allow_raw_share`, this arm only).
+4. **Raw sharing is fitted on train (under review, see the section above: the base-rate shift makes it lose to p0 on val).** `raw_share` fits its ridge model on the train alerts through the train banks, then applies it to the frozen ids through the test banks. It is the only arm that asks the gate for `request_records` (`allow_raw_share`, this arm only).
 5. **Run-log names.** `system` = the planner (`random`, `fixed`, `eig`, `learned`, `enumerator`), `variant` = the arm name; raw sharing is `raw_share` / `raw_share`. These are the names `configs/analysis/systems.yaml` already selects on (its raw-share role was marked ASSUMED; it now matches).
 
 ## Before the final run (G4, 30 Oct)
@@ -77,9 +77,15 @@ python scripts/final_non_llm.py --arm <arm> --alert-ids <file> --out <dir> [--da
 
 The 19 planner arms are quick once the worlds are loaded (a few minutes per 1,000 alerts in the synthetic world); loading the test world (ledgers of the modelled banks) and, for the three fitted arms, the val world dominate. `configs/final/jobs.yaml` has 0.5 h per arm, 1.0 h for the enumerator, the learned policy and the two fusions, and 1.5 h for raw sharing (it loads train and test): about 20 h of CPU over the 40 jobs, in `--plan`. Replace them with the rehearsal times.
 
+## Raw sharing on real validation: why it loses to p0 (28 Oct)
+
+Rehearsal on the 230 `eval` alerts: Brier 0.2241 against p0 0.1926 (the arm as specified, fitted on the 1,983 train alerts). It is not a code error (no feature is constant on train and non-constant on val, nothing is non-finite, the rehearsal rows are well formed). It is a **base-rate shift**: the launder rate is 0.187 on train, 0.452 on val (0.361 on the `eval` half), and 0.108 in the first 70% of train in time against 0.370 in the last 30%, the same ledger warm-up T4 found (`docs/t4_fusion_findings.md` section 7). A model fitted on train learns "lower p0" (`a` = 0.21, intercept -1.5) and then under-predicts on val. Recalibrating p0 alone, with no raw feature at all, scores 0.2213 on `eval`, so the raw features add nothing to the loss; the loss is the recalibration.
+
+The shared-record features do carry signal: on a random 70/30 split inside train the model scores 0.093 against p0 0.199, and forward in time inside train (first 70% fits, last 30% scores) 0.165 against 0.174. Fitted on the val `fit` half and scored on the `eval` half (230 alerts each, ridge chosen by looking at `eval`, so descriptive only): 0.160 at ridge 50, 0.176 at 500, 0.192 at 5 against p0 0.1926. So the arm is a valid upper limit only if it is fitted in the same period as the alerts it is scored on, which is also what the fused question arms do (decision 1). Recommended change, not made yet because it moves the H2 reference: fit raw sharing on the val `fit` half through the val banks (about a minute, instead of loading and featurising train, 35 minutes), choose the ridge by time-ordered cross-validation inside that half, and report the train-fitted number beside it as the shifted variant.
+
 ## Not done
 
-- No real number: no `data/` on the machine that wrote this, so no real G4 table, no tables to put in the config, and no rehearsal on real val.
+- **Status of the real data (28 Oct):** the realistic table is built and set in `configs/final/non_llm.yaml` (`7df6bad5337d`, 23 of 440 accepted); G4 ran on real val for 17 of 19 arms; the final-run command was rehearsed on val for 5 arms and reproduces the G4 Brier exactly (`ftm/orchestrator/README.md`, "Real validation run"). Still missing: the **enumerator** table (470 programs up to size 3 over both slots is about 1,900 hypotheses, several hours) and the **exact-label** table (T1: hours, set questions over 8,000 alerts), so those two arms are skipped and `final_non_llm.py --check` still fails on them; the hour estimates in `jobs.yaml` are still guesses.
 - The eps = infinity (no-noise) EIG arm of `scripts/eps_sweep.py` is not a G5 job: `configs/analysis/systems.yaml` reads only the 0.5 / 1 / 2 / 4 points for the EIG curve and eps = inf for raw sharing.
 - Hash-freezing `configs/final/non_llm.yaml` (T4's `prereg/` list).
 

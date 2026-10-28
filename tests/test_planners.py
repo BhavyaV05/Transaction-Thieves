@@ -98,6 +98,16 @@ def test_pool_keeps_accepted_questions_and_filters_by_alert_direction(tmp_path):
     assert c.log_lr("zzz") is None
 
 
+def test_a_no_noise_table_is_offered_at_the_real_eps_levels():
+    exact = [{**r, "eps": math.inf} for r in rows()[:2]]
+    pool = QuestionPool.from_rows(exact + [{**rows()[3], "eps": 2.0}])
+    out = pool.at_eps([0.5, 1.0, 2.0])
+    assert len(pool) == 3 and len(out) == 2 * 3 + 1  # inf rows are copied to each level, the finite row stays
+    assert sorted({c.eps for c in out}) == [0.5, 1.0, 2.0] and not any(math.isinf(c.eps) for c in out)
+    a, b = (next(c for c in out if c.program == pool.candidates[0].program and c.eps == e) for e in (0.5, 2.0))
+    assert a.lr == b.lr == pool.candidates[0].lr and a.p_cell == b.p_cell
+
+
 # --- planners on the synthetic world --------------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def results():

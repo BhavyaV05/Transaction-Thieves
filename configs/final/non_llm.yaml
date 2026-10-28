@@ -9,9 +9,9 @@
 data: hi_medium         # the headline dataset; jobs.yaml `data` overrides it through --data
 
 tables:                 # lr_table.jsonl written by `python scripts/backtest.py --assemble` (docs/t2_final_run.md)
-  realistic: null       # e.g. data/backtest/{data}/<namespace>/lr_table.jsonl        (all arms but the two below)
+  realistic: data/backtest/{data}/7df6bad5337d/lr_table.jsonl   # HI-Medium train, eps 0.25 0.5 1 2, 110 expert programs: 440 hypotheses, 23 accepted (all arms but the two below)
   enumerator: null      # the enumerated programs' table                             (arm: enumerator)
-  exact_labels: null    # the --exact-labels back-test table                         (arm: eig_exact_label_lrs)
+  exact_labels: data/backtest/{data}/a829616cb2a1/lr_table.jsonl   # --exact-labels (T1, 8,396 alerts, 106 eligible, 16 accepted)
 
 # A fitted learned policy (scripts/train_policy.py). null: the arm `learned_policy` fits it on the fit half of validation, as in G4.
 policy: null

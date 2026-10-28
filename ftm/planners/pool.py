@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ftm.backtest.lr import answer_key
@@ -87,6 +87,15 @@ class QuestionPool:
     def from_jsonl(cls, path: str | Path, only_accepted: bool = True) -> QuestionPool:
         rows = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
         return cls.from_rows(rows, only_accepted)
+
+    def at_eps(self, levels: Iterable[float]) -> QuestionPool:
+        """The no-noise rows (eps = inf) offered at each of `levels`, with the same LRs: a table measured on exact answers, used
+        on the noisy answers a bank gives. Rows at a finite eps stay as they are. A bank refuses eps = inf, so without this an
+        `--exact-labels` table can never be asked."""
+        levels = [float(e) for e in levels]
+        return QuestionPool(
+            replace(c, eps=e) for c in self.candidates for e in (levels if not math.isfinite(c.eps) else [c.eps])
+        )
 
     def applicable(self, direction: str) -> list[Candidate]:
         return [c for c in self.candidates if c.applies_to(direction)]
