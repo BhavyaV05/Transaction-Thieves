@@ -8,7 +8,7 @@ Owner: T2 (Bhavya). Specs: `docs/schedule_nov10.md` (phase C: "all non-LLM arms,
 |---|---|---|
 | The non-LLM arms (19) and the raw-sharing arm, on the frozen ids | `scripts/final_non_llm.py`, `ftm/orchestrator/final_nonllm.py` | written, tested on the synthetic world, run through T4's `run_final.py --dry-run` |
 | The banks for every LLM arm (CPU) | `ftm/harness` through `scripts/run_llm_agent.py --toolbox harness` (T3/T4 call it) | nothing new: it is the code the validation runs use |
-| Question tables the arms read | `configs/final/non_llm.yaml` | **paths still empty**: they come from `scripts/backtest.py --assemble` on real data |
+| Question tables the arms read | `configs/final/non_llm.yaml` | realistic set; **enumerator and exact-label still empty** (hours of back-testing each) |
 | Job plan entries | `configs/final/jobs.yaml` (`external_cmd.templates.non_llm_arm`, `extra_jobs`) | filled in; hour estimates are guesses |
 
 ## One configuration, two runs
@@ -79,7 +79,7 @@ The 19 planner arms are quick once the worlds are loaded (a few minutes per 1,00
 
 ## Not done
 
-- No real number: no `data/` on the machine that wrote this, so no real G4 table, no tables to put in the config, and no rehearsal on real val.
+- **Status of the real data (28 Oct):** the realistic table is built and set in `configs/final/non_llm.yaml` (`7df6bad5337d`, 23 of 440 accepted); G4 ran on real val for 17 of 19 arms; the final-run command was rehearsed on val for 5 arms and reproduces the G4 Brier exactly (`ftm/orchestrator/README.md`, "Real validation run"). Still missing: the **enumerator** table (470 programs up to size 3 over both slots is about 1,900 hypotheses, several hours) and the **exact-label** table (T1: hours, set questions over 8,000 alerts), so those two arms are skipped and `final_non_llm.py --check` still fails on them; the hour estimates in `jobs.yaml` are still guesses.
 - The eps = infinity (no-noise) EIG arm of `scripts/eps_sweep.py` is not a G5 job: `configs/analysis/systems.yaml` reads only the 0.5 / 1 / 2 / 4 points for the EIG curve and eps = inf for raw sharing.
 - Hash-freezing `configs/final/non_llm.yaml` (T4's `prereg/` list).
 
