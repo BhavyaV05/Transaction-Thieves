@@ -14,7 +14,7 @@ Data: val `eval` runs `outputs/t3_val/eval/<spec>/c000,c001` (160 askable alerts
 4. **Timeouts, declines and refusals are harmless by construction.** They never update (0 of 23 non-replies in compose eval and 0 of 51 in fit+cal carry a log-LR). Variant (f) is therefore a no-op.
 5. **The loss is moderately concentrated in compose.** The five worst alerts are 42% of the sum of per-alert losses, and compose without them is -0.0025 (Table 4). In fixed_list and act_only it is spread (top 5 hold 19% and 17%): there it is a systematic shift, not outliers.
 6. **p0 itself is miscalibrated on eval, which makes every upward update more expensive.** Eval label rate is 0.325 against mean p0 0.455 (fit+cal: 0.520 against 0.545). In the 0.5 to 0.9 range p0 overstates by 0.2 to 0.3 on eval (Table 7). Alerts with p0 >= 0.99 (saturated, the logit clips at 1e-6) have a label rate of 0.90 on fit+cal. Recalibrating p0 alone is a different thing from planner merit and is reported separately in Table 9.
-7. **No replay variant beats p0.** The best in-sample (fit+cal) gain over p0 is -0.0006 (CI includes 0). On eval the fitted variants shrink to p0 and tie it: compose shrinkage +0.0001 [-0.0005, +0.0008]. The ceiling of "use the answers in this table" is p0.
+7. **No replay variant beats p0 through the answers.** The best in-sample (fit+cal) gain over p0 is -0.0006 (CI includes 0). On eval the fitted variants shrink to p0 and tie it: compose shrinkage +0.0001 [-0.0005, +0.0008]. Two variants aimed at the root cause also fail. (g) LRs re-estimated from the fit+cal answers (including the questions the live run discarded), smoothing chosen by grouped CV: it selects infinite smoothing, i.e. p0 (CV Brier 0.1554 for every alpha >= 100, 0.1624 at alpha 0.5). (h) A stacked logistic model on logit(p0) plus family answer features beats p0 on eval (-0.0110 [-0.0194, -0.0026]), but only through its recalibration part: against the model with logit(p0) alone it adds +0.0001 [-0.0011, +0.0011] on compose and is slightly worse on fixed_list, act_only and llm_decides (+0.0006 to +0.0013, CIs above 0). The answers add nothing on top of p0 in this data: not with the back-test LRs, not with re-estimated LRs, not in a fitted model.
 8. **ReAct, Reflexion and UoT are bad for a different reason**: they do not use p0 as a prior (ReAct and Reflexion never see it) and output extreme or default probabilities (section 4).
 
 ## 2. Evidence: failure decomposition
@@ -269,6 +269,8 @@ The replay takes the logged answers and logged log-LRs of each alert and recompu
 Variants (all pre-declared; parameters from fit+cal compose, grids in the script): (a) lambda shrinkage, grid 0 to 1.5 step 0.05; (b) accepted entries only (the live rule, so a no-op), and (b') the opposite: also use unaccepted table entries; (c) drop harmful families by greedy backward elimination on fit+cal Brier (families with >= 3 answers); (d) cap per answer and per alert, joint grid; (e) abstain unless |sum| > tau, tau grid 0 to 3 step 0.1; (f) no update on timeout or refusal (no-op, see summary point 4).
 
 **Table 8. Replay variants, parameters fitted on `fit`+`cal` (compose, 300 alerts), scored once on eval**
+Fit/cal Brier column: in-sample for a to f; grouped 10-fold CV (whole clusters) for g and h, whose strength was chosen by that CV.
+
 | variant | chosen on fit/cal | fit/cal Brier (p0 = 0.1554) | eval compose Brier | eval compose vs p0 [CI] | eval llm_decides formula shadow vs p0 [CI] |
 |---|---|---|---|---|---|
 | identity (live posterior) |  | 0.1574 | 0.2014 | +0.0029 [-0.0035, +0.0098] | +0.0101 [+0.0036, +0.0176] |
@@ -280,6 +282,8 @@ Variants (all pre-declared; parameters from fit+cal compose, grids in the script
 | (d) cap per answer / per alert | {"cap_answer": 0.1, "cap_total": 0.25} | 0.1554 | 0.1986 | +0.0001 [-0.0012, +0.0013] | +0.0013 [+0.0001, +0.0027] |
 | (e) abstain unless |sum| > tau | {"tau": 0.9} | 0.1550 | 0.1985 | +0.0000 [+0.0000, +0.0000] | +0.0000 [+0.0000, +0.0000] |
 | (f) no update on timeout/refusal [no-op] |  | 0.1574 | 0.2014 | +0.0029 [-0.0035, +0.0098] | +0.0101 [+0.0036, +0.0176] |
+| (g) re-estimated LRs on fit/cal answers, smoothed | {"alpha": 1000000.0, "cells": 44} | 0.1554 | 0.1985 | +0.0000 [-0.0000, +0.0000] | +0.0000 [-0.0000, +0.0000] |
+| (h) stacking: logit(p0) + family answer features | {"ridge": 30, "families": 8} | 0.1601 | 0.1875 | -0.0110 [-0.0194, -0.0026] | -0.0101 [-0.0185, -0.0018] |
 
 Same variants on the other modes (eval, vs p0 [95% CI]). For llm_decides and no_backtest the verdict is the model's own belief; the replay is of the formula posterior over the questions they asked, so the row is a different system (formula verdict) from the logged one.
 
@@ -294,6 +298,8 @@ Same variants on the other modes (eval, vs p0 [95% CI]). For llm_decides and no_
 | (d) cap per answer / per alert | +0.0001 [-0.0012, +0.0013] | +0.0014 [-0.0014, +0.0044] | +0.0018 [-0.0002, +0.0038] | +0.0040 [+0.0019, +0.0063] | +0.0007 [-0.0006, +0.0020] | +0.0013 [+0.0001, +0.0027] | +0.0000 [+0.0000, +0.0000] |
 | (e) abstain unless |sum| > tau | +0.0000 [+0.0000, +0.0000] | +0.0036 [-0.0070, +0.0141] | +0.0008 [-0.0006, +0.0032] | +0.0000 [+0.0000, +0.0000] | -0.0001 [-0.0005, +0.0000] | +0.0000 [+0.0000, +0.0000] | +0.0000 [+0.0000, +0.0000] |
 | (f) no update on timeout/refusal [no-op] | +0.0029 [-0.0035, +0.0098] | +0.0161 [+0.0005, +0.0323] | +0.0115 [+0.0003, +0.0231] | +0.0233 [+0.0119, +0.0351] | +0.0063 [-0.0006, +0.0138] | +0.0101 [+0.0036, +0.0176] | +0.0000 [+0.0000, +0.0000] |
+| (g) re-estimated LRs on fit/cal answers, smoothed | +0.0000 [-0.0000, +0.0000] | -0.0000 [-0.0000, +0.0000] | -0.0000 [-0.0000, +0.0000] | +0.0000 [-0.0000, +0.0000] | +0.0000 [-0.0000, +0.0000] | +0.0000 [-0.0000, +0.0000] | +0.0000 [-0.0000, +0.0000] |
+| (h) stacking: logit(p0) + family answer features | -0.0110 [-0.0194, -0.0026] | -0.0105 [-0.0191, -0.0020] | -0.0097 [-0.0182, -0.0016] | -0.0095 [-0.0178, -0.0011] | -0.0116 [-0.0206, -0.0030] | -0.0101 [-0.0185, -0.0018] | -0.0096 [-0.0193, -0.0003] |
 
 
 Reading:
@@ -302,6 +308,34 @@ Reading:
 - The two modes that are significantly worse live become ties with shrinkage: fixed_list +0.0161 [+0.0005, +0.0323] to +0.0007 [-0.0009, +0.0024]; act_only +0.0115 [+0.0003, +0.0231] to +0.0005 [-0.0007, +0.0017]. Batched_2_1 improves from +0.0233 to +0.0017 [+0.0005, +0.0030], still slightly worse.
 - Dropping the families chosen on fit+cal (dormant, n_repeated, new_account) does not help on eval: the family that hurts most on eval, volume_spike, was kept by fit+cal (10 answers, direction hit 0.6). Family selection on 4 to 35 answers per family is noise.
 - llm_decides: the formula posterior over its questions is significantly worse than p0 (+0.0101 [+0.0036, +0.0176]), the model's own belief is +0.0011 [-0.0027, +0.0051], and the belief beats the formula by -0.0090 [-0.0159, -0.0034] (Table 11). The model's belief stays within 0.012 of p0 on average (corr 0.99): it behaves like a heavy shrinkage of the shown posterior. That is why it is the best live mode.
+
+Variants (g) and (h), added after the first version of this report, with the same protocol: strength chosen by grouped 10-fold CV on fit+cal (whole clusters per fold), refit on all of fit+cal, eval scored once. (g): for every (family, eps, answer bucket) seen in fit+cal compose answers, an empirical log-LR with additive smoothing alpha over the buckets of the group (`smoothed_log_lrs`), applied to every answered step of the eval run whatever its back-test status. The bucket uses the LR table's mapping (bool as true/false, numbers as `b<i>` from the entry's bin edges). Numeric answers to questions that are not in the table have no edges and get no bucket, so only 89 of 238 answered eval compose questions get an estimated LR (98 have a bucket). Bins differ between programs of one family, so pooling by bucket index is approximate. (h): ridge-penalised logistic regression of y on logit(p0) (clipped to +-5, unpenalised) and, for 8 families with >= 8 answers, the sum of signed answer scores (bool +1/-1; numbers as clipped z-scores); ridge chosen by CV.
+
+**Table 8b. Learned variants (g) and (h): details**
+| quantity | value |
+|---|---|
+| (g) smoothing alpha (grouped CV on fit+cal) | 1e+06; CV Brier 0.1554 vs p0 0.1554; in-sample 0.1554; cells 44 |
+| (g) CV Brier by alpha | 0.5: 0.1624, 1: 0.1603, 2: 0.1587, 5: 0.1572, 10: 0.1564, 20: 0.1559, 50: 0.1555, 100: 0.1554, 300: 0.1554, 1000: 0.1554, 1e+06: 0.1554 |
+| (g) largest estimated cells (family|eps|bucket, log-LR) | n_counterparties:out|eps2|b2 +0.00; n_counterparties:out|eps2|b1 -0.00; n_tx:in|eps1|b1 +0.00; n_tx:in|eps1|b0 +0.00; n_tx:in|eps1|b3 -0.00; n_tx:in|eps1|b2 +0.00; n_tx:in|eps1|b4 -0.00; passed_on|eps1|false +0.00 |
+| (h) ridge on answer features (grouped CV) | 30; CV Brier 0.1601 against 0.1602 for logit(p0) only; in-sample 0.1570 against 0.1582 |
+| (h) CV Brier by ridge | 1: 0.1631, 3: 0.1614, 10: 0.1603, 30: 0.1601, 100: 0.1601, 300: 0.1602, 1000: 0.1602, 10000: 0.1602 |
+| (h) slope on logit(p0), families used, largest answer coefficients | 0.79, 8, n_tx:in -0.14; matching_amount_out -0.08; volume_spike -0.05; passed_on +0.04; n_counterparties:in -0.04; n_counterparties:out -0.02 |
+| share of eval compose answers that get an estimated LR (g) | 89 of 238 answered (98 have a bucket) |
+
+(h) against the logit(p0)-only model (the Table 9 recalibration, same fit+cal data), eval: the difference is what the answers add. Paired cluster CI.
+
+| mode | recalibrated p0 vs p0 | (h) vs p0 | (h) vs recalibrated p0 |
+|---|---|---|---|
+| compose | -0.0111 [-0.0196, -0.0028] | -0.0110 [-0.0194, -0.0026] | +0.0001 [-0.0011, +0.0011] |
+| fixed_list | -0.0111 [-0.0196, -0.0028] | -0.0105 [-0.0191, -0.0020] | +0.0006 [+0.0001, +0.0011] |
+| act_only | -0.0111 [-0.0196, -0.0028] | -0.0097 [-0.0182, -0.0016] | +0.0013 [+0.0006, +0.0020] |
+| batched_2_1 | -0.0111 [-0.0196, -0.0028] | -0.0095 [-0.0178, -0.0011] | +0.0016 [+0.0010, +0.0023] |
+| library_account | -0.0111 [-0.0196, -0.0028] | -0.0116 [-0.0206, -0.0030] | -0.0005 [-0.0023, +0.0010] |
+| llm_decides | -0.0111 [-0.0196, -0.0028] | -0.0101 [-0.0185, -0.0018] | +0.0010 [+0.0002, +0.0017] |
+| no_backtest | -0.0111 [-0.0196, -0.0028] | -0.0096 [-0.0193, -0.0003] | +0.0015 [-0.0017, +0.0046] |
+
+
+Reading: the CV Brier of (g) equals p0 only when alpha is large (answers ignored); any real update is worse (0.1559 at alpha 20, 0.1603 at alpha 1). The CV Brier of (h) is 0.1601 against 0.1602 for logit(p0) alone: the answer features add 0.0001. Both are worse than p0 on fit+cal itself (the recalibration costs about 0.005 there), which is why Table 9's eval gain is a base-rate effect. The replay limit applies here too.
 
 ### 3.1 Recalibrating p0 alone (reported separately; not planner merit)
 
@@ -346,6 +380,8 @@ Expected gains are relative to p0 on val eval; none can be positive in expectati
 4. **Fix the LR table, not the planner (T2/T4, after the freeze for the next iteration).** The accepted entries are the problem: 18 of 23 are at eps 2, none at eps <= 0.5, and the realised direction on val is no better than a coin flip (direction hit 0.44 to 0.47 of updating answers on eval compose and fixed_list). Re-estimate LRs on a time-adjacent train block, shrink them with empirical Bayes, or condition on p0 (T4's `cond LR`). Needs a back-test rerun (CPU) and a new G2 decision; not before 30 Oct.
 5. **Treat p0 recalibration separately (T1/T4).** Base-rate shift and the saturated p0 >= 0.99 group (label rate 0.90, 48 of 460 val alerts at exactly p0 = 1) are p0 problems. The eval gain of -0.0111 is a base-rate effect and the fit+cal fit gets worse, so do not adopt a recalibration chosen here; if G2/G3 want one, it applies to every system including the p0 baseline.
 6. **ReAct / Reflexion: show the same posterior line our planner gets and drop the 0.8 exemplar.** Expected: Brier closer to p0 (their 0.45 is mostly the missing prior); tuning needs fit/cal runs of these agents (none exist) and a GPU; it also changes the fairness protocol (they would then receive p0), which is the lead's call. Lowest priority and probably after the freeze. UoT: floor the stated likelihoods further (e.g. cap |log LR| per step) with the same fit/cal tuning requirement.
+
+Variants (g) and (h) do not change the ranking. The diagnosis (no usable signal beyond p0 at this sample size) holds with re-estimated LRs and with a fitted model, so fixing the LR table (recommendation 4) should be read as "stop the loss", not "unlock a gain", unless a larger answer sample shows signal. Recommendation 1 (shrinkage) is unchanged and is the same decision as (g) with infinite smoothing.
 
 ## 6. What I am unsure about
 

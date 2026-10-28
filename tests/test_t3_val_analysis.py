@@ -65,3 +65,23 @@ def test_logistic_slope():
     x = rng.normal(size=4000)
     y = (rng.random(4000) < 1 / (1 + np.exp(-(off + 0.5 * x)))).astype(float)
     assert abs(va.logistic_offset_slope(y, off, x) - 0.5) < 0.12
+
+
+def test_smoothed_log_lrs():
+    rows = [("g", "a", 1)] * 6 + [("g", "a", 0)] * 2 + [("g", "b", 1)] * 2 + [("g", "b", 0)] * 6
+    t = va.smoothed_log_lrs(rows, alpha=1.0)
+    # n1 = 8, n0 = 8, K = 2: P(a|1) = 7/10, P(a|0) = 3/10
+    assert abs(t[("g", "a")] - math.log(0.7 / 0.3)) < 1e-9
+    assert abs(t[("g", "a")] + t[("g", "b")]) < 1e-9  # symmetric counts
+    big = va.smoothed_log_lrs(rows, alpha=1e9)
+    assert max(abs(v) for v in big.values()) < 1e-6  # alpha -> infinity: no update
+    assert abs(va.smoothed_log_lrs(rows, alpha=0.0)[("g", "a")] - math.log(3.0)) < 1e-9  # raw ratio (6/8) / (2/8)
+
+
+def test_logistic_ridge_shrinks_answer_coefficients():
+    rng = np.random.default_rng(1)
+    X = np.column_stack([np.ones(500), rng.normal(size=500), rng.normal(size=500)])
+    y = (rng.random(500) < 1 / (1 + np.exp(-(0.3 + X[:, 1] + 1.0 * X[:, 2])))).astype(float)
+    free = va.logistic_ridge(X, y, [0, 0, 0])
+    pen = va.logistic_ridge(X, y, [0, 0, 1e6])
+    assert abs(free[2] - 1.0) < 0.3 and abs(pen[2]) < 0.01 and abs(pen[1] - free[1]) < 0.4

@@ -19,6 +19,7 @@ A replay is therefore an approximation of what a live run with the changed fusio
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import sys
@@ -129,6 +130,90 @@ def logistic_offset_slope(y, offset, x, iters: int = 50) -> float:
     return b
 
 
+def smoothed_log_lrs(rows: list[tuple], alpha: float) -> dict:
+    """Empirical log-LR per (group, bucket) from (group, bucket, y) rows with additive smoothing alpha over the buckets seen in the group:
+    log[ (n1_b + alpha) / (N1 + alpha*K) ] - log[ (n0_b + alpha) / (N0 + alpha*K) ]. alpha -> infinity gives 0 (no update);
+    alpha = 0 is the raw ratio (a bucket with a zero count then gets a huge value; use alpha > 0). Buckets unseen in the group get no entry (0)."""
+    cnt: dict = {}
+    for g, b, y in rows:
+        d = cnt.setdefault(g, {"n": [0, 0], "b": {}})
+        d["n"][int(y)] += 1
+        d["b"].setdefault(b, [0, 0])[int(y)] += 1
+    out = {}
+    for g, d in cnt.items():
+        k = len(d["b"])
+        n0, n1 = d["n"]
+        for b, (c0, c1) in d["b"].items():
+            out[(g, b)] = math.log((c1 + alpha) / (n1 + alpha * k)) - math.log((c0 + alpha) / (n0 + alpha * k))
+    return out
+
+
+def answered_rows(alerts) -> list[tuple]:
+    return [((s["family"], s["eps"]), s["bucket"], a["label"]) for a in alerts for s in a["steps"] if s["bucket"] is not None]
+
+
+def emp_contribs(alert, lr_table: dict) -> list[float]:
+    return [lr_table[((s["family"], s["eps"]), s["bucket"])] for s in alert["steps"]
+            if s["bucket"] is not None and ((s["family"], s["eps"]), s["bucket"]) in lr_table]
+
+
+def fold_ids(alerts, mapping, k: int = 10) -> np.ndarray:
+    """Grouped folds: whole attempt+accounts clusters go to one fold (cluster rank modulo k)."""
+    cl = clusters_of(alerts, mapping)
+    _, inv = np.unique(cl, return_inverse=True)
+    return inv % k
+
+
+def logistic_ridge(X, y, pen, iters: int = 100) -> np.ndarray:
+    """Logistic regression, Newton, penalty pen[j] * w_j^2 / 2 (pen[j] = 0: free, e.g. intercept and the logit(p0) slope)."""
+    X, y, pen = np.asarray(X, "f8"), np.asarray(y, "f8"), np.asarray(pen, "f8")
+    w = np.zeros(X.shape[1])
+    for _ in range(iters):
+        p = 1 / (1 + np.exp(-(X @ w)))
+        g = X.T @ (y - p) - pen * w
+        H = (X * (p * (1 - p))[:, None]).T @ X + np.diag(pen) + 1e-8 * np.eye(len(w))
+        d = np.linalg.solve(H, g)
+        w = w + np.clip(d, -3, 3)
+        if np.max(np.abs(d)) < 1e-9:
+            break
+    return w
+
+
+def _zc(p0: float) -> float:
+    return max(-Z_CAP, min(Z_CAP, logit(p0)))
+
+
+def stack_spec(train_alerts, min_answers: int = 8) -> dict:
+    """Features of the stacked model: per family with >= min_answers answered steps in training, the sum over the alert's answers of a
+    signed score (bool: +1 true / -1 false; numeric: z-score of the answer within the family, clipped to +-2)."""
+    vals: dict = {}
+    for a in train_alerts:
+        for s in a["steps"]:
+            if s["bucket"] is not None:
+                vals.setdefault(s["family"], []).append(s["num"])
+    spec = {}
+    for f, v in vals.items():
+        if len(v) >= min_answers:
+            nums = [x for x in v if x is not None]
+            spec[f] = (float(np.mean(nums)) if nums else 0.0, max(float(np.std(nums)), 1.0) if nums else 1.0)
+    return spec
+
+
+def stack_design(alerts, spec: dict) -> np.ndarray:
+    fams = sorted(spec)
+    X = np.zeros((len(alerts), 2 + len(fams)))
+    for i, a in enumerate(alerts):
+        X[i, 0], X[i, 1] = 1.0, _zc(a["p0"])
+        for s in a["steps"]:
+            if s["bucket"] is None or s["family"] not in spec:
+                continue
+            mu, sd = spec[s["family"]]
+            sc = (1.0 if s["bucket"] == "true" else -1.0) if s["bucket"] in ("true", "false") else (
+                max(-2.0, min(2.0, (s["num"] - mu) / sd)) if s["num"] is not None else 0.0)
+            X[i, 2 + fams.index(s["family"])] += sc
+    return X
+
+
 def logistic_ab(y, z, iters: int = 100, ridge: float = 1e-3) -> tuple[float, float]:
     """MLE of (a, b) in P(y=1) = sigmoid(a + b*z) (Newton, small ridge on b toward 1 only through the tiny penalty)."""
     y, z = np.asarray(y, "f8"), np.asarray(z, "f8")
@@ -160,6 +245,20 @@ def _parse_value(s):
         return s
 
 
+def step_bucket(ent, val):
+    """Answer bucket with the LR table's own mapping: bool -> true/false; numbers -> b<i> (i = edges <= value) when the (question, eps) entry
+    has bin edges; a numeric answer to a question that is not in the table has no edges and no bucket (None)."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return "true" if val else "false"
+    if isinstance(val, float):
+        if ent is not None and ent.bins:
+            return f"b{bisect.bisect_right(list(ent.bins), val)}"
+        return None
+    return str(val)
+
+
 def load_table() -> LRTable:
     return LRTable.from_rows([json.loads(ln) for ln in TABLE.read_text().splitlines() if ln])
 
@@ -185,7 +284,9 @@ def load_run(dirs: list[Path], table: LRTable) -> list[dict]:
                 if ent is not None and s["response_kind"] == "reply" and s["gate"] == "allowed":
                     lr = ent.lr_for(val)
                     tl = math.log(lr) if lr is not None and lr > 0 else None
-                a["steps"].append({"step": s["step"], "program": s["program_canonical"], "eps": s["eps"], "gate": s["gate"],
+                answered = s["response_kind"] == "reply" and s["gate"] == "allowed"
+                a["steps"].append({"bucket": step_bucket(ent, val) if answered else None, "num": val if isinstance(val, float) else None,
+                                   "step": s["step"], "program": s["program_canonical"], "eps": s["eps"], "gate": s["gate"],
                                    "response_kind": s["response_kind"] or "none", "value": s["answer_value"],
                                    "posterior": s["posterior"], "log_lr": s["log_lr"], "family": s["family"] or "none",
                                    "qkind": s["kind"], "accepted": bool(ent.accepted) if ent else False, "in_table": ent is not None,
@@ -450,6 +551,87 @@ def replay_variants(fit_alerts, ev_by_mode: dict[str, list[dict]], mapping, n_bo
     return res
 
 
+ALPHAS = [0.5, 1, 2, 5, 10, 20, 50, 100, 300, 1000, 1e6]
+RIDGES = [1, 3, 10, 30, 100, 300, 1000, 1e4]
+G_NAME = "(g) re-estimated LRs on fit/cal answers, smoothed"
+H_NAME = "(h) stacking: logit(p0) + family answer features"
+
+
+def recal_fit(train_alerts) -> tuple[float, float]:
+    y = arr(train_alerts, "label")
+    return logistic_ab(y, np.array([_zc(a["p0"]) for a in train_alerts]))
+
+
+def recal_probs(alerts, ab) -> np.ndarray:
+    return np.array([sigmoid(ab[0] + ab[1] * _zc(a["p0"])) for a in alerts])
+
+
+def learned_variants(fit_alerts, ev_by_mode: dict[str, list[dict]], mapping, n_boot: int) -> dict:
+    """(g) empirical log-LRs re-estimated on fit+cal answers (all answered steps, accepted or not); (h) stacked logistic model. Strength
+    of the smoothing / ridge by grouped 10-fold CV (whole clusters) on fit+cal; then refit on all of fit+cal and scored once on eval."""
+    y = arr(fit_alerts, "label")
+    folds = fold_ids(fit_alerts, mapping)
+    idx = np.arange(len(fit_alerts))
+    out: dict = {}
+    # (g)
+    cv_g = {}
+    for al in ALPHAS:
+        pr = np.zeros(len(fit_alerts))
+        for f in np.unique(folds):
+            tr = [fit_alerts[i] for i in idx[folds != f]]
+            tab = smoothed_log_lrs(answered_rows(tr), al)
+            for i in idx[folds == f]:
+                pr[i] = replay_prob(fit_alerts[i]["p0"], emp_contribs(fit_alerts[i], tab))
+        cv_g[al] = brier(y, pr)
+    alpha, cvb = fit_grid(lambda g: cv_g[g], ALPHAS)
+    tab = smoothed_log_lrs(answered_rows(fit_alerts), alpha)
+    pg_fit = np.array([replay_prob(a["p0"], emp_contribs(a, tab)) for a in fit_alerts])
+    out["g"] = {"alpha": alpha, "cv_brier": cvb, "cv_grid": cv_g, "fit_in_sample_brier": brier(y, pg_fit), "p0_brier": brier(y, arr(fit_alerts, "p0")),
+                "n_cells": len(tab), "top_cells": sorted(((f"{k[0][0]}|eps{k[0][1]:g}|{k[1]}", round(v, 3)) for k, v in tab.items()), key=lambda t: -abs(t[1]))[:8]}
+    # (h)
+    def design_fit(tr, pen):
+        spec = stack_spec(tr)
+        X = stack_design(tr, spec)
+        w = logistic_ridge(X, arr(tr, "label"), [0, 0] + [pen] * (X.shape[1] - 2))
+        return spec, w
+
+    cv_h = {}
+    for pen in RIDGES:
+        pr = np.zeros(len(fit_alerts))
+        for f in np.unique(folds):
+            tr = [fit_alerts[i] for i in idx[folds != f]]
+            te = [fit_alerts[i] for i in idx[folds == f]]
+            spec, w = design_fit(tr, pen)
+            pr[folds == f] = 1 / (1 + np.exp(-(stack_design(te, spec) @ w)))
+        cv_h[pen] = brier(y, pr)
+    pr_base = np.zeros(len(fit_alerts))
+    for f in np.unique(folds):
+        tr = [fit_alerts[i] for i in idx[folds != f]]
+        pr_base[folds == f] = recal_probs([fit_alerts[i] for i in idx[folds == f]], recal_fit(tr))
+    pen, cvh = fit_grid(lambda g: cv_h[g], RIDGES)
+    spec, w = design_fit(fit_alerts, pen)
+    ab = recal_fit(fit_alerts)
+    ph_fit = 1 / (1 + np.exp(-(stack_design(fit_alerts, spec) @ w)))
+    fams = sorted(spec)
+    out["h"] = {"ridge": pen, "cv_brier": cvh, "cv_grid": cv_h, "cv_brier_logit_p0_only": brier(y, pr_base), "fit_in_sample_brier": brier(y, ph_fit),
+                "in_sample_logit_p0_only": brier(y, recal_probs(fit_alerts, ab)), "slope_logit_p0": float(w[1]), "intercept": float(w[0]),
+                "families": len(fams), "largest_coefs": sorted(((f, round(float(c), 3)) for f, c in zip(fams, w[2:], strict=True)), key=lambda t: -abs(t[1]))[:6]}
+    # eval, once
+    out["eval_g"], out["eval_h"], out["eval_h_vs_recal"], out["eval_recal_vs_p0"], out["coverage"] = {}, {}, {}, {}, {}
+    for m, al in ev_by_mode.items():
+        pg = np.array([replay_prob(a["p0"], emp_contribs(a, tab)) for a in al])
+        ph = 1 / (1 + np.exp(-(stack_design(al, spec) @ w)))
+        pb = recal_probs(al, ab)
+        out["eval_g"][m] = diff(al, pg, mapping, n_boot)
+        out["eval_h"][m] = diff(al, ph, mapping, n_boot)
+        out["eval_h_vs_recal"][m] = diff(al, ph, mapping, n_boot, p_ref=pb)
+        out["eval_recal_vs_p0"][m] = diff(al, pb, mapping, n_boot)
+        steps = [t for a in al for t in a["steps"] if t["response_kind"] == "reply" and t["gate"] == "allowed"]
+        out["coverage"][m] = {"answered": len(steps), "with_bucket": sum(t["bucket"] is not None for t in steps),
+                              "with_estimated_lr": sum(t["bucket"] is not None and ((t["family"], t["eps"]), t["bucket"]) in tab for t in steps)}
+    return out
+
+
 def recal_block(fit_alerts, ev_alerts, mapping, n_boot, lam: float) -> dict:
     """Recalibrating p0 alone (NOT the planner's merit). a, b from logistic regression of y on logit(p0) over fit/cal."""
     y = arr(fit_alerts, "label")
@@ -666,19 +848,40 @@ def build(n_boot: int) -> tuple[dict, str]:
     # --- 2 replay
     ev_modes = {m: ev[m] for m in FUSION_MODES + BELIEF_MODES if m in ev}
     rv = replay_variants(fit, ev_modes, mapping, n_boot)
+    lv = learned_variants(fit, ev_modes, mapping, n_boot)
+    res["learned"] = lv
+    for nm, key, score in ((G_NAME, "eval_g", lv["g"]["cv_brier"]), (H_NAME, "eval_h", lv["h"]["cv_brier"])):
+        rv["variants"].append(nm)
+        rv["fit_scores"][nm] = score  # grouped-CV Brier on fit+cal (not in-sample)
+        for m in ev_modes:
+            rv["eval"][m][nm] = lv[key][m]
     res["replay"] = rv
+    chosen = {"(a) shrink lambda": rv["params"]["shrink"], "(c) drop harmful families": {"dropped": rv["params"]["drop_families"]["dropped"]},
+              "(d) cap per answer / per alert": rv["params"]["cap"], "(e) abstain unless |sum| > tau": rv["params"]["abstain"],
+              "(b'') all table entries, shrink lambda'": rv["params"]["all_table_entries_shrink"],
+              G_NAME: {"alpha": lv["g"]["alpha"], "cells": lv["g"]["n_cells"]}, H_NAME: {"ridge": lv["h"]["ridge"], "families": lv["h"]["families"]}}
     md += ["### Table 8. Replay variants, parameters fitted on `fit`+`cal` (compose, 300 alerts), scored once on eval", "",
+           "Fit/cal Brier column: in-sample for a to f; grouped 10-fold CV (whole clusters) for g and h, whose strength was chosen by that CV.", "",
            md_table(["variant", "chosen on fit/cal", "fit/cal Brier (p0 = {:.4f})".format(rv["fit"]["p0"]), "eval compose Brier", "eval compose vs p0 [CI]", "eval llm_decides formula shadow vs p0 [CI]"],
-                    [[v, json.dumps({k: x for k, x in (rv["params"].get({"(a) shrink lambda": "shrink", "(c) drop harmful families": "drop_families",
-                                                                         "(d) cap per answer / per alert": "cap", "(e) abstain unless |sum| > tau": "abstain",
-                                                                         "(b'') all table entries, shrink lambda'": "all_table_entries_shrink"}.get(v, ""), {})).items() if k != "trace"}) if v in (
-                        "(a) shrink lambda", "(c) drop harmful families", "(d) cap per answer / per alert", "(e) abstain unless |sum| > tau", "(b'') all table entries, shrink lambda'") else "",
-                      f"{rv['fit_scores'][v]:.4f}", f"{rv['eval']['ours_compose'][v]['brier']:.4f}", fmt_d(rv["eval"]["ours_compose"][v]),
-                      fmt_d(rv["eval"]["ours_llm_decides"][v])] for v in rv["variants"]]), ""]
+                    [[v, json.dumps(chosen[v]) if v in chosen else "", f"{rv['fit_scores'][v]:.4f}", f"{rv['eval']['ours_compose'][v]['brier']:.4f}",
+                      fmt_d(rv["eval"]["ours_compose"][v]), fmt_d(rv["eval"]["ours_llm_decides"][v])] for v in rv["variants"]]), ""]
     md += ["Same variants on the other modes (eval, vs p0 [95% CI]). For llm_decides and no_backtest the verdict is the model's own belief; the replay "
            "is of the formula posterior over the questions they asked, so the row is a different system (formula verdict) from the logged one.", "",
            md_table(["variant"] + [m.replace("ours_", "") for m in ev_modes],
                     [[v] + [fmt_d(rv["eval"][m][v]) for m in ev_modes] for v in rv["variants"]]), ""]
+    g, h = lv["g"], lv["h"]
+    md += ["### Table 8b. Learned variants (g) and (h): details", "",
+           md_table(["quantity", "value"], [
+               ["(g) smoothing alpha (grouped CV on fit+cal)", f"{g['alpha']:g}; CV Brier {g['cv_brier']:.4f} vs p0 {g['p0_brier']:.4f}; in-sample {g['fit_in_sample_brier']:.4f}; cells {g['n_cells']}"],
+               ["(g) CV Brier by alpha", ", ".join(f"{k:g}: {v:.4f}" for k, v in g["cv_grid"].items())],
+               ["(g) largest estimated cells (family|eps|bucket, log-LR)", "; ".join(f"{a} {b:+.2f}" for a, b in g["top_cells"])],
+               ["(h) ridge on answer features (grouped CV)", f"{h['ridge']:g}; CV Brier {h['cv_brier']:.4f} against {h['cv_brier_logit_p0_only']:.4f} for logit(p0) only; in-sample {h['fit_in_sample_brier']:.4f} against {h['in_sample_logit_p0_only']:.4f}"],
+               ["(h) CV Brier by ridge", ", ".join(f"{k:g}: {v:.4f}" for k, v in h["cv_grid"].items())],
+               ["(h) slope on logit(p0), families used, largest answer coefficients", f"{h['slope_logit_p0']:.2f}, {h['families']}, " + "; ".join(f"{a} {b:+.2f}" for a, b in h["largest_coefs"])],
+               ["share of eval compose answers that get an estimated LR (g)", f"{lv['coverage']['ours_compose']['with_estimated_lr']} of {lv['coverage']['ours_compose']['answered']} answered ({lv['coverage']['ours_compose']['with_bucket']} have a bucket)"]]), "",
+           "(h) against the logit(p0)-only model (the Table 9 recalibration, same fit+cal data), eval: the difference is what the answers add. Paired cluster CI.", "",
+           md_table(["mode", "recalibrated p0 vs p0", "(h) vs p0", "(h) vs recalibrated p0"],
+                    [[m.replace("ours_", ""), fmt_d(lv["eval_recal_vs_p0"][m]), fmt_d(lv["eval_h"][m]), fmt_d(lv["eval_h_vs_recal"][m])] for m in ev_modes]), ""]
 
     # --- p0 recalibration, separately
     lam = rv["params"]["shrink"]["lam"]
