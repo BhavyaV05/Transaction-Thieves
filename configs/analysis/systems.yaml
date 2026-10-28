@@ -45,7 +45,8 @@ roles:
   evidence_scorer_pcst: {system: ours_compose, variant: [harness_view_scorer_pcst]}   # ASSUMED
   evidence_top40:       {system: ours_compose, variant: [harness_view_top40]}         # ASSUMED
 
-# the simple planners; best_simple_planner is the best of these on validation (fixed in fixed_on_val.json)
+# the simple planners; best_simple_planner is the best of these on validation (fixed in fixed_on_val.json), random excluded:
+# random is the reference of the equivalence margin 0.5 * |B(random) - B(best simple)|, so it cannot be its own best
 simple_planners: [random, fixed_order, eig, learned]
 
 # Table 5b rows beyond the roles above. group -> report placeholder: planners/llm = planner_comparison, e16 = ft_planner,

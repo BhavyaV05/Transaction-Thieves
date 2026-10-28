@@ -60,6 +60,22 @@ def test_verdicts_follow_planted_skills(val_run):
     assert h["H9"]["n_alerts"] == 300  # the external agents run on the subset only
 
 
+def test_best_simple_planner_is_never_random():
+    """Random is the reference of the margin 0.5 * |B(random) - B(best simple)|; when it scored best on validation the margin was 0."""
+    import types
+
+    import numpy as np
+
+    se = {"random": np.array([0.10, 0.10]), "eig": np.array([0.12, 0.12]), "fixed_order": np.array([0.14, 0.14])}
+    fake = types.SimpleNamespace(fixed={}, split="val", fixed_derived={}, systems_cfg={"simple_planners": ["random", "fixed_order", "eig", "learned"]},
+                                 try_role=lambda r: se.get(r), role=lambda r: types.SimpleNamespace(se_e2e=se[r]))  # fmt: skip
+    assert fn.Panel.best_simple(fake) == ("eig", "derived on this validation run")
+    only_random = types.SimpleNamespace(fixed={}, split="val", fixed_derived={}, systems_cfg={"simple_planners": ["random", "eig"]},
+                                        try_role=lambda r: se.get(r) if r == "random" else None, role=lambda r: types.SimpleNamespace(se_e2e=se[r]))  # fmt: skip
+    with pytest.raises(fn.Missing):
+        fn.Panel.best_simple(only_random)
+
+
 def test_h3_fails_when_the_llm_is_no_better_than_the_simple_planners(tmp_path):
     env = build_run(tmp_path, World("val", ours_skill=0.05))
     out = tmp_path / "out"
