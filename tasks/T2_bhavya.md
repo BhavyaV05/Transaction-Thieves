@@ -62,6 +62,8 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 ## Week 12–13
 - [x] Final configs: the non-LLM arms and raw sharing as G5 jobs (`scripts/final_non_llm.py`, `ftm/orchestrator/final_nonllm.py`, `configs/final/non_llm.yaml`, `configs/final/jobs.yaml`, `docs/t2_final_run.md`); same `prepare_arm` as the G4 table, blind. The `realistic` and `exact_labels` paths are set (28 Oct); still open before 31 Oct: the `enumerator` table, the raw-sharing refit and the time-block decision (`docs/t2_final_run.md`) (`final_non_llm.py --check`) and the val rehearsal, both need `data/`
 - [x] buffer: Windows fix in T4's `command_for` (backslashes in `{alert_ids}`/`{out}`), `run_alerts(blind=True)`, `synthetic_env(enumerator=False)`
+- [x] raw sharing refit (fit half of val, time-ordered CV ridge; #100) and its end-to-end run on real val (30 Oct); time-block K decided: keep K=1 for the frozen table, K=4 table `6540542bb924` kept as a sensitivity check (`docs/t2_final_run.md`)
+- [ ] `enumerator` table: build it or drop the arm from `ablations_nonllm.yaml` (decision with Shreyas)
 
 ## Week 14
 - [ ] Final test run: all non-LLM arms, banks for all LLM arms
