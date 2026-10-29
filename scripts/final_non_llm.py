@@ -30,6 +30,7 @@ import polars as pl  # noqa: E402
 from ftm.orchestrator import final_nonllm as fn  # noqa: E402
 from ftm.orchestrator.ablations import CONFIG as ABLATIONS  # noqa: E402
 from ftm.orchestrator.ablations import load_spec  # noqa: E402
+from ftm.orchestrator.raw_share import RIDGES  # noqa: E402
 from ftm.planners.learned import LearnedPolicy  # noqa: E402
 
 
@@ -63,9 +64,16 @@ def real_run(a, cfg, spec, arm_name: str, ids: list[str], base: dict) -> fn.ArmR
     missing = sorted(want - {x.alert_id for x in alerts})
     unbound = _unbound(data, a.split, missing) if missing else []
     if arm_name == fn.RAW_SHARE:
-        train = load_world(data, "train", a.seed)
-        return fn.run_raw_share(train_banks=train.banks, train=train.alerts, banks=target.banks, alerts=alerts, seed=a.seed,
-                                base=base, split=a.split, unbound=unbound)  # fmt: skip
+        if a.raw_fit == "train":  # the shifted variant: fitted on train, one ridge
+            train = load_world(data, "train", a.seed)
+            return fn.run_raw_share(train_banks=train.banks, train=train.alerts, banks=target.banks, alerts=alerts, seed=a.seed,
+                                    base=base, split=a.split, unbound=unbound)  # fmt: skip
+        val = load_world(data, "val", a.seed)  # the arm: the fit half of val, ridge by time-ordered CV
+        fit = fn.split_fit(val.alerts, spec)
+        if a.split == "val" and {x.alert_id for x in fit} & {x.alert_id for x in alerts}:
+            raise SystemExit("raw_share is fitted on the fit half of val: score it on the eval half (--alert-ids), not on its own fit alerts")
+        return fn.run_raw_share(train_banks=val.banks, train=fit, banks=target.banks, alerts=alerts,
+                                seed=a.seed, base=base, split=a.split, unbound=unbound, ridges=RIDGES)  # fmt: skip
     arm = fn.find_arm(spec, arm_name)
     pools = fn.load_pools(cfg, arm)
     fit, fit_banks = [], None
@@ -124,6 +132,8 @@ def main(argv=None) -> int:
     ap.add_argument("--machine", default="")
     ap.add_argument("--config", default=str(fn.CONFIG))
     ap.add_argument("--ablations", default=str(ABLATIONS))
+    ap.add_argument("--raw-fit", default="val", choices=["val", "train"],
+                    help="raw_share only: fit on the fit half of val (the arm) or on the train split (the shifted variant)")
     ap.add_argument("--synthetic-n", type=int, default=240, help="size of the synthetic world for --data synthetic")
     ap.add_argument("--check", action="store_true", help="validate the config and the arm list; read no data")
     ap.add_argument("--list", action="store_true", help="print the arm names")

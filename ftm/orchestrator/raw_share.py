@@ -150,6 +150,27 @@ class RawShareModel:
         return sigmoid(self.a * logit(np.asarray(p0, float)) + Z @ self.w + self.c)
 
 
+RIDGES = (5.0, 50.0, 500.0, 5000.0)
+
+
+def select_ridge(p0, X, y, ridges=RIDGES, folds: int = 4) -> float:
+    """The ridge with the lowest Brier score under forward-chaining CV, with the rows in time order: cut them into `folds` + 1
+    consecutive chunks, fit on the first i chunks and score chunk i (i = 1..folds). Time order, not a random split, because the
+    model is applied to later alerts than it is fitted on (a base-rate shift a random split would hide). Ties go to the larger ridge."""
+    p0, X, y = np.asarray(p0, float), np.asarray(X, float), np.asarray(y, float)
+    edges = [round(i * len(y) / (folds + 1)) for i in range(folds + 2)]
+    best, best_score = ridges[-1], np.inf
+    for ridge in sorted(ridges, reverse=True):
+        score = 0.0
+        for i in range(1, folds + 1):
+            a, b = slice(0, edges[i]), slice(edges[i], edges[i + 1])
+            m = RawShareModel(ridge=ridge).fit(p0[a], X[a], y[a])
+            score += float(np.mean((m.predict(p0[b], X[b]) - y[b]) ** 2))
+        if score < best_score - 1e-12:
+            best, best_score = ridge, score
+    return best
+
+
 @dataclass
 class RawShareArm:
     """Fit on training alerts, then investigate: `fit` and `investigate` are the whole arm."""
@@ -159,6 +180,7 @@ class RawShareArm:
     seed: int = 0
     model: RawShareModel = field(default_factory=RawShareModel)
     bindings: dict[str, AlertBinding] = field(default_factory=dict)
+    ridges: tuple | None = None  # candidate ridges to choose from by time-ordered CV; None keeps `model.ridge`
 
     def features(self, alert_binding: AlertBinding):
         slot = "receiver" if alert_binding.sender_bank == alert_binding.home_bank else "sender"
@@ -166,8 +188,12 @@ class RawShareArm:
         return raw_features(records, alert_binding, alert_binding.partner_bank, days, feature_programs(slot)), used
 
     def fit(self, train: list[BtAlert]) -> RawShareArm:
+        train = sorted(train, key=lambda a: a.binding.t0)
         X = np.array([self.features(a.binding)[0] for a in train])
-        self.model.fit([a.p0 for a in train], X, [float(a.label) for a in train])
+        p0, y = [a.p0 for a in train], [float(a.label) for a in train]
+        if self.ridges:
+            self.model.ridge = select_ridge(p0, X, y, self.ridges)
+        self.model.fit(p0, X, y)
         return self
 
     def investigate(self, alert: AlertContext, tools, limits: Limits) -> Verdict:

@@ -145,16 +145,18 @@ def run_arm(arm: Arm, spec: AblationSpec, *, banks: dict, alerts: Sequence[BtAle
 
 
 def run_raw_share(*, train_banks: dict, train: Sequence[BtAlert], banks: dict, alerts: Sequence[BtAlert], seed: int, base: dict,
-                  split: str, unbound: Sequence[tuple[str, str, float]] = ()) -> ArmResult:  # fmt: skip
-    """The H2 arm: fitted on the train alerts through the train banks, applied to `alerts` through `banks`. Three banks share raw
-    records, no noise, no budget; it is the one arm that asks the gate for `request_records` (allow_raw_share, this arm only)."""
+                  split: str, unbound: Sequence[tuple[str, str, float]] = (), ridges: tuple | None = None) -> ArmResult:  # fmt: skip
+    """The H2 arm: fitted on `train` through the `train_banks`, applied to `alerts` through `banks`. Three banks share raw
+    records, no noise, no budget; it is the one arm that asks the gate for `request_records` (allow_raw_share, this arm only).
+    `train` is the fit half of val (what the fused arms fit on, so the base rate is the one the arm is scored at); `ridges`, if
+    given, are chosen from by time-ordered CV on it. A train-split fit is the shifted variant (train prevalence 0.19, val 0.45)."""
     from ftm.compliance.gate import Gate
 
     def raw(world_banks: dict) -> dict:
         return {b: RawShareBank(b, bk._ledger, bk.cfg, bk.seed, bk._entity_of) for b, bk in world_banks.items()}
 
     gate = Gate.from_config(allow_raw_share=True)
-    fitted = RawShareArm(raw(train_banks), gate, seed=seed).fit(list(train))
+    fitted = RawShareArm(raw(train_banks), gate, seed=seed, ridges=ridges).fit(list(train))
     arm = RawShareArm(raw(banks), gate, seed=seed, model=fitted.model, bindings={a.alert_id: a.binding for a in alerts})
     base = {**base, "system": RAW_SHARE, "variant": RAW_SHARE, "seed": seed}
     rows = []
