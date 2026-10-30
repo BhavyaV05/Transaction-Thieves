@@ -68,7 +68,7 @@ def real_run(a, cfg, spec, arm_name: str, ids: list[str], base: dict) -> fn.ArmR
             train = load_world(data, "train", a.seed)
             return fn.run_raw_share(train_banks=train.banks, train=train.alerts, banks=target.banks, alerts=alerts, seed=a.seed,
                                     base=base, split=a.split, unbound=unbound)  # fmt: skip
-        val = load_world(data, "val", a.seed)  # the arm: the fit half of val, ridge by time-ordered CV
+        val = target if a.split == "val" else load_world(data, "val", a.seed)  # the arm: the fit half of val, ridge by time-ordered CV
         fit = fn.split_fit(val.alerts, spec)
         if a.split == "val" and {x.alert_id for x in fit} & {x.alert_id for x in alerts}:
             raise SystemExit("raw_share is fitted on the fit half of val: score it on the eval half (--alert-ids), not on its own fit alerts")
@@ -78,7 +78,7 @@ def real_run(a, cfg, spec, arm_name: str, ids: list[str], base: dict) -> fn.ArmR
     pools = fn.load_pools(cfg, arm)
     fit, fit_banks = [], None
     if fn.needs_fit(arm, cfg):
-        val = load_world(data, "val", a.seed)
+        val = target if a.split == "val" else load_world(data, "val", a.seed)  # one copy of the val world when scoring on val
         fit, fit_banks = fn.split_fit(val.alerts, spec), val.banks
     policy = LearnedPolicy.load(ROOT / cfg.policy) if cfg.policy and arm.system == "learned" else None
     return fn.run_arm(arm, spec, banks=target.banks, alerts=alerts, fit=fit, fit_banks=fit_banks, pools=pools, policy=policy,

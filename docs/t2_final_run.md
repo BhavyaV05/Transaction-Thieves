@@ -93,6 +93,22 @@ The shared-record features do carry signal: on a random 70/30 split inside train
 
 The honest reading: refitting removes the loss (0.224 to 0.1915) but does not give a gain. The val `fit` half is only 230 alerts and its own launder rate shifts (0.543 in `fit`, 0.361 in `eval`), so CV picks the weakest model it can; the ridge that looks best on `eval` (50: 0.160) was found by looking at `eval` and is not a result. So on this validation the H2 reference gain (p0 minus raw) is about 0.001, `gain_ratio` divides by it, and the H2 ratio is not stable until the test fit is larger or the shift is handled. Do not quote an H2 ratio from val.
 
+**End to end on real val (30 Oct).** `python scripts/final_non_llm.py --arm raw_share --alert-ids outputs/rehearsal/val_eval_ids.txt --data hi_medium --split val` ran through the real banks: 230 verdicts, 390 `request_records` step rows, every label null (blind). Scored against the labels afterwards, Brier 0.1915 against p0 0.1926, the same as the cached-feature number above.
+
+## Time blocks: the frozen table stays K=1 (30 Oct)
+
+The realistic table in `configs/final/non_llm.yaml` stays `7df6bad5337d` (K=1, 23 of 440 accepted). The 4-block table was built on the same alerts and questions (`python scripts/backtest.py --data hi_medium --eps 0.25 0.5 1 2 --questions expert --time-blocks 4`, then `--assemble`; namespace `6540542bb924`; one process, resumed once after it died at 417 of 440 hypotheses, the cache being resumable) and accepts 6:
+
+| | K=1 | K=4 |
+|---|---|---|
+| accepted | 23 | 6 |
+| in both | 4 | 4 |
+| only in this table | 19 | 2 |
+
+K=4 drops every accepted `dormant` (6) and `new_account` (6) row and the `n_repeated`, `n_new_counterparties` and `volume_spike` rows, which are the families T4's replication check found do not replicate across time (`docs/t4_fusion_findings.md` section 7), plus `inflow_bucket`, `n_banks:in`, `time_to_forward` and one `returns_home` row. It keeps both `cross_currency_out` rows and two `returns_home` rows, and adds `matching_amount_out(ALERT.sender, tol=0.05)` and `n_counterparties(ALERT.sender, dir=in, window=before(24))`, both at eps 2. `replication_check` on the K=4 table: 6 of 6 keep their direction across time blocks (mean |log LR| 0.89 claimed and pooled), and the direction agrees on val `eval` for 6 of 6 (descriptive: `eval` has been looked at before).
+
+Why K=1 is frozen anyway: adopting K=4 means the banks are re-asked, `non_llm.yaml` changes, and G2, the fusion setting and T3's validation runs (which used `7df6bad5337d`) are redone. The freeze is 30 Oct. Under K=1 the time confound is reported as a finding (figures as quoted by Shreyas, not re-derived here: pooled 0.82, time-stratified 0.46, val 0.50). The K=4 table is a sensitivity check; running it after the freeze is a labelled deviation, not a replacement of the frozen table. The full keep/drop/add list is in `outputs/k4/keep_drop_add.md` (local, not committed).
+
 ## Not done
 
 - **Status of the real data (28 Oct):** the realistic table is built and set in `configs/final/non_llm.yaml` (`7df6bad5337d`, 23 of 440 accepted); G4 ran on real val for 17 of 19 arms; the final-run command was rehearsed on val for 5 arms and reproduces the G4 Brier exactly (`ftm/orchestrator/README.md`, "Real validation run"). Still missing: the **enumerator** table (470 programs up to size 3 over both slots is about 1,900 hypotheses, several hours) and the **exact-label** table (T1: hours, set questions over 8,000 alerts), so those two arms are skipped and `final_non_llm.py --check` still fails on them; the hour estimates in `jobs.yaml` are still guesses.
