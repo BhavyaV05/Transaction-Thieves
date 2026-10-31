@@ -10,7 +10,7 @@
 # Outputs: outputs/t3_val/fitcal/{fit,cal}/c###, outputs/t3_val/eval/<spec>/c### (a chunk is done when its summary.json exists).
 # The table: scripts/val_runs_table.py -> docs/t3_val_runs.md.
 #
-#   scripts/t3_val_session.sh [stage ...]       # stages: smoke fitcal library dspy eval e10large (default: all, in order); SPECS="react lats" limits eval
+#   scripts/t3_val_session.sh [stage ...]       # stages: smoke fitcal library dspy eval e10large (the default, in order) and e10largeall; SPECS="react lats" limits eval
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH=$HOME/projects/vllm-venv/bin:$PATH FTM_HF_HOME=${FTM_HF_HOME:-$HOME/hf_cache} HF_HUB_OFFLINE=1
@@ -115,6 +115,10 @@ for st in $stages; do
       # shellcheck disable=SC2086
       run_chunks "$OUT/eval/$name" eval 160 80 --library "$SHAPE" $args
     done ;;
+  e10largeall)  # E10 large tier on every val cal + eval decision row (the conformal step and the deferred rows need them); resumable
+    d=outputs/e10/large; mkdir -p "$d"
+    $PY scripts/score_fast_baseline.py score --tier large --model "$MODEL" --workers 16 --out "$d/large.jsonl" > "$d/score.log" 2>&1
+    echo "$(date -Is) e10 large scoring: exit $? ($(wc -l < "$d/large.jsonl") rows)" ;;
   e10large)
     d=outputs/e10/large; mkdir -p "$d"
     $PY scripts/score_fast_baseline.py score --tier large --model "$MODEL" --workers 1 --limit 300 --out "$d/latency_rows.jsonl" > "$d/latency.log" 2>&1
