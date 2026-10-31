@@ -58,3 +58,14 @@ Same planner settings as above (compose, select menu, harness, table `7df6bad533
 Both `frozen: false`. Same 248 shape buckets, 16 with >= 20 alerts. The 7 failure notes are all rejected questions in the `1 in, 0 out, 2 banks, <6h` buckets (`n_tx(receiver, in, ...)` x5, `at_least(n_counterparties(...), 3)`, `new_account(receiver, 5)`), gain 0 by construction (no LR, posterior unchanged). The account-keyed library has no group with 20 alerts, as expected.
 
 **Why still no success note.** Gain per accepted question over all shapes (mean, se): `new_account(receiver, 2)` at eps 1, 338 asks, +0.0002 (0.0052); `volume_spike(receiver, 5)` at eps 2, 104, **-0.0348 (0.0069)**; `inflow_bucket(sender)` 30, +0.0066 (0.0121); `n_repeated(receiver, around 168)` 24, -0.0703 (0.0277); `n_banks(receiver, in, before 24)` 21, -0.0362 (0.0189). Only `new_account` reaches 20 alerts in a shape bucket: +0.0141 (0.0087, n 139), -0.0121 (0.0116, 68), +0.0075 (0.0114, 47), none past z = 2. So the planner now spreads its asks, but under naive fusion no accepted question helps reliably, and the ones that clearly hurt (`volume_spike`) are spread over buckets below n_min. The library will stay empty of successes until fusion changes (G2 / T4); the gains are read from the logged posteriors, so after that decision re-fuse these runs' steps from their logged `log_lr` and rebuild (no new LLM calls).
+
+## Frozen for the final run (1 Nov 2026)
+
+Built on the Gemma 4 12B teacher runs (1,983 HI-Medium train alerts, plus the val tuning runs; 3,091 records in all, as logged by the queue) and used unchanged by every validation and final run; `frozen: true` in both files.
+
+| Library | Hash | Notes | File | Log |
+|---|---|---|---|---|
+| shape (default, E11 shape arm) | `e36eaf203402ee65` | 3,091 records, 9 failure notes, 0 success notes | `outputs/t3_library/frozen/shape_gemma.json` (build record `outputs/t3_val/library_shape.json`) | `outputs/t3_val/library_shape.log` |
+| account (E11 account arm) | `4f53cda18c2baa0c` | 3,091 records, 0 notes (no account has the n_min = 20 alerts) | `outputs/t3_library/frozen/account_gemma.json` (build record `outputs/t3_val/library_account.json`) | `outputs/t3_val/library_account.log` |
+
+DSPy-ReAct program (Group D baseline, G4): MIPROv2, `outputs/t3_dspy/react_miprov2.json`, sha256 `0697b61365bd7663c9036d2a31f9799b37b9ea855e50ba5066b37d06cfbb075d`, optimised on 40 val `fit` alerts (`auto=light`, seed 0, 2.73 GPU-h, `outputs/t3_dspy/meta.json`). The files are under `outputs/` and are not committed; the hashes are what the final run checks.

@@ -35,22 +35,22 @@ llm:
     - "--library"
     - "outputs/t3_library/frozen/shape_gemma.json"
   # seconds per alert on the reference machine (estimates for scheduling only; replace with the val-run medians)
-  s_per_alert:
+  s_per_alert:                            # median s/alert on the 160 val eval alerts, Gemma 4 12B (scripts/t3_fill_s_per_alert.py, 1 Nov); `default` is the Qwen3-8B first-run number (no val run for systems not listed)
     default: 7.5                          # docs/t3_first_runs.md, Qwen3-8B
-    ours: 7.5
-    react: 8
-    reflexion: 20
-    rewoo: 6
-    lats: 30
-    llmcompiler: 8
-    dspy_react: 8
-    debate_autogen: 25
-    uot: 10
-    bed_llm: 14
-    torres: 10
-    sharma: 12
-    co_investigator: 15
-    finfre_rag: 8
+    ours: 6.3
+    react: 9.9
+    reflexion: 9.9
+    rewoo: 10.6
+    lats: 26.8
+    llmcompiler: 7.6
+    dspy_react: 25.3
+    debate_autogen: 16.1
+    uot: 8.7
+    bed_llm: 12.5
+    torres: 17.6
+    sharma: 6.2
+    co_investigator: 15                   # PLACEHOLDER: no val timing yet (both modes failed every call on the vLLM grammar error; rerun queued); refill with scripts/t3_fill_s_per_alert.py after it lands
+    finfre_rag: 4.0
   pin_gpu_s3: ["ours.compose.*"]          # job ids (fnmatch) that must run on the reference machine; the rest is balanced
 
 ours:
@@ -68,12 +68,12 @@ ours:
     library_account: ["--library", "outputs/t3_library/frozen/account_gemma.json"]
     batched_2_1: ["--batch-schedule", "2,1"]
     # E16: another served model. Last argument wins, so --model here replaces the run's --model; the endpoint is the same URL, so
-    # T4 must stop the Gemma server and start `scripts/serve_llm.py --model qwen3-8b-lora` (one server: the quantised Qwen3-8B base
-    # and the three adapters) before `run_final.py --only 'ours.student_*' --only 'ours.prompted_*'`. Docs: docs/t3_finetune_fastmodel.md.
+    # T4 must stop the Gemma server and start `scripts/serve_llm.py --model qwen3-8b-lora` (one server: the AWQ Qwen3-8B base
+    # = the prompted arm, and the three LoRA adapters) before `run_final.py --only 'ours.student_*' --only 'ours.prompted_*'`. Docs: docs/t3_finetune_fastmodel.md.
     student_s0: ["--model", "planner-sft-s0"]
     student_s1: ["--model", "planner-sft-s1"]
     student_s2: ["--model", "planner-sft-s2"]
-    prompted_qwen3_8b: ["--model", "qwen3-8b-bnb"]
+    prompted_qwen3_8b: ["--model", "qwen3-8b-lora"]
   variant_alerts:
     eps_0.5: [full_test]
     eps_1: [full_test]
@@ -237,5 +237,16 @@ extra_jobs:
   # and variant: raw_share (configs/analysis/systems.yaml role raw_share).
   - {system: raw_share, variant: raw_share, alerts: [subset, full_test], machine_class: cpu, est_hours: 1.5, owner: T2, tier: core,
      cmd: "python scripts/final_non_llm.py --arm raw_share --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"}
+  # E10 (T3): the frozen fast model + conformal cascade on the small-decision rows of the full test set, blind (scripts/e10_final.py,
+  # docs/t3_e10.md). Three phases, each when its model is the served one (T4 swaps servers like for E16): fast_tier needs the `qwen3-4b-lora`
+  # server (adapter fast-s0), large_tier the Gemma server, cascade is CPU. The frozen thresholds are outputs/e10/fast.json (sha256 in docs/t3_e10.md).
+  - {system: fast_model, variant: fast_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
+     cmd: ".venv/bin/python scripts/e10_final.py --phase fast --model fast-s0 --alert-ids {alert_ids} --out {out}"}
+  - {system: fast_model, variant: large_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
+     depends_on: [fast_model.fast_tier.full_test],
+     cmd: ".venv/bin/python scripts/e10_final.py --phase large --model gemma4-12b --alert-ids {alert_ids} --out {out} --fast-dir {run_dir}/fast_model.fast_tier.full_test"}
+  - {system: fast_model, variant: cascade, alerts: [full_test], machine_class: cpu, est_hours: 0.1, owner: T3, tier: secondary,
+     depends_on: [fast_model.large_tier.full_test],
+     cmd: ".venv/bin/python scripts/e10_final.py --phase cascade --alert-ids {alert_ids} --out {out} --fast-dir {run_dir}/fast_model.fast_tier.full_test --large-dir {run_dir}/fast_model.large_tier.full_test"}
 #  - {system: gfp, variant: one_bank, alerts: [subset, full_test], machine_class: cpu, est_hours: 0.3, owner: T1, tier: core,
 #     cmd: "python scripts/...", depends_on: []}

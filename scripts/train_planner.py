@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import os
 import statistics
 import sys
 from pathlib import Path
@@ -32,6 +34,10 @@ sys.path.insert(0, str(ROOT))
 from omegaconf import OmegaConf  # noqa: E402
 
 from ftm.llm.budget import estimate_messages  # noqa: E402
+
+# Models resolve from the shared cache (FTM_HF_HOME, default ~/hf_cache) and never from the network: the revisions are pinned in the configs.
+os.environ.setdefault("HF_HOME", os.environ.get("FTM_HF_HOME", str(Path.home() / "hf_cache")))
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 REQUIRED = ("task", "base_model", "revision", "max_seq_length", "lora", "train", "seeds", "output_dir")
 
@@ -77,7 +83,7 @@ def render_prompt_completion(tok, messages: list[dict], enable_thinking: bool) -
     return prompt, messages[-1]["content"] + "<|im_end|>"
 
 
-def train(cfg: dict, rows: list[dict], seed: int) -> Path:  # pragma: no cover - needs a GPU
+def train(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> Path:  # pragma: no cover - needs a GPU
     """QLoRA SFT with plain transformers + PEFT + TRL + bitsandbytes (NF4, double quant, bf16 compute). Unsloth is not used:
     its release that resolves against torch 2.8 / sm_120 here is mid-2025 and does not run with transformers 5
     (docs/t3_finetune_fastmodel.md, environment). Same algorithm: 4-bit frozen base, LoRA on all linear layers."""
@@ -100,14 +106,16 @@ def train(cfg: dict, rows: list[dict], seed: int) -> Path:  # pragma: no cover -
     ds = Dataset.from_dict({"prompt": [p for p, _ in pairs], "completion": [c for _, c in pairs]})
     out = ROOT / cfg["output_dir"] / f"seed={seed}"
     t = cfg["train"]
+    # trl 1.16 / transformers 5 dropped warmup_ratio: the same warmup as a step count
+    steps = max_steps if max_steps > 0 else math.ceil(len(ds) / (t["per_device_batch_size"] * t["grad_accum"])) * t["epochs"]
     trainer = SFTTrainer(
         model=model, processing_class=tok, train_dataset=ds,
         args=SFTConfig(max_length=cfg["max_seq_length"], num_train_epochs=t["epochs"], learning_rate=t["learning_rate"],
                        per_device_train_batch_size=t["per_device_batch_size"], gradient_accumulation_steps=t["grad_accum"],
-                       warmup_ratio=t["warmup_ratio"], weight_decay=t["weight_decay"], optim=OPTIM.get(t["optim"], t["optim"]),
+                       warmup_steps=math.ceil(t["warmup_ratio"] * steps), weight_decay=t["weight_decay"], optim=OPTIM.get(t["optim"], t["optim"]),
                        completion_only_loss=bool(t.get("responses_only", True)), bf16=True, gradient_checkpointing=True,
                        seed=seed, data_seed=seed, logging_steps=10, output_dir=str(out / "checkpoints"), save_strategy="no",
-                       report_to=[]),
+                       report_to=[], max_steps=max_steps),
     )  # fmt: skip
     trainer.train()
     model.save_pretrained(out / "adapter")
@@ -200,6 +208,8 @@ def cmd_calibrate(a) -> int:
 
 def cmd_train(a) -> int:
     cfg = load_config(a.config)
+    if a.output_dir:
+        cfg["output_dir"] = a.output_dir
     rows = load_dataset(a.dataset)
     report = {"config": str(a.config), "task": cfg["task"], "base_model": cfg["base_model"], **data_report(rows, cfg)}
     print(json.dumps(report, indent=2))
@@ -214,7 +224,7 @@ def cmd_train(a) -> int:
         print(f"seed {a.seed}: {adapter} exists, skipped")
         return 0
     print("Reminder: QLoRA takes the whole GPU. Is the window blocked in GPU_CALENDAR.md?")
-    print(f"saved {train(cfg, rows, a.seed)}")
+    print(f"saved {train(cfg, rows, a.seed, a.max_steps)}")
     return 0
 
 
@@ -249,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     t.add_argument("--dataset", type=Path, required=True)
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--dry-run", action="store_true")
+    t.add_argument("--max-steps", type=int, default=-1, help="smoke test: stop after this many optimizer steps")
+    t.add_argument("--output-dir", default=None, help="replace the config's output_dir (smoke tests write elsewhere)")
     t.add_argument("--skip-existing", action="store_true", help="a seed whose adapter is already saved is not trained again (resume)")
     a = ap.parse_args(argv)
     return {"distill": cmd_distill, "fast-data": cmd_fast_data, "calibrate": cmd_calibrate, "train": cmd_train}[a.cmd](a)

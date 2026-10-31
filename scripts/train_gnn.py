@@ -286,6 +286,9 @@ def compare(ds: str) -> None:
         ob = df.filter((pl.col("mode") == "one_bank") & pl.col("bank").is_in(banks) & (pl.col("val_part") == "eval")).select("tx_id", pl.col("p0").alias("p_one"), "label")
         se = df.filter((pl.col("mode") == "see_everything") & (pl.col("val_part") == "eval")).select("tx_id", pl.col("p0").alias("p_see"))
         j = ob.join(se, on="tx_id").drop_nulls().join(tx, on="tx_id", how="left").join(pat, on="tx_id", how="left").sort("tx_id")
+        if not j.height:  # no one-bank rows for this model/dataset (HI-Medium Multi-GNN is see-everything only): no gap to report
+            out["one_bank_minus_see_everything_brier"][model] = None
+            continue
         cl = bs.cluster_ids(j["attempt_id"].to_list(), [j["src_id"].to_list(), j["dst_id"].to_list()])
         r = bs.brier_diff(j["label"].cast(pl.Int8).to_numpy(), j["p_one"].to_numpy(), j["p_see"].to_numpy(), cl, n_boot=2000)
         out["one_bank_minus_see_everything_brier"][model] = {"diff": r["diff"], "ci95": r["ci"], "n": j.height}

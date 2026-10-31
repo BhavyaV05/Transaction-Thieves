@@ -35,6 +35,14 @@ MARK = "<!-- notes -->"
 GROUP = {"ours": "ours", "react": "D", "reflexion": "D", "rewoo": "D", "lats": "D", "llmcompiler": "D", "dspy_react": "D",
          "debate": "D", "uot": "D", "bed_llm": "D", "sharma": "C", "torres": "C", "co_investigator": "C", "finfre_rag": "C"}
 ALERT = re.compile(r"V\d{6}")
+MIN_VERDICT_RATE = 0.95  # the E18 validity threshold (docs/t3_e18.md, stage 1: drop below 0.95); a no-verdict alert is scored p0, so it flatters Brier
+
+
+def split_eligible(best: dict[str, dict]) -> tuple[list[dict], list[dict]]:
+    """(ranked by Brier, ineligible by Brier): a system is ranked only if its verdict rate is >= MIN_VERDICT_RATE."""
+    ok = sorted((r for r in best.values() if r["verdict_rate"] >= MIN_VERDICT_RATE), key=lambda r: r["brier"])
+    bad = sorted((r for r in best.values() if r["verdict_rate"] < MIN_VERDICT_RATE), key=lambda r: r["brier"])
+    return ok, bad
 
 
 def system_of(spec: str) -> str:
@@ -119,13 +127,20 @@ def markdown(rows: list[dict], p0row: dict, meta: dict, old_notes: str) -> str:
     for r in ext:
         if r["system"] not in best or r["brier"] < best[r["system"]]["brier"]:
             best[r["system"]] = r
-    top = sorted(best.values(), key=lambda r: r["brier"])
+    top, ineligible = split_eligible(best)
     L += ["", "## Proposed top external agents (for the G4 review)", "",
           "Ranking: Group C/D systems (best of native/ported each) by val Brier on the table above (the pre-registered G4 criterion is not "
-          "spelled out beyond \"top 2-3 chosen at G4 on validation\", so val Brier). **A proposal**: the G4 review writes `outputs/g4/top_external.json`.", "",
+          "spelled out beyond \"top 2-3 chosen at G4 on validation\", so val Brier). **Eligibility: a system is ranked only if its verdict rate is >= "
+          f"{MIN_VERDICT_RATE:.2f}** (the E18 validity threshold, `docs/t3_e18.md`); an alert without a verdict is scored p0, so a system that gives few verdicts "
+          "would otherwise look as good as p0 (Brier = p0 exactly). Ineligible systems are listed below the ranking. **A proposal**: the G4 review writes `outputs/g4/top_external.json`.", "",
           "| rank | system (mode) | Brier [95% CI] | vs p0 |", "|---|---|---|---|"]
     for i, r in enumerate(top, 1):
         L.append(f"| {i}{' **proposed**' if i <= 3 else ''} | {r['system']} ({r['spec']}) | {r['brier']:.4f} [{r['ci_lo']:.4f}, {r['ci_hi']:.4f}] | {r['vs_p0']:+.4f} |")
+    if ineligible:
+        L += ["", f"Not ranked (verdict rate < {MIN_VERDICT_RATE:.2f}):", "", "| system (mode) | Brier | verdict rate | reason |", "|---|---|---|---|"]
+        for r in ineligible:
+            L.append(f"| {r['system']} ({r['spec']}) | {r['brier']:.4f} | {r['verdict_rate']:.3f} | verdict rate {r['verdict_rate']:.3f} < {MIN_VERDICT_RATE:.2f}: "
+                     f"{r['no_verdict']} of {r['n']} alerts scored as p0 |")
     L += ["", MARK, old_notes.strip("\n"), ""]
     return "\n".join(L)
 

@@ -38,6 +38,17 @@ JOINER = (
     "probability of laundering, 0 to 1) or, if the results are not enough and budget is left, 'Action: replan' "
     "with one sentence on what is missing."
 )
+_ACTION = re.compile(r"Action\s*:\s*(\w+)", re.IGNORECASE)
+
+
+def _replans(join: str) -> bool:
+    """Whether the joiner's LAST 'Action: ...' is a replan (prose may precede it; a finish[p] anywhere later wins)."""
+    acts = _ACTION.findall(join)
+    if acts:
+        return acts[-1].lower() == "replan"
+    return "replan" in join.lower() and not re.search(r"finish\s*\[", join)
+
+
 _TASK = re.compile(r"^\s*(\d+)\.\s*(ask_bank|lookup_rules|join)\s*[\[(](.*)[\])]\s*$")
 
 
@@ -77,7 +88,7 @@ class LlmCompiler:
     name = "llmcompiler"
 
     def __init__(self, llm: ChatClient, *, dsl: DslAdapter | None = None, fusion: Fusion | None = None,
-                 max_replans: int = 2, plan_tokens: int = 512, join_tokens: int = 96, temperature: float = 0.0,
+                 max_replans: int = 2, plan_tokens: int = 512, join_tokens: int = 512, temperature: float = 0.0,
                  seed: int = 0, extra: dict | None = None):  # fmt: skip
         self.llm = llm
         self.dsl = dsl or V0Dsl()
@@ -119,7 +130,7 @@ class LlmCompiler:
                 trace.append({"round": rnd, "plan": plan, "waves": waves(tasks)})
                 join = self._chat(budget, JOINER, case + "\n\nResults:\n" + ("\n".join(history) or "(none)"), self.join_tokens)
                 trace[-1]["join"] = join
-                if "replan" not in join.lower() or rnd == self.max_replans:
+                if not _replans(join) or rnd == self.max_replans:
                     p = solver_probability(join)
                     break
         except (BudgetExceeded, PromptTooLong):

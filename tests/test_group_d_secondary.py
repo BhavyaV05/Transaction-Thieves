@@ -218,3 +218,18 @@ def test_run_llm_agent_dspy_program_flag_is_for_dspy_react_only(tmp_path):
     f.write_text("{}")
     with pytest.raises(SystemExit):
         rla.main(["--system", "react", "--alerts", "synthetic", "--n", "1", "--dspy-program", str(f), "--run-dir", str(tmp_path / "o")])
+
+
+def test_lats_parse_scores_with_prose_before_the_scores():
+    prose = ("Candidate 1: 30 days of history is asked, which is cheap but broad. Candidate 2: 5 days is too short to say much.\n"
+             "Candidate 1: 7\nCandidate 2: 3/10")  # fmt: skip
+    assert parse_scores(prose, 2) == [7.0, 3.0]
+    assert parse_scores("Candidate 1 asks about the last 30 days; candidate 2 repeats it.\nScores: 7, 4", 2) == [7.0, 4.0]
+    assert parse_scores("Candidate 1: 30 days is long. Candidate 2: 5 days is short.", 2) == [1.0, 1.0]  # prose, no scores
+
+
+def test_lats_value_call_has_room_for_prose():
+    llm = MockLLM(script=[f"Thought: a\nAction: ask_bank[220 | 0.5 | {Q1}]", "Thought: b\nAction: finish[0.9]",
+                          "Candidate 1 asks 220 about 30 days of history, useful.\nCandidate 1: 2\nCandidate 2: 9"])  # fmt: skip
+    v = Lats(llm, n_children=2).investigate(ALERT, ScriptedToolBox([reply(220, 0.4)]), Limits(max_llm_calls=3))
+    assert llm.requests[2]["max_tokens"] >= 256 and v.probability == 0.9  # child 2 (score 9) first

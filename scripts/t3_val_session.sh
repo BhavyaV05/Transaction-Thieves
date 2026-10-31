@@ -5,11 +5,12 @@
 #   fitcal  our planner (compose, no library yet) on val `fit` and `cal`: the library's training runs (never `eval`)
 #   library build and freeze (shape + account keying) from the teacher runs (train) + those fit/cal runs  -> outputs/t3_library/frozen
 #   dspy    MIPROv2 on val `fit` (scripts/optimize_dspy.py)                                              -> outputs/t3_dspy/react_miprov2.json
+#   e10large  latency per decision of the large tier (Gemma JSON decisions, one request at a time, 300 rows) -> outputs/e10/large/latency.json
 #   eval    every system on the 160 val `eval` askable alerts (seed 0, harness, realistic back-test table, thinking off)
 # Outputs: outputs/t3_val/fitcal/{fit,cal}/c###, outputs/t3_val/eval/<spec>/c### (a chunk is done when its summary.json exists).
 # The table: scripts/val_runs_table.py -> docs/t3_val_runs.md.
 #
-#   scripts/t3_val_session.sh [stage ...]       # stages: smoke fitcal library dspy eval (default: all, in order); SPECS="react lats" limits eval
+#   scripts/t3_val_session.sh [stage ...]       # stages: smoke fitcal library dspy eval e10large (the default, in order) and e10largeall; SPECS="react lats" limits eval
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH=$HOME/projects/vllm-venv/bin:$PATH FTM_HF_HOME=${FTM_HF_HOME:-$HOME/hf_cache} HF_HUB_OFFLINE=1
@@ -22,7 +23,7 @@ BT=data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl
 LIBDIR=outputs/t3_library/frozen
 SHAPE=$LIBDIR/shape_gemma.json; ACCOUNT=$LIBDIR/account_gemma.json
 DSPY=outputs/t3_dspy/react_miprov2.json
-stages=${*:-smoke fitcal library dspy eval}
+stages=${*:-smoke fitcal library dspy eval e10large}
 mkdir -p "$OUT" "$LIBDIR"
 
 serve_up() {
@@ -87,7 +88,8 @@ for st in $stages; do
     done ;;
   dspy)
     [[ -f $DSPY ]] || $PY scripts/optimize_dspy.py --data hi_medium --n "${DSPY_N:-40}" --model "$MODEL" > "$OUT/dspy.log" 2>&1
-    echo "$(date -Is) dspy: exit $? ($(sha256sum $DSPY 2>/dev/null | cut -c1-16))" ;;
+    if [[ -f $DSPY ]]; then echo "$(date -Is) dspy: program $(sha256sum "$DSPY" | cut -c1-16)"
+    else echo "$(date -Is) dspy: FAILED, no program saved (see $OUT/dspy.log)"; fi ;;
   eval)
     # name|args   (name = output dir; every system gets the frozen shape library, as the final run's common_args do)
     specs=(
@@ -109,9 +111,24 @@ for st in $stages; do
     for s in "${specs[@]}"; do
       name=${s%%|*}; args=${s#*|}
       [[ -n ${SPECS:-} && " $SPECS " != *" $name "* ]] && continue
+      [[ $name == dspy_react && ! -f $DSPY ]] && { echo "$(date -Is) skip dspy_react: no program at $DSPY"; continue; }
       # shellcheck disable=SC2086
       run_chunks "$OUT/eval/$name" eval 160 80 --library "$SHAPE" $args
     done ;;
+  e10largeall)  # E10 large tier on every val cal + eval decision row (the conformal step and the deferred rows need them); resumable
+    d=outputs/e10/large; mkdir -p "$d"
+    $PY scripts/score_fast_baseline.py score --tier large --model "$MODEL" --workers 16 --out "$d/large.jsonl" > "$d/score.log" 2>&1
+    echo "$(date -Is) e10 large scoring: exit $? ($(wc -l < "$d/large.jsonl") rows)" ;;
+  e10large)
+    d=outputs/e10/large; mkdir -p "$d"
+    $PY scripts/score_fast_baseline.py score --tier large --model "$MODEL" --workers 1 --limit 300 --out "$d/latency_rows.jsonl" > "$d/latency.log" 2>&1
+    $PY - "$d" <<'PYEOF'
+import json, sys
+d = sys.argv[1]
+r = json.loads([l for l in open(f"{d}/latency.log") if l.startswith("{")][-1])
+json.dump({"ms_per_decision": 1000 * r["latency_median_s"], "rows": r["rows_scored"], "workers": 1}, open(f"{d}/latency.json", "w"))
+PYEOF
+    echo "$(date -Is) e10 large latency: $(cat $d/latency.json)" ;;
   esac
 done
 echo "$(date -Is) session done: $stages"
