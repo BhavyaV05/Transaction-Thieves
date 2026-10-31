@@ -24,6 +24,21 @@ from typing import Any, Protocol
 DEFAULT_ENDPOINT = "http://localhost:8000/v1"
 
 
+
+# Keywords vLLM's guided-decoding grammar rejects ("Grammar error: Unimplemented keys"); the server gets the schema without them,
+# the caller still validates the answer against the full schema (ftm.llm.jsonout.parse_and_validate).
+_GRAMMAR_UNSUPPORTED = frozenset({"uniqueItems"})
+
+
+def server_schema(schema):
+    """`schema` without the keywords the serving grammar cannot compile (recursively); the input is not modified."""
+    if isinstance(schema, dict):
+        return {k: server_schema(v) for k, v in schema.items() if k not in _GRAMMAR_UNSUPPORTED}
+    if isinstance(schema, list):
+        return [server_schema(v) for v in schema]
+    return schema
+
+
 class LLMError(RuntimeError):
     """The endpoint failed or returned something that is not a chat completion."""
 
@@ -174,7 +189,7 @@ class HttpChatClient:
         if json_schema is not None:
             body["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": json_schema.get("title", "output"), "schema": json_schema, "strict": True},
+                "json_schema": {"name": json_schema.get("title", "output"), "schema": server_schema(json_schema), "strict": True},
             }
         if stop:
             body["stop"] = stop
