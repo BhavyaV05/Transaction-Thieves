@@ -237,6 +237,27 @@ def test_fit_score_map_shrinks_toward_the_fixed_table_and_uses_only_the_given_la
     assert m[5] == pytest.approx((30 + 4 * 0.95) / 44) and m[1] < 0.1 and m[3] == ff.SCORE_TO_P[3]
 
 
+def test_a_train_alert_is_never_shown_its_own_label():
+    r = rows(80)
+    pool = ff.ExemplarPool(r, k_features=5)
+    me = r[7]
+    assert pool.retrieve(me["num"], me["cat"], 20)[0]["alert_id"] == me["alert_id"]  # without the exclusion: itself, label and all
+    got = pool.retrieve(me["num"], me["cat"], 20, exclude=me["alert_id"])
+    assert got and me["alert_id"] not in {x["alert_id"] for x in got}
+    seen = []
+    real = pool.retrieve
+    pool.retrieve = lambda *a, **kw: seen.append(kw.get("exclude")) or real(*a, **kw)
+    _, ids = ff.FinfreRag(MockLLM(), pool).prompt(alert(aid=me["alert_id"]), [])  # the prompt leaves the query's own row out
+    assert seen == [me["alert_id"]] and ids and me["alert_id"] not in ids
+
+
+def test_fit_score_map_refuses_scores_of_validation_or_test_alerts():
+    scores, labels = [5, 5, 1, 1], [1, 0, 0, 0]
+    assert ff.fit_score_map(scores, labels, splits=["train"] * 4)[5] == pytest.approx((1 + 4 * 0.95) / 6)
+    with pytest.raises(ValueError, match="train alerts only"):
+        ff.fit_score_map(scores, labels, splits=["train", "val", "train", "test"])
+
+
 def test_dev_responders_run_both_ports_end_to_end():
     for sys_ in (ci.CoInvestigator(MockLLM(responder=ci.dev_responder), mode="ported"),
                  ff.FinfreRag(MockLLM(responder=ff.dev_responder), ff.ExemplarPool(rows(60)), mode="ported")):  # fmt: skip

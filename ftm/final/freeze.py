@@ -1,4 +1,4 @@
-"""Pre-registration freeze manifest: hashes of prereg/*.yaml and prereg/subset_manifest.txt, the git commit, the TA hash.
+"""Pre-registration freeze manifest: hashes of prereg/*.yaml, prereg/subset_manifest.txt and EXTRA_FROZEN, the git commit, the TA hash.
 
 Owner: T4 (Shreyas).  Spec: tracks.md 8 ("after the pre-registration hash has been sent"), prereg/README.md.
 
@@ -20,6 +20,10 @@ from pathlib import Path
 FREEZE_FILE = "FREEZE.json"
 SUBSET_MANIFEST = "subset_manifest.txt"
 FREEZE_VERSION = 1
+# Files outside prereg/ that the hash also covers (repo-relative, always with a "/", so a name never clashes with a prereg file):
+# T2's non-LLM arm settings and the question tables they read (asked by T2 in PR #76, 28 Oct). Missing files are skipped here and
+# reported by scripts/freeze_prereg.py.
+EXTRA_FROZEN = ("configs/final/non_llm.yaml", "configs/experiments/ablations_nonllm.yaml")
 _SUBSET_HASH_LINE = re.compile(r"^\s*#?\s*subset_sha256\s*:.*$")
 
 
@@ -36,16 +40,26 @@ def normalized_bytes(name: str, data: bytes) -> bytes:
     return data
 
 
+def frozen_path(prereg_dir: Path, name: str) -> Path:
+    """prereg/<name>, or <repo>/<name> for a name with a "/" (EXTRA_FROZEN); the repo is the parent of prereg/."""
+    d = Path(prereg_dir)
+    return d.parent / name if "/" in name else d / name
+
+
+def missing_extra(prereg_dir: Path) -> list[str]:
+    return [n for n in EXTRA_FROZEN if not frozen_path(prereg_dir, n).exists()]
+
+
 def frozen_names(prereg_dir: Path) -> list[str]:
     names = sorted(p.name for p in Path(prereg_dir).glob("*.yaml"))
     if (Path(prereg_dir) / SUBSET_MANIFEST).exists():
         names.append(SUBSET_MANIFEST)
-    return names
+    return names + [n for n in EXTRA_FROZEN if frozen_path(prereg_dir, n).exists()]
 
 
 def hash_files(prereg_dir: Path) -> dict[str, str]:
     d = Path(prereg_dir)
-    return {n: sha256_bytes(normalized_bytes(n, (d / n).read_bytes())) for n in frozen_names(d)}
+    return {n: sha256_bytes(normalized_bytes(n, frozen_path(d, n).read_bytes())) for n in frozen_names(d)}
 
 
 def combined_hash(hashes: dict[str, str]) -> str:

@@ -66,6 +66,8 @@ def main(argv=None):
     ap.add_argument("--max-size", type=int, default=4, help="program size bound for --questions enumerate")
     ap.add_argument("--questions-file", default=None)
     ap.add_argument("--shard", default="0/1", help="i/n")
+    ap.add_argument("--time-blocks", type=int, default=1,
+                    help="> 1: e-values permute labels within this many time blocks (robust to drift; changes the namespace)")
     ap.add_argument("--exact", action="store_true", help="no-noise variant (eps = inf) on the same alerts")
     ap.add_argument("--exact-labels", action="store_true",
                     help="exact mode proper: every bank's labels (a label-stratified sample of cross-bank transactions), no noise")
@@ -98,7 +100,7 @@ def main(argv=None):
     else:
         world = load_world(a.data, a.split, a.seed, max_alerts=a.max_alerts, only_keep=a.only_keep,
                            heldout_cycles=a.heldout_cycles)
-    cfg = BacktestConfig(mode="exact" if exact else "realistic")
+    cfg = BacktestConfig(mode="exact" if exact else "realistic", time_blocks=a.time_blocks)
     ns = cfg.namespace(world.alert_set_id, a.seed)
     cache = BacktestCache(Path(a.out) / Path(a.data).stem, ns)
     eps_levels = [float("inf")] if exact else a.eps

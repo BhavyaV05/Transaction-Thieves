@@ -10,13 +10,13 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 - [ ] confirm AML-specific federated method choice with Abhishek
 
 ## Week 1
-- [ ] Repo skeleton, CI, test-split guard
+- [x] Repo skeleton, CI, test-split guard
 - [x] rules corpus collection
-- [ ] expert questions with Bhavya
-- [ ] run-log schema
+- [x] expert questions with Bhavya
+- [x] run-log schema
 
 ## Week 2
-- [ ] Fusion v0
+- [x] Fusion v0
 - [x] metrics + bootstrap code. **G1**
 
 ## Week 3
@@ -28,44 +28,44 @@ Tick items off in your PRs and post one line per week in STATUS.md. Weeks count 
 
 ## Week 5
 - [x] Compliance gate + regulatory RAG
-- [ ] **Torres port**
+- [x] **Torres port**
 
 ## Week 6
 - [x] Injection set generation
-- [ ] **Sharma port**
+- [x] **Sharma port**
 
 ## Week 7
-- [ ] Fusion v1 (per-family weights)
+- [x] Fusion v1 (per-family weights)
 
 ## Week 8
-- [ ] Eval dashboard on val
-- [ ] debate / AutoGen port (secondary)
+- [x] Eval dashboard on val (`scripts/final_analysis.py`, dry-run on real HI-Medium val for the non-LLM arms on 28 Oct; LLM and external arms need Akshat's val runs)
+- [x] debate / AutoGen port (secondary)
 
 ## Week 9
 - [ ] Mid-project review
 - [ ] **all core external agents on val**. **G4**
 
 ## Week 10
-- [ ] UoT / BED-LLM ports (secondary)
+- [x] UoT / BED-LLM ports (secondary)
 - [ ] FCAC (stretch)
 
 ## Week 11
-- [ ] **Injection tests on our system and the external agents**
-- [ ] CaMeL comparison
+- [ ] **Injection tests on our system and the external agents** (runner merged, mock only; real run needs the endpoint, `docs/t4_injection.md`)
+- [ ] CaMeL comparison (CaMeL-style arm merged, ours and text-based; real run pending)
 
 ## Week 12
-- [ ] **Dry-run all analysis scripts on val**
-- [ ] figure templates
+- [ ] **Dry-run all analysis scripts on val** (non-LLM arms done on real val; the rest waits for LLM and external val logs)
+- [x] figure templates (`ftm/eval/final_tables.py`)
 
 ## Week 13
-- [ ] Freeze pre-registration
+- [ ] Freeze pre-registration (30 Oct; `docs/t4_final_run.md` checklist, `docs/t4_prereg_values.md` for the `fix_on_val` values)
 - [ ] hash to TA
 
 ## Week 14
 - [ ] Stats, Holm, bootstrap. **G5**
 
 ## Week 15
-- [ ] Report draft
+- [ ] Report draft (sections 1-3, 5.4, 6, 8-11 and abstract skeleton drafted; 4, 5.1-5.3, 7 wait for their owners and results)
 
 ## Week 16
 - [ ] Final report and presentation. **G6**

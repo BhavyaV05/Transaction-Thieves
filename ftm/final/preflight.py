@@ -101,7 +101,8 @@ def check_commit_ancestor(p: Paths) -> list[str]:
     problems = []
     for name, want in sorted(fr.get("files", {}).items()):
         try:
-            raw = subprocess.check_output(["git", "show", f"{commit}:{rel}/{name}"], cwd=p.repo, stderr=subprocess.DEVNULL)
+            where = name if "/" in name else f"{rel}/{name}"  # EXTRA_FROZEN names are repo-relative
+            raw = subprocess.check_output(["git", "show", f"{commit}:{where}"], cwd=p.repo, stderr=subprocess.DEVNULL)
         except Exception:  # noqa: BLE001
             problems.append(f"{name} does not exist at the freeze commit {commit[:10]}")
             continue
@@ -198,6 +199,10 @@ def unresolved_fields(prereg_dir: Path) -> list[str]:
 
     for f in sorted(Path(prereg_dir).glob("*.yaml")):
         walk(yaml.safe_load(f.read_text(encoding="utf-8")), "", f.name)
+    # T2's question tables are frozen with the arm settings, so they must be named before the freeze (G4, 30 Oct)
+    nl = fz.frozen_path(prereg_dir, "configs/final/non_llm.yaml")
+    if nl.exists() and not ((yaml.safe_load(nl.read_text(encoding="utf-8")) or {}).get("tables") or {}).get("realistic"):
+        out.append("configs/final/non_llm.yaml:tables.realistic")
     return out
 
 

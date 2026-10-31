@@ -12,5 +12,6 @@ Files (drafts until the G3 commit; frozen at week 13):
 | `e18_decision.yaml` | Backbone-size decision rule (stages, pick rule, thinking arm) | draft; **must be committed before E18 stage 1 runs** (week 3) |
 | `external_list.yaml` | External systems, modes, tiers, owners, implementation; backbone and caps; settings fixed before each reimplementation runs | draft; locked at G3 |
 | `subset_manifest.txt` | Rule for the frozen 1,000-alert subset now, the sha256 of its IDs at G5 | draft |
+| `../configs/final/non_llm.yaml`, `../configs/experiments/ablations_nonllm.yaml` | T2's non-LLM arm settings and the name of their question table; not in this folder, but covered by the freeze hash (`ftm.final.freeze.EXTRA_FROZEN`) | draft; table path named at G4 |
 
 `tests/test_prereg.py` checks that the files parse and agree with the plan (primary family, tiers, experiments).

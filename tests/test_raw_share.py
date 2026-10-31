@@ -16,11 +16,13 @@ from ftm.harness import make_toolbox
 from ftm.orchestrator.raw_share import (
     LOOKBACK_H,
     N_SHARING_BANKS,
+    RIDGES,
     RawShareArm,
     RawShareBank,
     RawShareModel,
     collect_records,
     gain_ratio,
+    select_ridge,
 )
 from ftm.orchestrator.runner import synthetic_experiment
 from ftm.types import Limits
@@ -85,6 +87,27 @@ def test_ridge_model_uses_an_informative_feature_and_ignores_noise():
     p = m.predict(p0[300:], X[300:])
     assert np.mean((p - y[300:]) ** 2) < np.mean((0.2 - y[300:]) ** 2) - 0.02
     assert abs(m.w[0]) > 3 * np.abs(m.w[1:]).max()
+
+
+def test_the_ridge_is_chosen_by_forward_chaining_cv():
+    rng = np.random.default_rng(1)
+    n = 300
+    y = (rng.random(n) < 0.3).astype(float)
+    p0 = np.full(n, 0.3)
+    noise = rng.normal(0, 1, (n, 40))  # nothing to learn: the strongest penalty wins
+    assert select_ridge(p0, noise, y, ridges=(5.0, 5000.0)) == 5000.0
+    signal = np.column_stack([y * 3 + rng.normal(0, 1, n), rng.normal(0, 1, (n, 4))])  # a clear feature: the weakest penalty wins
+    assert select_ridge(p0, signal, y, ridges=(5.0, 5000.0)) == 5.0
+
+
+def test_the_arm_fits_in_time_order_and_keeps_a_ridge_from_the_candidates(setup):
+    w, banks, train, val, rate = setup
+    gate = Gate.from_config(allow_raw_share=True)
+    shuffled = list(np.random.default_rng(0).permutation(np.array(train, dtype=object)))
+    arm = RawShareArm(banks, gate, ridges=RIDGES).fit(shuffled)
+    assert arm.model.ridge in RIDGES
+    ordered = RawShareArm(banks, gate, ridges=RIDGES).fit(train)
+    assert ordered.model.ridge == arm.model.ridge and np.allclose(ordered.model.w, arm.model.w)  # the input order does not matter
 
 
 def test_gain_ratio():

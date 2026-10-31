@@ -169,8 +169,10 @@ class ExemplarPool:
         z = (vals - self.mu) / self.sd
         return np.nan_to_num(z, nan=0.0)  # a missing value sits at the pool mean
 
-    def retrieve(self, num: dict, cat: dict, n: int = N_EXEMPLARS) -> list[dict]:
-        cand = list(range(len(self.rows)))
+    def retrieve(self, num: dict, cat: dict, n: int = N_EXEMPLARS, exclude: str | None = None) -> list[dict]:
+        """`exclude`: an alert id left out of the candidates. A train alert scored against a pool that holds it would be shown
+        its own label as the nearest exemplar (leave-one-out)."""
+        cand = [i for i, r in enumerate(self.rows) if r["alert_id"] != exclude]
         for f in self.cat_sel:  # Eq. 2: add equality constraints in order of importance while the set stays non-empty
             nxt = [i for i in cand if self.rows[i]["cat"].get(f) == cat.get(f)]
             if not nxt:
@@ -186,8 +188,14 @@ class ExemplarPool:
         return [self.rows[cand[j]] for j in top]
 
 
-def fit_score_map(scores: list[int], labels: list[int], strength: float = 4.0) -> dict[int, float]:
-    """Empirical launder rate per score on TRAIN-only data, shrunk toward the fixed table (replaces SCORE_TO_P)."""
+def fit_score_map(scores: list[int], labels: list[int], strength: float = 4.0, splits: list[str] | None = None) -> dict[int, float]:
+    """Empirical launder rate per score on TRAIN-only data, shrunk toward the fixed table (replaces SCORE_TO_P).
+
+    The scores must come from runs in which the alert's own row was not an exemplar (`FinfreRag.prompt` leaves the query out), and
+    `splits`, when given (the split of each scored alert), must all be "train": a score from a validation or test alert would put
+    its label into the map."""
+    if splits is not None and (bad := sorted(set(splits) - {"train"})):
+        raise ValueError(f"fit_score_map takes train alerts only, got {bad}")
     out = {}
     for s in range(1, 6):
         ys = [y for sc, y in zip(scores, labels, strict=True) if sc == s]
@@ -227,7 +235,7 @@ class FinfreRag:
     def prompt(self, alert: AlertContext, partner_lines: list[str]) -> tuple[list[dict], list[str]]:
         num, cat = tabular_row(alert)
         sel = self.pool.selected
-        shots = self.pool.retrieve(num, cat, self.n_exemplars)
+        shots = self.pool.retrieve(num, cat, self.n_exemplars, exclude=alert.alert_id)
         ex = "\n".join(f"Example {i}: {sentence(r['num'], r['cat'], sel)} It is {'a fraud' if r['label'] else 'not a fraud'}."
                        for i, r in enumerate(shots, start=1))  # fmt: skip
         cur = sentence(num, cat, sel)
