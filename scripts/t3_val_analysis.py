@@ -695,6 +695,103 @@ def belief_summary(alerts, mapping, n_boot) -> dict:
 
 
 # ---------------------------------------------------------------------------------------------------------------------
+# all external agents (descriptive: they ran on eval only, nothing is fitted on fit/cal for them)
+DEFAULT_VALUES = (0.85, 0.5, 0.1, 0.9)
+# does the agent see p0, and where (read from ftm/external/*.py; case_text hides evidence, partner_banks, shape, top_features only, so p0 is
+# not in the ReAct-family prompt because AlertContext.p0 is not a summary key)
+SEES_P0 = {
+    "react": "no", "reflexion": "no", "rewoo": "no", "lats": "no", "llmcompiler": "no", "dspy_react": "no", "debate": "no",
+    "uot": "yes (prompt, initial belief)", "bed_llm": "yes (prompt, 1 particle)", "sharma_native": "yes (tool; not in the number)",
+    "sharma_ported": "yes (tool; not in the number)", "torres_native": "yes (evidence item)", "torres_ported": "yes (evidence item)",
+    "finfre_rag_native": "yes (row feature)", "finfre_rag_ported": "yes (row feature)",
+    "co_investigator_native": "yes (evidence item); no val result", "co_investigator_ported": "yes (evidence item); no val result",
+}
+
+
+def auc(y, s) -> float | None:
+    """Area under the ROC curve with midranks for ties (= P(score_pos > score_neg) + 0.5 P(tie)); None if one class only."""
+    y, s = np.asarray(y), np.asarray(s, "f8")
+    n1 = int((y == 1).sum())
+    n0 = len(y) - n1
+    if n1 == 0 or n0 == 0:
+        return None
+    order = np.argsort(s, kind="stable")
+    ss = s[order]
+    ranks = np.empty(len(s))
+    i = 0
+    while i < len(ss):
+        j = i
+        while j + 1 < len(ss) and ss[j + 1] == ss[i]:
+            j += 1
+        ranks[order[i : j + 1]] = (i + j) / 2 + 1
+        i = j + 1
+    return float((ranks[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+
+
+def value_share(p, value: float, tol: float = 1e-9) -> float:
+    p = np.asarray(p, "f8")
+    return float((np.abs(p - value) <= tol).mean()) if len(p) else 0.0
+
+
+def extreme_share(p, lo: float = 0.02, hi: float = 0.98) -> float:
+    p = np.asarray(p, "f8")
+    return float(((p < lo) | (p > hi)).mean()) if len(p) else 0.0
+
+
+def auc_pair_ci(y, p, p0, clusters, n_boot: int) -> dict:
+    """AUC of p, of p0, and their difference (p - p0) on the same alerts, with percentile cluster-bootstrap CIs (resamples with one class
+    only are dropped)."""
+    y, p, p0 = np.asarray(y), np.asarray(p, "f8"), np.asarray(p0, "f8")
+
+    def stat(kind):
+        def f(ix):
+            a, b = auc(y[ix], p[ix]), auc(y[ix], p0[ix])
+            return float("nan") if a is None or b is None else (a, b, a - b)[kind]
+        return f
+
+    out = {"auc": auc(y, p), "auc_p0": auc(y, p0)}
+    out["diff"] = None if out["auc"] is None or out["auc_p0"] is None else out["auc"] - out["auc_p0"]
+    for kind, key in enumerate(("auc", "auc_p0", "diff")):
+        smp = bs.cluster_bootstrap(stat(kind), clusters, n_boot=n_boot)
+        out[key + "_ci"] = bs.percentile_ci(smp) if np.isfinite(smp).any() else (None, None)
+    return out
+
+
+def cv_brier(y, X, folds) -> float:
+    """Grouped-fold CV Brier of a logistic model on the columns of X (intercept added); folds = group id per row, scored out of fold."""
+    y, X, folds = np.asarray(y, "f8"), np.asarray(X, "f8"), np.asarray(folds)
+    X = np.column_stack([np.ones(len(y)), X])
+    pen = np.r_[0.0, np.full(X.shape[1] - 1, 1e-2)]
+    pred = np.empty(len(y))
+    for f in np.unique(folds):
+        te = folds == f
+        w = logistic_ridge(X[~te], y[~te], pen)
+        pred[te] = 1 / (1 + np.exp(-(X[te] @ w)))
+    return brier(y, pred)
+
+
+def agent_summary(alerts, mapping, n_boot) -> dict:
+    """Descriptive profile of one external agent on its alerts with a verdict (raw probability not None)."""
+    have = [a for a in alerts if a["prob_raw"] is not None]
+    out: dict = {"n": len(alerts), "verdicts": len(have), "verdict_rate": len(have) / len(alerts)}
+    if len(have) < 5:
+        return out
+    y, p, p0 = arr(have, "label"), np.array([float(a["prob_raw"]) for a in have]), arr(have, "p0")
+    out |= {"mean_p_y1": float(p[y == 1].mean()), "mean_p_y0": float(p[y == 0].mean()), "mean_p": float(p.mean()), "label_rate": float(y.mean()),
+            "mean_p0": float(p0.mean()), "share_values": {f"{v:g}": value_share(p, v) for v in DEFAULT_VALUES},
+            "share_extreme": extreme_share(p), "share_equal_p0": value_share(p - p0, 0.0, 1e-9),
+            "brier_agent": brier(y, p), "brier_p0": brier(y, p0)}
+    out |= {"auc_block": auc_pair_ci(y, p, p0, clusters_of(have, mapping), n_boot)}
+    # fitted on eval itself (grouped 10-fold CV within the verdict alerts): NOT a result, it only separates "cannot rank" from "badly scaled"
+    folds = fold_ids(have, mapping, 10)
+    zp = np.clip(np.log(np.clip(p, 1e-3, 1 - 1e-3) / (1 - np.clip(p, 1e-3, 1 - 1e-3))), -Z_CAP, Z_CAP)
+    z0 = np.array([_zc(x) for x in p0])
+    out["cv_on_eval"] = {"agent_recalibrated": cv_brier(y, zp[:, None], folds), "p0_recalibrated": cv_brier(y, z0[:, None], folds),
+                         "p0_and_agent": cv_brier(y, np.column_stack([z0, zp]), folds)}
+    return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
 def build(n_boot: int) -> tuple[dict, str]:
     table = load_table()
     mapping = e18.load_clusters(CLUSTERS)
@@ -912,6 +1009,34 @@ def build(n_boot: int) -> tuple[dict, str]:
            md_table(["mode", "belief vs p0", "formula shadow vs p0", "belief vs shadow", "alerts where belief != p0", "mean |belief - p0|", "corr(belief, p0)"],
                     [[m, fmt_d(o["diff_vs_p0"]), fmt_d(o["diff_formula_shadow_vs_p0"]), fmt_d(o["diff_belief_vs_shadow"]), o["moved"], f"{o['mean_abs_shift']:.3f}", f"{o['corr_p_p0']:+.2f}"]
                      for m, o in res["belief"].items()]), ""]
+
+    # --- 4 all external agents
+    ext_names = [m.name for m in sorted(EVAL.iterdir()) if m.is_dir() and not m.name.startswith("ours_") and any(m.glob("c[0-9][0-9][0-9]/summary.json"))]
+    ext = {m: load_run([EVAL / m], table) for m in ext_names}
+    res["external"] = {m: agent_summary(al, mapping, n_boot) for m, al in ext.items()}
+    md += ["### Table 12. External agents: verdict profile (alerts with a verdict; descriptive)", "",
+           md_table(["agent", "sees p0", "verdicts", "rate", "mean p (y=1 / y=0)", "mean p vs label rate (mean p0)", "share = 0.85 / 0.5 / 0.1 / 0.9", "share <0.02 or >0.98", "share = p0"],
+                    [[m, SEES_P0.get(m, "?"), o["verdicts"], f"{o['verdict_rate']:.3f}"] + (
+                        [f"{o['mean_p_y1']:.2f} / {o['mean_p_y0']:.2f}", f"{o['mean_p']:.2f} vs {o['label_rate']:.2f} ({o['mean_p0']:.2f})",
+                         " / ".join(f"{o['share_values'][f'{v:g}']:.2f}" for v in DEFAULT_VALUES), f"{o['share_extreme']:.2f}", f"{o['share_equal_p0']:.2f}"]
+                        if "mean_p" in o else ["", "", "", "", ""]) for m, o in res["external"].items()]), ""]
+
+    def ci(c):
+        return "" if c[0] is None else f"[{c[0]:.2f}, {c[1]:.2f}]"
+
+    md += ["### Table 13. External agents: discrimination and calibration against p0 on the same alerts (alerts with a verdict)", "",
+           "AUC with a 95% attempt+accounts cluster-bootstrap CI; the difference is paired. Brier columns are on the verdict alerts only (so they differ "
+           "from the end-to-end table, where a missing verdict counts as p0).", "",
+           md_table(["agent", "n", "AUC agent [CI]", "AUC p0 [CI]", "AUC diff [CI]", "Brier agent", "Brier p0"],
+                    [[m, o["verdicts"], f"{o['auc_block']['auc']:.2f} {ci(o['auc_block']['auc_ci'])}", f"{o['auc_block']['auc_p0']:.2f} {ci(o['auc_block']['auc_p0_ci'])}",
+                      f"{o['auc_block']['diff']:+.2f} {ci(o['auc_block']['diff_ci'])}", f"{o['brier_agent']:.4f}", f"{o['brier_p0']:.4f}"]
+                     for m, o in res["external"].items() if "auc_block" in o and o["auc_block"]["auc"] is not None]), ""]
+    md += ["### Table 14. Fitted on eval itself, grouped 10-fold CV within the verdict alerts: NOT a result (descriptive: is the agent badly scaled or unable to rank?)", "",
+           "Logistic recalibration of logit(p) (agent alone), of logit(p0) (the same for p0), and a logistic model on both. The agents ran only on eval, so "
+           "nothing could be fitted on fit/cal; these numbers use the evaluation labels and the base rate of this sample.", "",
+           md_table(["agent", "Brier agent raw", "agent recalibrated", "p0 raw", "p0 recalibrated", "p0 + agent"],
+                    [[m, f"{o['brier_agent']:.4f}", f"{o['cv_on_eval']['agent_recalibrated']:.4f}", f"{o['brier_p0']:.4f}", f"{o['cv_on_eval']['p0_recalibrated']:.4f}",
+                      f"{o['cv_on_eval']['p0_and_agent']:.4f}"] for m, o in res["external"].items() if "cv_on_eval" in o]), ""]
     return res, "\n".join(md)
 
 

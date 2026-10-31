@@ -85,3 +85,32 @@ def test_logistic_ridge_shrinks_answer_coefficients():
     free = va.logistic_ridge(X, y, [0, 0, 0])
     pen = va.logistic_ridge(X, y, [0, 0, 1e6])
     assert abs(free[2] - 1.0) < 0.3 and abs(pen[2]) < 0.01 and abs(pen[1] - free[1]) < 0.4
+
+
+def test_auc_midrank_and_degenerate():
+    assert va.auc([0, 0, 1, 1], [0.1, 0.2, 0.3, 0.4]) == 1.0
+    assert va.auc([0, 0, 1, 1], [0.4, 0.3, 0.2, 0.1]) == 0.0
+    assert va.auc([0, 1, 0, 1], [0.5, 0.5, 0.5, 0.5]) == 0.5  # all tied
+    assert abs(va.auc([0, 1, 1, 0], [0.1, 0.9, 0.1, 0.5]) - 0.625) < 1e-12  # 2 pos x 2 neg: (1 + 0.5 + 1 + 0)/4
+    assert va.auc([1, 1], [0.1, 0.2]) is None
+
+
+def test_value_and_extreme_shares():
+    p = [0.85, 0.85, 0.5, 0.01, 0.99]
+    assert abs(va.value_share(p, 0.85) - 0.4) < 1e-12
+    assert abs(va.extreme_share(p) - 0.4) < 1e-12
+    assert va.value_share([], 0.5) == 0.0
+
+
+def test_auc_pair_ci_and_cv_brier():
+    rng = np.random.default_rng(0)
+    y = np.r_[np.zeros(40), np.ones(40)].astype(int)
+    p0 = np.clip(0.3 + 0.4 * y + rng.normal(0, 0.15, 80), 0.01, 0.99)
+    p = rng.uniform(0, 1, 80)
+    cl = np.arange(80) // 2
+    r = va.auc_pair_ci(y, p, p0, cl, 200)
+    assert r["auc_p0"] > 0.9 and abs(r["auc"] - 0.5) < 0.2 and r["diff"] < 0
+    assert r["diff_ci"][1] < 0  # CI of the AUC difference excludes zero here
+    folds = np.arange(80) % 5
+    z = np.log(p0 / (1 - p0))
+    assert va.cv_brier(y, z[:, None], folds) < 0.25

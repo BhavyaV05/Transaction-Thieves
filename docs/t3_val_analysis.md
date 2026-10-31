@@ -15,7 +15,7 @@ Data: val `eval` runs `outputs/t3_val/eval/<spec>/c000,c001` (160 askable alerts
 5. **The loss is moderately concentrated in compose.** The five worst alerts are 42% of the sum of per-alert losses, and compose without them is -0.0025 (Table 4). In fixed_list and act_only it is spread (top 5 hold 19% and 17%): there it is a systematic shift, not outliers.
 6. **p0 itself is miscalibrated on eval, which makes every upward update more expensive.** Eval label rate is 0.325 against mean p0 0.455 (fit+cal: 0.520 against 0.545). In the 0.5 to 0.9 range p0 overstates by 0.2 to 0.3 on eval (Table 7). Alerts with p0 >= 0.99 (saturated, the logit clips at 1e-6) have a label rate of 0.90 on fit+cal. Recalibrating p0 alone is a different thing from planner merit and is reported separately in Table 9.
 7. **No replay variant beats p0 through the answers.** The best in-sample (fit+cal) gain over p0 is -0.0006 (CI includes 0). On eval the fitted variants shrink to p0 and tie it: compose shrinkage +0.0001 [-0.0005, +0.0008]. Two variants aimed at the root cause also fail. (g) LRs re-estimated from the fit+cal answers (including the questions the live run discarded), smoothing chosen by grouped CV: it selects infinite smoothing, i.e. p0 (CV Brier 0.1554 for every alpha >= 100, 0.1624 at alpha 0.5). (h) A stacked logistic model on logit(p0) plus family answer features beats p0 on eval (-0.0110 [-0.0194, -0.0026]), but only through its recalibration part: against the model with logit(p0) alone it adds +0.0001 [-0.0011, +0.0011] on compose and is slightly worse on fixed_list, act_only and llm_decides (+0.0006 to +0.0013, CIs above 0). The answers add nothing on top of p0 in this data: not with the back-test LRs, not with re-estimated LRs, not in a fitted model.
-8. **ReAct, Reflexion and UoT are bad for a different reason**: they do not use p0 as a prior (ReAct and Reflexion never see it) and output extreme or default probabilities (section 4).
+8. **The external agents are bad for different reasons**: they do not use p0 as a prior (ReAct and Reflexion never see it) and output extreme or default probabilities (section 4; all agents in 4.2 to 4.5).
 
 ## 2. Evidence: failure decomposition
 
@@ -355,7 +355,9 @@ Reading: the CV Brier of (g) equals p0 only when alpha is large (answers ignored
 
 The recalibration (intercept -0.18, slope 0.79 on logit p0 clipped to +-5, fitted on fit+cal) improves eval Brier of p0 by -0.0111 [-0.0196, -0.0028], but it makes fit+cal itself worse (0.1554 to 0.1582). The eval gain is the shift in base rate (label rate 0.325 on eval, 0.520 on fit+cal), not a stable calibration error. It would be applied to p0 and to every system alike, so it does not change any system's difference to p0 and cannot be counted for the planner. The test base rate is unknown.
 
-## 4. ReAct, Reflexion, UoT
+## 4. External agents: why they do not beat p0
+
+### 4.1 ReAct, Reflexion, UoT (first look, Table 10)
 
 **Table 10. Agents that output their own probability (eval)**
 | agent | verdicts / 160 | Brier vs p0 [CI] | mean p (y=1 / y=0) | mean p0 (y=1 / y=0) | corr(p, p0) | corr(p, y) vs corr(p0, y) | most common p | share p>=0.8 | mean |p - p0| |
@@ -368,7 +370,99 @@ The recalibration (intercept -0.18, slope 0.79 on logit p0 clipped to +-5, fitte
 - ReAct and Reflexion never see p0: `alert.summary` holds sender, receiver, banks, amount, currency, format, time and the evidence text (`ftm/retrieval/views.py::_base_summary`, `scripts/run_llm_agent.py`), and `ftm/external/react.py` and `text_agent.py` do not read `alert.p0`. Their final probability is the model's own. 53 to 54% of their verdicts are exactly 0.85, 63 to 67% are >= 0.8. Their probability is slightly lower for launderers (0.68) than for non-launderers (0.77) on ReAct; corr(p, y) is -0.22 against +0.44 for p0. The verdict is an anchor, not a reading of the answers. (I did not find 0.85 in the code; the exemplar finishes with 0.8.) 12 and 18 alerts end with no verdict and are scored p0.
 - In the traces I read, ReAct asks at eps 0.5, and the table accepts nothing at eps 0.5, so the formula would not update on those answers either; the Thought text alone moves the number.
 - UoT starts from p0 and updates a belief with answer probabilities that the model states itself (floored at 1e-3). It does use p0 (corr 0.42) but 52.5% of its verdicts are below 0.02 or above 0.98, mean |p - p0| is 0.30, and corr(p, y) is +0.28, lower than p0's +0.45. Overconfident self-stated likelihoods dominate.
-- ReWOO and LLMCompiler are being fixed separately and are not covered.
+- ReWOO and LLMCompiler (rerun at 098b78a after the answer-cap fix) and every other external agent are covered in 4.2 to 4.5.
+
+### 4.2 All external agents, descriptive (Tables 12 to 14)
+
+Everything here is descriptive. The agents ran on val `eval` only (160 alerts), so no parameter could be fitted on `fit`/`cal` for them; AUC and the verdict profile need no fitting. Table 14 is the only place a fit appears, and it is a grouped 10-fold CV **on eval itself**: it uses eval labels and eval's base rate (0.33), so it is not a result and must not be quoted as one. Co-Investigator has no val result yet (rerun queued), so it is missing; the script picks up any spec with a `summary.json`. "Sees p0" was read from `ftm/external/*.py`: `case_text` (ReAct, Reflexion, ReWOO, LATS, LLMCompiler, DSPy-ReAct, Debate) hides only `evidence`, `partner_banks`, `shape`, `top_features`, and `AlertContext.p0` is not a summary key, so p0 reaches neither the prompt nor the number. UoT puts p0 in its case block and starts its belief at p0. BED-LLM puts p0 in the hypothesis prompt and the final number is `(K W_launder + p0)/(K+1)`. Sharma shows p0 through its `get_shap_explanation` tool, but the default variant (`agent`) never escalates, so the number is the verdict map 0.9 / 0.1 (defaults, not refitted on `fit`). Torres puts "bank's model score" in a context evidence item; FinFRE has `bank_score` as a row feature.
+
+**Table 12. External agents: verdict profile (alerts with a verdict; descriptive)**
+
+| agent | sees p0 | verdicts | rate | mean p (y=1 / y=0) | mean p vs label rate (mean p0) | share = 0.85 / 0.5 / 0.1 / 0.9 | share <0.02 or >0.98 | share = p0 |
+|---|---|---|---|---|---|---|---|---|
+| bed_llm | yes (prompt, 1 particle) | 160 | 1.000 | 0.55 / 0.31 | 0.39 vs 0.33 (0.45) | 0.00 / 0.00 / 0.00 / 0.00 | 0.01 | 0.00 |
+| debate | no | 160 | 1.000 | 0.65 / 0.70 | 0.69 vs 0.33 (0.45) | 0.12 / 0.00 / 0.00 / 0.01 | 0.00 | 0.00 |
+| dspy_react | no | 156 | 0.975 | 0.75 / 0.74 | 0.74 vs 0.33 (0.45) | 0.52 / 0.00 / 0.02 / 0.06 | 0.00 | 0.00 |
+| finfre_rag_native | yes (row feature) | 160 | 1.000 | 0.30 / 0.15 | 0.20 vs 0.33 (0.45) | 0.00 / 0.03 / 0.00 / 0.00 | 0.00 | 0.00 |
+| finfre_rag_ported | yes (row feature) | 160 | 1.000 | 0.31 / 0.17 | 0.21 vs 0.33 (0.45) | 0.00 / 0.04 / 0.00 / 0.00 | 0.00 | 0.01 |
+| lats | no | 128 | 0.800 | 0.75 / 0.74 | 0.74 vs 0.31 (0.44) | 0.56 / 0.01 / 0.02 / 0.12 | 0.00 | 0.01 |
+| llmcompiler | no | 154 | 0.963 | 0.75 / 0.77 | 0.76 vs 0.33 (0.45) | 0.33 / 0.01 / 0.04 / 0.29 | 0.06 | 0.01 |
+| react | no | 148 | 0.925 | 0.68 / 0.77 | 0.74 vs 0.31 (0.46) | 0.53 / 0.01 / 0.01 / 0.07 | 0.00 | 0.00 |
+| reflexion | no | 142 | 0.887 | 0.72 / 0.76 | 0.75 vs 0.30 (0.45) | 0.54 / 0.01 / 0.01 / 0.09 | 0.00 | 0.00 |
+| rewoo | no | 160 | 1.000 | 0.68 / 0.80 | 0.76 vs 0.33 (0.45) | 0.23 / 0.00 / 0.07 / 0.01 | 0.47 | 0.03 |
+| sharma_native | yes (tool; not in the number) | 160 | 1.000 | 0.53 / 0.23 | 0.33 vs 0.33 (0.45) | 0.00 / 0.00 / 0.72 / 0.28 | 0.00 | 0.00 |
+| sharma_ported | yes (tool; not in the number) | 158 | 0.988 | 0.42 / 0.20 | 0.27 vs 0.32 (0.45) | 0.00 / 0.00 / 0.78 / 0.22 | 0.00 | 0.00 |
+| torres_native | yes (evidence item) | 147 | 0.919 | 0.70 / 0.72 | 0.71 vs 0.33 (0.46) | 0.00 / 0.31 / 0.00 / 0.00 | 0.00 | 0.00 |
+| torres_ported | yes (evidence item) | 155 | 0.969 | 0.68 / 0.69 | 0.69 vs 0.34 (0.46) | 0.00 / 0.30 / 0.00 / 0.00 | 0.00 | 0.00 |
+| uot | yes (prompt, initial belief) | 160 | 1.000 | 0.57 / 0.32 | 0.40 vs 0.33 (0.45) | 0.00 / 0.01 / 0.00 / 0.01 | 0.53 | 0.04 |
+
+**Table 13. External agents: discrimination and calibration against p0 on the same alerts (alerts with a verdict)**
+
+AUC with a 95% attempt+accounts cluster-bootstrap CI; the difference is paired. Brier columns are on the verdict alerts only (so they differ from the end-to-end table, where a missing verdict counts as p0).
+
+| agent | n | AUC agent [CI] | AUC p0 [CI] | AUC diff [CI] | Brier agent | Brier p0 |
+|---|---|---|---|---|---|---|
+| bed_llm | 160 | 0.71 [0.59, 0.82] | 0.76 [0.66, 0.84] | -0.04 [-0.14, 0.04] | 0.2096 | 0.1985 |
+| debate | 160 | 0.44 [0.35, 0.54] | 0.76 [0.66, 0.84] | -0.32 [-0.45, -0.18] | 0.4225 | 0.1985 |
+| dspy_react | 156 | 0.50 [0.41, 0.59] | 0.75 [0.64, 0.84] | -0.25 [-0.37, -0.14] | 0.4502 | 0.1996 |
+| finfre_rag_native | 160 | 0.63 [0.53, 0.74] | 0.76 [0.66, 0.84] | -0.13 [-0.24, 0.01] | 0.2323 | 0.1985 |
+| finfre_rag_ported | 160 | 0.62 [0.51, 0.74] | 0.76 [0.66, 0.84] | -0.14 [-0.25, 0.00] | 0.2334 | 0.1985 |
+| lats | 128 | 0.51 [0.40, 0.60] | 0.73 [0.62, 0.83] | -0.23 [-0.37, -0.08] | 0.4476 | 0.2095 |
+| llmcompiler | 154 | 0.44 [0.34, 0.55] | 0.76 [0.65, 0.84] | -0.32 [-0.47, -0.17] | 0.4719 | 0.2004 |
+| react | 148 | 0.39 [0.30, 0.48] | 0.77 [0.66, 0.86] | -0.38 [-0.51, -0.22] | 0.4791 | 0.2011 |
+| reflexion | 142 | 0.45 [0.34, 0.54] | 0.76 [0.66, 0.85] | -0.32 [-0.46, -0.18] | 0.4689 | 0.2007 |
+| rewoo | 160 | 0.42 [0.33, 0.50] | 0.76 [0.66, 0.84] | -0.34 [-0.47, -0.20] | 0.5776 | 0.1985 |
+| sharma_native | 160 | 0.69 [0.59, 0.78] | 0.76 [0.66, 0.84] | -0.07 [-0.11, -0.02] | 0.2150 | 0.1985 |
+| sharma_ported | 158 | 0.64 [0.54, 0.72] | 0.75 [0.65, 0.84] | -0.12 [-0.18, -0.06] | 0.2328 | 0.2001 |
+| torres_native | 147 | 0.50 [0.40, 0.61] | 0.77 [0.66, 0.85] | -0.27 [-0.40, -0.12] | 0.4456 | 0.1934 |
+| torres_ported | 155 | 0.50 [0.41, 0.60] | 0.76 [0.65, 0.85] | -0.26 [-0.37, -0.11] | 0.4314 | 0.2001 |
+| uot | 160 | 0.66 [0.57, 0.75] | 0.76 [0.66, 0.84] | -0.10 [-0.20, 0.01] | 0.2879 | 0.1985 |
+
+**Table 14. Fitted on eval itself, grouped 10-fold CV within the verdict alerts: NOT a result (descriptive: is the agent badly scaled or unable to rank?)**
+
+Logistic recalibration of logit(p) (agent alone), of logit(p0) (the same for p0), and a logistic model on both. The agents ran only on eval, so nothing could be fitted on fit/cal; these numbers use the evaluation labels and the base rate of this sample.
+
+| agent | Brier agent raw | agent recalibrated | p0 raw | p0 recalibrated | p0 + agent |
+|---|---|---|---|---|---|
+| bed_llm | 0.2096 | 0.1942 | 0.1985 | 0.1761 | 0.1814 |
+| debate | 0.4225 | 0.2227 | 0.1985 | 0.1761 | 0.1758 |
+| dspy_react | 0.4502 | 0.2250 | 0.1996 | 0.1768 | 0.1786 |
+| finfre_rag_native | 0.2323 | 0.2087 | 0.1985 | 0.1761 | 0.1801 |
+| finfre_rag_ported | 0.2334 | 0.2126 | 0.1985 | 0.1761 | 0.1826 |
+| lats | 0.4476 | 0.2236 | 0.2095 | 0.1876 | 0.1891 |
+| llmcompiler | 0.4719 | 0.2311 | 0.2004 | 0.1800 | 0.1826 |
+| react | 0.4791 | 0.2145 | 0.2011 | 0.1762 | 0.1716 |
+| reflexion | 0.4689 | 0.2170 | 0.2007 | 0.1751 | 0.1747 |
+| rewoo | 0.5776 | 0.2192 | 0.1985 | 0.1761 | 0.1716 |
+| sharma_native | 0.2150 | 0.1932 | 0.1985 | 0.1761 | 0.1805 |
+| sharma_ported | 0.2328 | 0.2044 | 0.2001 | 0.1747 | 0.1790 |
+| torres_native | 0.4456 | 0.2340 | 0.1934 | 0.1780 | 0.1788 |
+| torres_ported | 0.4314 | 0.2294 | 0.2001 | 0.1788 | 0.1791 |
+| uot | 0.2879 | 0.2067 | 0.1985 | 0.1761 | 0.1780 |
+
+### 4.3 Reading: can the agent rank, or is it only badly scaled?
+
+p0 has AUC 0.73 to 0.77 on these alerts. Two groups.
+
+- **No p0 in the case text (ReAct, Reflexion, ReWOO, LATS, LLMCompiler, DSPy-ReAct, Debate): they cannot rank.** AUC 0.39 to 0.51, every CI contains 0.5 or sits below it, and the paired AUC difference to p0 is -0.23 to -0.38 with every CI excluding 0. They are also badly scaled (mean p 0.69 to 0.76 against a label rate of 0.31 to 0.34; 12 to 56% of the verdicts sit on 0.85; ReWOO has 47% of verdicts below 0.02 or above 0.98; LLMCompiler 29% at exactly 0.9). Rescaling does not rescue them: even fitted on eval itself, the recalibrated agent reaches 0.21 to 0.23 (CV), against 0.176 for p0 recalibrated the same way (Table 14), and combining it with p0 changes p0's CV Brier by -0.005 to +0.003, which is noise at this size. So the answer to the key question is "both, and mostly the first": with the same evidence and the noisy answers, Gemma 4 12B in these loops produces no ranking signal (AUC about 0.5); the missing prior is what makes the number worse than a constant, since p0 alone ranks at 0.76. Their Brier of 0.39 to 0.58 is mainly the miscalibration (mean 0.75 against base rate 0.33) of a score that carries nothing.
+- **p0 in the input (BED-LLM, Sharma, UoT, FinFRE, Torres): they rank but worse than p0, and four of the five are partly just scaled.** AUC 0.71 (BED-LLM), 0.69 / 0.64 (Sharma native / ported), 0.66 (UoT), 0.63 / 0.62 (FinFRE native / ported). The AUC deficits to p0 are -0.04 [-0.14, +0.04] (BED-LLM, not distinguishable), -0.07 [-0.11, -0.02] and -0.12 (Sharma), -0.10 [-0.20, +0.01] (UoT), -0.13 [-0.24, +0.01] and -0.14 (FinFRE): they pass p0's ranking through a noisier one. Their calibration is much better (mean p 0.20 to 0.40 against 0.33), and their Brier is within 0.011 to 0.034 of p0's 0.1985, which is why they are the G4 proposal. Sharma native's number is two values (0.1 for 72%, 0.9 for 28%): its AUC 0.69 comes from that single cut, and the 0.9 / 0.1 default map is not a fitted calibration. UoT: 53% of verdicts are extreme (<0.02 or >0.98) because it multiplies model-stated likelihoods, and 4% equal p0 exactly. BED-LLM is protected by its own smoothing with p0 as one particle. Torres is the exception: p0 is in its prompt as a line of an evidence item, but its AUC is 0.50 and the number is the disposition map (31% of verdicts exactly 0.5, mean 0.71 against 0.33), so the model ignores the score and the fixed map inflates the probability. Table 14 shows that for this group a rescale is worth 0.015 to 0.08 Brier but none beats p0 recalibrated in the same way (0.176): by CV on eval, p0 + agent is 0.178 to 0.183 against 0.176 for p0 alone.
+- **Verdict rate.** LATS (0.800), Reflexion (0.887), ReAct (0.925) and Torres native (0.919) lose 8 to 20% of alerts to "no verdict" (loop ended without `finish[p]`, or narrative rejected by the validator) and are not G4-eligible; the Brier of the others includes no such effect.
+- Co-Investigator is expected to behave like Torres (same evidence items, with p0), with its first complete val result pending.
+
+### 4.4 Is the comparison fair? What the reconstruction does and does not do
+
+What is faithful: each agent keeps its paper's loop, tools and output rule (docs in each `ftm/external/*.py`); all run on the same alerts, the same `harness` toolbox, the same budget (20 calls, 6,000 tokens, eps 2) and the same model. What is not equal: (a) the Group D agents are not told the detector score that our planner uses as its prior and that the Group C papers use; (b) the verdict-to-probability maps are fixed (Sharma 0.9 / 0.1, FinFRE 1-5 table, Torres disposition) although Sharma and FinFRE provide `VerdictMap.fit` and `fit_score_map` for exactly this; those fits are written in the code but were not run (they need the agents on `fit`); (c) our planner is tuned on fit/cal (library, back-test LRs) while the agents are not, which favours the planner and is the usual protocol for off-the-shelf baselines; (d) a single seed and temperature 0, 160 alerts, so AUC CIs span 0.1 to 0.2.
+
+### 4.5 Changes that would make the baselines a fairer, stronger reconstruction (ranked)
+
+GPU minutes are `median s per alert x 160` from the validation runs (Table `docs/t3_val_runs.md`); a fit or cal part is 191 or 109 alerts, `fit`+`cal` 300 (about 1.9 times).
+
+1. **Give every Group D agent p0 in its case text (one line: the one-bank model's score for this alert).** The agents that see p0 reach AUC 0.63 to 0.71, those that do not 0.39 to 0.51, and our planner gets p0 as its posterior. Needs the team: it is a protocol change to what "ported with the same inputs" means (`prereg/external_list.yaml` is T4's); the faithful alternative is to report both arms ("as published, no p0" and "with p0"). Rerun: ReAct 26 min, Reflexion 26, ReWOO 28, LATS 71, LLMCompiler 20, Debate 43, DSPy-ReAct 67 (about 4.7 GPU-h on eval) and DSPy-ReAct also needs MIPROv2 rerun with p0 in the case text (2.7 GPU-h on 40 fit examples; the old program was optimised without it). Cost is small relative to the final run.
+2. **Convert each agent's output through a fit-part calibration, the same way for all (Sharma's `VerdictMap.fit`, FinFRE's `fit_score_map`, a logistic map of the stated probability for ReAct-family and UoT).** Fit on val `fit`, check on `cal`, report on `eval`. It removes the scale part of the loss (Table 14: 0.015 to 0.36 Brier of it) and leaves the ranking part, which is what an agent can be blamed for. Needs the team (a post-hoc map is a protocol choice; G3-style fit-only rule: no eval labels). Rerun: the agents on `fit`+`cal` (300 alerts), about 1.9 times the minutes above (Sharma native 21 min, FinFRE native 8, Torres native 70, UoT 44, BED-LLM 62; the ReAct family 38 to 134 each).
+3. **Put p0 in the output path where the paper's output is a hard label (Sharma `governed` variant, escalate -> p0; UoT floor on the stated likelihoods).** The official Sharma policy already escalates when p0 is confident and the verdict disagrees; the default `agent` variant is the "failure case". `variant="governed"` is in the code. Sharma governed is a different system from the paper's agent alone, so report both. Needs the team (which Sharma variant is "the baseline" in the final run); rerun Sharma only, about 11 + 17 min on eval for native + ported.
+4. **Remove avoidable no-verdict outcomes (LATS 20%, Reflexion 11%, ReAct 8%, Torres native 8%).** At loop end without `finish`, make one forced final-answer call (the paper behaviour varies: ReAct's paper simply stops). This is within T3 (an implementation detail, documented); it does change G4 eligibility (verdict rate >= 0.95) for those four. Rerun the four specs: LATS 71 min, Reflexion 26, ReAct 26, Torres 37.
+5. **Rank G4 by more than Brier.** Brier on this sample rewards proximity to p0 (BED-LLM's smoothing, Sharma's p0 prompt) and the 3 proposed systems all lose to p0 anyway; add AUC and calibrated Brier (item 2) to the selection and keep eligibility. Needs T4/the team (the G4 criterion is theirs); no GPU.
+6. **Report the null honestly alongside the table.** The protocol change in 1 and 2 will not make any agent beat p0 in expectation, since the CV combination of p0 and any agent gains at most 0.005 Brier on eval (Table 14, noise level); the sentence for the report is "the external agents tie or lose to p0 because they cannot rank better than p0, and the ones that cannot see p0 cannot rank at all". No GPU.
 
 ## 5. Recommendations, ranked
 

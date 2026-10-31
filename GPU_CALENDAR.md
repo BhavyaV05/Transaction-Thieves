@@ -18,7 +18,15 @@ Times are local to the machine owner; say the timezone if it matters. Keep it ch
 | 2026-10-26 08:11 → 08:57 (done, superseded) | 5070 Ti PC (Linux) | Akshat | E8 first pass, four evidence views on 160 val eval alerts: hit the Gemma prompt-cap bug, re-run below | Yes | 0.77 |
 | 2026-10-26 08:57 → 09:08 (done) | 5070 Ti PC (Linux) | Akshat | Decision rows for T2: untuned Gemma 4 12B, `large` and `large-logprob` tiers, 8,066 val rows each | Yes | 0.18 |
 | 2026-10-26 09:08 → 10:51 (done) | 5070 Ti PC (Linux) | Akshat | E8 re-run with the prompt-refit fix, four arms | Yes | 1.70 |
-| 2026-10-28 02:29 → ~10:30 (running) | 5070 Ti PC (Linux) | Akshat | T1 job: Multi-GNN HI-Medium see-everything, `--budget-s 28800` (PR #77 item 3), run from `~/projects/tt-run` via `scripts/gpu_queue.sh`; queue log `outputs/t3_queue/windows.log` | Yes (GPU busy; 16 GB card runs one job) | 8 |
+| 2026-10-28 02:29 → 10:44 (done, rc=1) | 5070 Ti PC (Linux) | Akshat | T1 job: Multi-GNN HI-Medium see-everything, `--budget-s 28800` (PR #77 item 3), run from `~/projects/tt-run` via `scripts/gpu_queue.sh`; ended rc=1 (log `outputs/t3_queue/multi_gnn_hi_medium.log`: `ValueError: zero-size array` at the end); queue log `outputs/t3_queue/windows.log` | Yes (GPU busy; 16 GB card runs one job) | 8.2 |
+| 2026-10-28 10:44 → 10:46 (failed, rc=1) | 5070 Ti PC (Linux) | Akshat | Queue: `qlora_planner` and `lora_check` stopped at start (rc=1, later fixed: trainer `warmup_ratio` argument, trl 1.16) | No | ~0 |
+| 2026-10-28 10:46 → ~19:00 (paused for a reboot into Windows) | 5070 Ti PC (Linux) | Akshat | Gemma 4 12B val session part 1: smoke, `fit`/`cal` runs, libraries (shape `e36eaf203402ee65`, account `4f53cda18c2baa0c`), then the `eval` specs through LATS (16 of 24; last LATS chunk ended 18:55) | Yes | ~8.2 |
+| 2026-10-30 04:42 → 07:11 (done) | 5070 Ti PC (Linux) | Akshat | `gemma_session_rest` (commit 098b78a): the remaining paper ports and the E10 large-tier latency (279.7 ms/decision) | Yes | 2.5 |
+| 2026-10-30 07:12 → 13:11 (done) | 5070 Ti PC (Linux) | Akshat | `gemma_redo` (098b78a): ReWOO, LLMCompiler and LATS rerun after the answer-cap fix, DSPy-ReAct with the MIPROv2 program, other repeats | Yes | 6.0 |
+| 2026-10-30 13:11 → 13:16 (failed, rc=1) | 5070 Ti PC (Linux) | Akshat | Queue: `qlora_planner`, `lora_check`, `e16_runs`, `qlora_fast`, `fast_score` stopped at start (rc=1: trainer `warmup_ratio` argument; `fast_score`: the Qwen3-4B LoRA server died); the trainer is fixed in `ff94937`, rerun queued | No | ~0.1 |
+| 2026-10-30 13:16 → 13:19 (done) | 5070 Ti PC (Linux) | Akshat | `small_score`: Qwen3-1.7B untuned fast tier on the decision rows (`outputs/e10/untuned_1.7b/`, 8.8 ms/decision) | Yes | 0.05 |
+| 2026-10-30 13:19 → 2026-11-01 05:01 (stopped, no END line) | 5070 Ti PC (Linux) | Akshat | T1 job: MEGA-GNN HI-Medium (`mega_gnn_hi_medium.log`; last logged epoch 5, 22,117 s) | Yes | ~16 |
+| 2026-11-01 05:01 → (running) | 5070 Ti PC (Linux) | Akshat | T1 job: `mega_gnn_resume`. Queued after it: Co-Investigator rerun (b7c9123, ~3 h), QLoRA planner 3 seeds, LoRA check, E16 runs, fast-model QLoRA 3 seeds, fast scoring, FraudGT | Yes | - |
 
 ## Weekly GPU-hour log (reference-hours)
 
