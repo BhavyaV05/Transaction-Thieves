@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import sys
@@ -105,11 +106,13 @@ def train(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> Path: 
     ds = Dataset.from_dict({"prompt": [p for p, _ in pairs], "completion": [c for _, c in pairs]})
     out = ROOT / cfg["output_dir"] / f"seed={seed}"
     t = cfg["train"]
+    # trl 1.16 / transformers 5 dropped warmup_ratio: the same warmup as a step count
+    steps = max_steps if max_steps > 0 else math.ceil(len(ds) / (t["per_device_batch_size"] * t["grad_accum"])) * t["epochs"]
     trainer = SFTTrainer(
         model=model, processing_class=tok, train_dataset=ds,
         args=SFTConfig(max_length=cfg["max_seq_length"], num_train_epochs=t["epochs"], learning_rate=t["learning_rate"],
                        per_device_train_batch_size=t["per_device_batch_size"], gradient_accumulation_steps=t["grad_accum"],
-                       warmup_ratio=t["warmup_ratio"], weight_decay=t["weight_decay"], optim=OPTIM.get(t["optim"], t["optim"]),
+                       warmup_steps=math.ceil(t["warmup_ratio"] * steps), weight_decay=t["weight_decay"], optim=OPTIM.get(t["optim"], t["optim"]),
                        completion_only_loss=bool(t.get("responses_only", True)), bf16=True, gradient_checkpointing=True,
                        seed=seed, data_seed=seed, logging_steps=10, output_dir=str(out / "checkpoints"), save_strategy="no",
                        report_to=[], max_steps=max_steps),
