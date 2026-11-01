@@ -1,0 +1,36 @@
+{
+ "kind": "logit_affine",
+ "mode": "intercept",
+ "a": -0.23485039005808145,
+ "b": 1.0,
+ "provenance": {
+  "dataset": "hi_medium",
+  "fit_parts": [
+   "cal"
+  ],
+  "population": "all one-bank view rows of val cal",
+  "n_fit": 196709,
+  "n_pos": 387,
+  "selection_cv_brier_on_cal_alerts": {
+   "identity_rows": 0.16508055298489877,
+   "intercept_rows": 0.1622763149276795,
+   "platt_rows": 0.1658055693155993,
+   "isotonic_rows": 0.16480248032727032,
+   "intercept_alerts": 0.16367100698235795,
+   "platt_alerts": 0.19546607133604307,
+   "isotonic_alerts": 0.16461535793116566
+  },
+  "selection_cv_brier_on_cal_rows": {
+   "identity_rows": 0.0014420658310959323,
+   "intercept_rows": 0.0014363053571581636,
+   "platt_rows": 0.0014468066530019075,
+   "isotonic_rows": 0.0014396067463788317,
+   "intercept_alerts": 0.0014426663090602184,
+   "platt_alerts": 0.010722031388017883,
+   "isotonic_alerts": 0.0014631452190382206
+  },
+  "selected": "intercept_rows",
+  "applies_to": "p0 v1 of one-bank rows (train, val, and test in the final run)"
+ },
+ "sha256": "f30ea7d7174c421ce6d2cd6dd81c0f9fa4cdbe365e73926ca0660b890f228581"
+}
