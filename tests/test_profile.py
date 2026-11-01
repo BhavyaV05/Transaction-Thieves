@@ -46,7 +46,10 @@ def test_decision_threshold_and_profiles():
         assert (ROOT / t[k]).exists()
 
 
-def test_run_llm_agent_defaults_to_the_production_profile(tmp_path):
+def test_run_llm_agent_defaults_to_the_production_profile(tmp_path, monkeypatch):
+    for k in ("FTM_EDGE_SCORER", "FTM_P0_VARIANT"):  # main() exports the profile's choice; keep it out of other tests
+        monkeypatch.setenv(k, "")
+        monkeypatch.delenv(k)
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("rla", ROOT / "scripts/run_llm_agent.py")
