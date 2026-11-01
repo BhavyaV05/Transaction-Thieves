@@ -37,30 +37,26 @@ import polars as pl  # noqa: E402
 from ftm import guards  # noqa: E402
 from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
-from ftm.external.bed_llm import BedLlm  # noqa: E402
 from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
 from ftm.external.case_memory import CaseMemory  # noqa: E402
 from ftm.external.co_investigator import CoInvestigator  # noqa: E402
 from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
-from ftm.external.debate_autogen import Debate  # noqa: E402
 from ftm.external.debate_autogen import dev_responder as debate_dev_responder  # noqa: E402
-from ftm.external.dspy_react import DspyReact  # noqa: E402
 from ftm.external.finfre_rag import ExemplarPool, FinfreRag  # noqa: E402
 from ftm.external.finfre_rag import dev_responder as finfre_dev_responder  # noqa: E402
-from ftm.external.lats import Lats  # noqa: E402
-from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
-from ftm.external.mediq import MediQ  # noqa: E402
 from ftm.external.mediq import dev_responder as mediq_dev_responder  # noqa: E402
 from ftm.external.memory_build import build_case_memory, load_p0_override  # noqa: E402
-from ftm.external.react import React  # noqa: E402
-from ftm.external.reflexion import Reflexion  # noqa: E402
-from ftm.external.rewoo import Rewoo  # noqa: E402
 from ftm.external.sharma import Sharma  # noqa: E402
 from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
 from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
-from ftm.external.uot import Uot  # noqa: E402
 from ftm.external.uot import dev_responder as uot_dev_responder  # noqa: E402
+from ftm.graph.agents.registry import (  # noqa: E402
+    ADAPTED_SYSTEMS,
+    adapted_dev_responder,
+    adapted_system,
+    ported_group_d,
+)
 from ftm.graph.runner import Worker, lock_world, run_alerts, share_session_toolbox  # noqa: E402
 from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
@@ -96,11 +92,11 @@ GROUP_C = {  # T4 ports (Group C, native and ported modes)
 }
 DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
                   "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder, "debate": debate_dev_responder,
-                  "uot": uot_dev_responder, "bed_llm": bed_llm_dev_responder, "mediq": mediq_dev_responder}
-GROUP_D = {"react": React, "reflexion": Reflexion, "rewoo": Rewoo, "lats": Lats, "llmcompiler": LlmCompiler,
-           "dspy_react": DspyReact, "debate": Debate,  # debate: T4, reimplementation of Du et al. (debate_autogen.py)
-           "uot": Uot, "bed_llm": BedLlm,  # uot, bed_llm: T4 information-seeking ports (uot.py, bed_llm.py)
-           "mediq": MediQ}  # mediq: T2 stretch port (mediq.py), not in prereg/external_list.yaml
+                  "uot": uot_dev_responder, "bed_llm": bed_llm_dev_responder, "mediq": mediq_dev_responder,
+                  **dict.fromkeys(ADAPTED_SYSTEMS, adapted_dev_responder)}
+GROUP_D = ported_group_d()  # StateGraph ports (ftm/graph/agents); FTM_LEGACY_AGENT_LOOPS=1 gives the old loops of ftm/external
+# debate: T4, reimplementation of Du et al.; uot, bed_llm: T4 information-seeking ports; mediq: T2 stretch port (not in prereg/external_list.yaml)
+# ADAPTED arms (`<agent>_adapted`): the agent's control strategy as a PlannerPolicy inside the system graph (ftm/graph/agents/adapted.py)
 
 
 def git_commit() -> str:
@@ -340,7 +336,7 @@ def verdict_rows(v: Verdict, base: dict, label: int | None, *, ctx: AlertContext
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C], default="planner")
+    ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C, *ADAPTED_SYSTEMS], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
     ap.add_argument("--val-part", choices=["fit", "cal", "eval", "all"], default=None,
@@ -475,7 +471,9 @@ def main(argv: list[str] | None = None) -> int:
         llm = RecordingClient(llm, a.record)
 
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
-    if a.system != "planner":
+    if a.system in ADAPTED_SYSTEMS and a.dspy_program is not None and a.system != "dspy_react_adapted":
+        ap.error("--dspy-program applies to --system dspy_react or dspy_react_adapted only")
+    if a.system != "planner" and a.system not in ADAPTED_SYSTEMS:
         a.pool_pos_frac = None if a.pool_pos_frac < 0 else a.pool_pos_frac
         a.memory_pos_frac = None if a.memory_pos_frac < 0 else a.memory_pos_frac
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
@@ -490,6 +488,8 @@ def main(argv: list[str] | None = None) -> int:
     menu = []
     if a.system == "planner" and bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
         menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
+    elif a.system in ADAPTED_SYSTEMS and bt is not None:
+        menu = accepted_menu(bt.table)
 
     def build_system():
         """One investigator (one per concurrent worker: planner stats and last_trace are per instance)."""
@@ -498,11 +498,15 @@ def main(argv: list[str] | None = None) -> int:
                               question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
                               use_library=a.library is not None, keep_prompts=a.keep_prompts,
                               max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
+        if a.system in ADAPTED_SYSTEMS:  # the agent's control strategy as a PlannerPolicy in the system graph; verdict = fused posterior
+            return adapted_system(a.system, llm, menu=menu, fusion=fusion, seed=a.seed, extra=extra, use_library=a.library is not None,
+                                  program_path=a.dspy_program,
+                                  question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c))  # fmt: skip
         return {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
                                                 **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
 
     system = build_system()
-    system_name = system.system_name if a.system == "planner" else a.system
+    system_name = system.system_name if a.system == "planner" or a.system in ADAPTED_SYSTEMS else a.system
     tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
     refuse_devtools_test(variant, a.alerts)
     session = tools if a.toolbox == "harness" else None  # begin/end around each alert
