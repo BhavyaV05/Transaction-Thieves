@@ -61,6 +61,7 @@ from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
 from ftm.external.uot import Uot  # noqa: E402
 from ftm.external.uot import dev_responder as uot_dev_responder  # noqa: E402
+from ftm.graph.runner import Worker, lock_world, run_alerts, share_session_toolbox  # noqa: E402
 from ftm.library.shape import receiver_edges, shape_from_edges  # noqa: E402
 from ftm.library.store import LibraryToolBox, StrategyLibrary  # noqa: E402
 from ftm.llm.backtest_table import (  # noqa: E402
@@ -73,7 +74,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
-from ftm.llm.fusion_adapter import FusedLR  # noqa: E402
+from ftm.llm.fusion_adapter import ConditionalLR, FusedLR  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM, RecordingClient  # noqa: E402
 from ftm.planners.llm import LLMPlanner  # noqa: E402
@@ -161,7 +162,8 @@ def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: 
 
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0,
-                evidence_view: str | None = None, pos_frac: float | None = None) -> list[tuple[AlertContext, int | None]]:
+                evidence_view: str | None = None, pos_frac: float | None = None,
+                p0_variant: str | None = None) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
     Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`.
     `pos_frac` (train only): a stratified draw with this share of positives (exemplar pool, case memory), None = natural.
@@ -172,7 +174,7 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     if split == "test":
         guards.require_final_run("test alerts")
     cfg = io.load_config(data)
-    alerts_path = ROOT / "data" / "alerts" / data / f"{split}.parquet"
+    alerts_path = ROOT / io.alerts_dir(cfg, p0_variant) / f"{split}.parquet"  # v1 = data/alerts/<data> (unchanged); v2 = recalibrated p0
     if split == "test":  # the label column is never read in-process on test (the analysis joins labels later)
         alerts = pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
     else:
@@ -391,7 +393,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-select-menu", action="store_true",
                     help="planner: do not show the accepted back-tested questions as a select menu (the first-run behaviour)")
     ap.add_argument("--fusion-params", type=Path, default=None,
-                    help="Fusion.params() JSON fitted on val (T4): FusedLR over the table; default is the naive summed fusion")
+                    help="fitted fusion JSON over the table: Fusion.params() (T4) -> FusedLR, or ConditionalFusion.to_json (kind conditional_fusion) "
+                         "-> ConditionalLR; default is the naive summed fusion")
+    ap.add_argument("--p0-variant", choices=["v1", "v2"], default=None,
+                    help="p0 column of the alert table: v1 or v2 (recalibrated, data/alerts/<data>_v2). Default: FTM_P0_VARIANT, else v1")
+    ap.add_argument("--concurrency", type=int, default=1,
+                    help="alerts investigated at once (thread per worker, own toolbox session over the shared world). 1 = sequential")
+    ap.add_argument("--timing-sample", type=int, default=0,
+                    help="with --concurrency > 1: the first K alerts run one by one first, for the reference per-alert latency")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
     ap.add_argument("--batch-schedule", default=None,
                     help="planner, E13 / H8: comma-separated wave sizes, e.g. 2,1 = the first step proposes 2 questions asked "
@@ -419,6 +428,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if (a.alerts == "val") != (a.val_part is not None):
         ap.error("--val-part is required with --alerts val (and only then): the val parts must not be mixed")
+    if a.concurrency < 1 or a.timing_sample < 0:
+        ap.error("--concurrency >= 1 and --timing-sample >= 0")
+    if a.concurrency > 1 and a.toolbox == "dev":
+        ap.error("--concurrency > 1 needs --toolbox harness (the dev toolbox draws from one shared random stream)")
+    if a.p0_variant is not None:
+        import os
+
+        os.environ["FTM_P0_VARIANT"] = a.p0_variant  # the existing switch (ftm.data.io.alerts_dir); reaches every reader
     refuse_devtools_test("devtools" if a.toolbox == "dev" else "harness", a.alerts)  # before any file or data is touched
     schedule = tuple(int(x) for x in a.batch_schedule.split(",")) if a.batch_schedule else None
     if schedule and a.system != "planner":
@@ -442,7 +459,9 @@ def main(argv: list[str] | None = None) -> int:
     if a.fusion_params is not None and bt is None:
         ap.error("--fusion-params needs --backtest (the fitted model reads the table's LRs and families)")
     if a.fusion_params is not None:
-        fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), bt.table)
+        params = json.loads(a.fusion_params.read_text(encoding="utf-8"))
+        fusion = (ConditionalLR.from_json(a.fusion_params, bt.table) if params.get("kind") == "conditional_fusion"
+                  else FusedLR.from_params(params, bt.table))
     else:
         fusion = NaiveLRFusion(bt.table if bt else None)
     if a.replay:
@@ -456,16 +475,7 @@ def main(argv: list[str] | None = None) -> int:
         llm = RecordingClient(llm, a.record)
 
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
-    if a.system == "planner":
-        menu = []
-        if bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
-            menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
-        system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
-                            question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
-                            use_library=a.library is not None, keep_prompts=a.keep_prompts,
-                            max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
-        system_name = system.system_name
-    else:
+    if a.system != "planner":
         a.pool_pos_frac = None if a.pool_pos_frac < 0 else a.pool_pos_frac
         a.memory_pos_frac = None if a.memory_pos_frac < 0 else a.memory_pos_frac
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
@@ -477,12 +487,26 @@ def main(argv: list[str] | None = None) -> int:
             if not a.system.startswith("co_investigator"):
                 ap.error("--coinv-emit-unvalidated applies to co_investigator only")
             kw["emit_unvalidated"] = True
-        system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
-                                                  **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
-        system_name = a.system
+    menu = []
+    if a.system == "planner" and bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
+        menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
+
+    def build_system():
+        """One investigator (one per concurrent worker: planner stats and last_trace are per instance)."""
+        if a.system == "planner":
+            return LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
+                              question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
+                              use_library=a.library is not None, keep_prompts=a.keep_prompts,
+                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
+        return {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
+                                                **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
+
+    system = build_system()
+    system_name = system.system_name if a.system == "planner" else a.system
     tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
     refuse_devtools_test(variant, a.alerts)
     session = tools if a.toolbox == "harness" else None  # begin/end around each alert
+    session_tools = lambda sess: sess  # noqa: E731 - what a system sees of a worker's session (the library wrapper, when there is one)
     only_ids = askable_ids(tools) if variant == "harness" else None
     wanted = {ln for ln in a.alert_ids.read_text(encoding="utf-8").splitlines() if ln} if a.alert_ids else None
     if wanted is not None:  # the frozen set (final run): never more than it names
@@ -504,7 +528,9 @@ def main(argv: list[str] | None = None) -> int:
         library = StrategyLibrary.load(a.library)
         if not library.frozen:
             raise SystemExit(f"{a.library} is not frozen; freeze it before using it in a run (plan.md 6.13)")
-        library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
+        library_hash = library.content_hash()
+        tools = LibraryToolBox(tools, library)
+        session_tools = lambda sess: LibraryToolBox(sess, library)  # noqa: E731
     limits = Limits(eps_per_alert=eps_budget, max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": written_variant(variant, a.variant_label), "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
@@ -516,29 +542,45 @@ def main(argv: list[str] | None = None) -> int:
             shape = dict(ctx.summary.get("shape") or {})
             f.write(json.dumps({"alert_id": ctx.alert_id, "split": ctx.split, "p0": ctx.p0,
                                 "receiver": shape.pop("receiver", ctx.summary.get("receiver")), "shape": shape}) + "\n")
+    workers = [Worker(system, tools, session)]
+    if a.concurrency > 1:  # each worker: own investigator and toolbox session over the shared world (ftm.graph.runner)
+        lock_world(session)
+        workers += [Worker(build_system(), session_tools(sess), sess)
+                    for sess in (share_session_toolbox(session) for _ in range(a.concurrency - 1))]
+
+    def run_one(wk, item):
+        ctx = item[0]
+        v, facts = investigate_one(wk.system, ctx, wk.tools, wk.session, limits)
+        return v, facts, list(getattr(wk.system, "last_trace", [])), dict(getattr(wk.system, "last_views", {}))
+
+    runs, run_info = run_alerts(alerts, workers, run_one, concurrency=a.concurrency, timing_sample=a.timing_sample,
+                                stats_of=lambda wk: wk.system.stats.as_counts() if isinstance(wk.system, LLMPlanner) else {})
     with (out / "traces.jsonl").open("w", encoding="utf-8") as traces:
-        for ctx, label in alerts:
-            before = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
-            t0 = time.perf_counter()
-            v, facts = investigate_one(system, ctx, tools, session, limits)
+        for (ctx, label), r in zip(alerts, runs, strict=True):  # alert order, whatever order the workers finished in
+            v, facts, trace, last_views = r.result
             refusals += facts["system_only_refusals"]
-            seconds.append(time.perf_counter() - t0)
-            after = system.stats.as_counts() if isinstance(system, LLMPlanner) else {}
+            seconds.append(r.seconds)
             per_alert.append({"alert_id": ctx.alert_id, "label": None if a.blind else label, "p0": ctx.p0, "probability": v.probability,
                               "seconds": seconds[-1], "gpu_seconds": v.gpu_seconds, "llm_calls": v.llm_calls,
                               "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
                               "eps_spent": facts["eps_spent"], "sim_days": facts["sim_days"],
-                              **getattr(system, "last_views", {}),  # Co-Investigator: validated, p_draft (both views)
-                              **{k: after[k] - before[k] for k in after}})  # fmt: skip
+                              **last_views,  # Co-Investigator: validated, p_draft (both views)
+                              **r.stats})  # fmt: skip
             refuse_devtools_test(variant, ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id},
                                  None if ctx.split == "test" else label, ctx=ctx, fusion=fusion, facts=facts, val_part=a.val_part)
             if v.trials is not None:
                 trials[ctx.alert_id] = v.trials
-            traces.write(json.dumps({"alert_id": ctx.alert_id, "p0": ctx.p0, "trials": v.trials, "trace": system.last_trace}, default=str) + "\n")
+            traces.write(json.dumps({"alert_id": ctx.alert_id, "p0": ctx.p0, "trials": v.trials, "trace": trace}, default=str) + "\n")
             if label is not None and not a.blind:
                 p = ctx.p0 if v.probability is None else v.probability
                 sq, n_scored = sq + (p - label) ** 2, n_scored + 1
+    if isinstance(system, LLMPlanner) and len(workers) > 1:  # the run's planner stats = the workers' merged
+        from ftm.graph.ours import PlannerStats
+
+        merged = PlannerStats.merged([w.system.stats for w in workers])
+        merged.seconds_per_alert = seconds
+        system.stats = merged
     (out / "per_alert.jsonl").write_text("".join(json.dumps(r) + "\n" for r in per_alert))  # E18 reads this
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
@@ -549,7 +591,7 @@ def main(argv: list[str] | None = None) -> int:
                "eps_per_alert": None if a.no_noise else limits.eps_per_alert, "no_noise": a.no_noise,
                "alerts_hash": hashlib.sha256("\n".join(c.alert_id for c, _ in alerts).encode()).hexdigest()[:16],
                "platform": platform.platform(), "median_seconds_per_alert": sorted(seconds)[len(seconds) // 2],
-               "brier": sq / n_scored if n_scored and not a.blind else None, "blind": a.blind,
+               "brier": sq / n_scored if n_scored and not a.blind else None, "blind": a.blind, "concurrency": run_info,
                "alert_ids_file": str(a.alert_ids) if a.alert_ids else None, "questions_exported": batches.n, "library_hash": library_hash,
                "dspy_program_sha256": hashlib.sha256(a.dspy_program.read_bytes()).hexdigest() if a.dspy_program else None,
                "verdicts_without_probability": int(df.filter((pl.col("event") == "verdict") & pl.col("probability").is_null()).height)}  # fmt: skip

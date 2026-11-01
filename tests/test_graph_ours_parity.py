@@ -16,7 +16,6 @@ from ftm.llm.investigation import LREntry, LRTable, NaiveLRFusion
 from ftm.llm.mock import MockLLM
 from ftm.planners.llm import LLMPlanner
 from ftm.planners.llm_dsl import V0Dsl
-from ftm.planners.llm_prompt import Mode
 from ftm.types import AlertContext, Limits, Reply
 
 DSL = V0Dsl()
