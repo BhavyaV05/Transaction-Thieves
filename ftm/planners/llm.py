@@ -29,9 +29,11 @@ from dataclasses import dataclass, field
 from ftm.dsl.parser import family as dsl_family
 from ftm.dsl.parser import parse as dsl_parse
 from ftm.harness.interface import ToolBox
+from ftm.library.store import DEFAULT_K as LIBRARY_K
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
 from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, NaiveLRFusion, outcome
+from ftm.llm.routing import NO_BANK, asked_bank, expected_bank
 from ftm.planners.llm_batches import QuestionBatchWriter
 from ftm.planners.llm_dsl import DslAdapter, V0Dsl, retry_hint
 from ftm.planners.llm_prompt import (
@@ -59,6 +61,20 @@ def _family(canonical: str) -> str | None:
         return dsl_family(dsl_parse(canonical))
     except Exception:  # noqa: BLE001 - an unparsable program has no family
         return None
+
+
+def route(canonical: str, alert: AlertContext, requested) -> tuple[object, str | None]:
+    """(bank to ask, refusal hint). The bank is the one that holds the question's subject, whatever the model wrote
+    (the back-test only measured that bank); the hint is set when no partner holds it. Unknown routing (a summary
+    without bank fields) keeps the model's bank."""
+    eb = expected_bank(canonical, alert.summary, alert.home_bank)
+    if eb is None:
+        return requested, None
+    if eb == NO_BANK:
+        return requested, ("its subject is an account at the home bank, so no partner bank holds anything about it. "
+                           "Use ALERT.sender or ALERT.receiver only for the party that is NOT at the home bank, or a set slot "
+                           "(ALERT.payers / ALERT.payees)")
+    return asked_bank(canonical, alert.summary, alert.home_bank), None
 
 
 def summary_evidence(alert: AlertContext, tools: ToolBox) -> str:
@@ -130,6 +146,7 @@ class LLMPlanner:
         keep_prompts: bool = False,
         max_output_tokens: int | None = None,
         batch_schedule: tuple[int, ...] | None = None,
+        threshold: float | None = None,
     ):
         self.llm = llm
         self.mode = Mode(mode)
@@ -152,6 +169,7 @@ class LLMPlanner:
         self.batch_schedule = tuple(int(k) for k in batch_schedule) if batch_schedule else None
         if self.batch_schedule and (min(self.batch_schedule) < 1 or max(self.batch_schedule) > 4):
             raise ValueError(f"batch_schedule sizes must be in 1..4, got {self.batch_schedule}")
+        self.threshold = threshold  # shown in the prompt when set (the stop-without-asking hint)
         self.stats = PlannerStats()
         self.last_trace: list[dict] = []
 
@@ -171,13 +189,13 @@ class LLMPlanner:
         """C12 lookup by situation shape; the typology part of the key is the planner's current guess."""
         if not self.use_library:
             return []
-        shape = {**alert.summary.get("shape", {}), "typology": typology or "any"}
-        return [{"text": str(s.get("text", ""))[:300]} for s in tools.search_library(shape)[:5]]
+        shape = {**alert.summary.get("shape", {}), "typology": typology or "any", "receiver": alert.summary.get("receiver")}  # receiver: E11 account keying only
+        return [{"text": str(s.get("text", ""))[:300]} for s in tools.search_library(shape)[:LIBRARY_K]]
 
     def _wave(self, action, session: Investigation, rec: dict, step: int, alert: AlertContext, refused: dict) -> tuple[str, str | None]:
         """Ask one batched step's questions as one wave. Returns (outcome, feedback): outcome is "asked" (the schedule
         slot is used), "retry" (nothing could be sent: feedback goes back to the model) or "break" (clock / eps used up)."""
-        sent: list[tuple] = []  # (action item, check, eps) per question that is sent
+        sent: list[tuple] = []  # (action item, check, eps, q, bank) per question that is sent
         notes: list[str] = []
         per_q: list[dict] = []
         reserved, families, keys = 0.0, set(), set()
@@ -207,15 +225,23 @@ class LLMPlanner:
                 notes.append(f"invalid question {program!r}: {check.error}. {retry_hint(program, check.error, self.dsl.reference_text())}")
                 continue
             self.stats.dsl_ok += 1
-            if (check.canonical, str(it.bank)) in refused:
+            bank, why_not = route(check.canonical, alert, it.bank)
+            if why_not:
+                q["error"] = "no_partner_holds_subject"
+                notes.append(f"{check.canonical} cannot be asked: {why_not}.")
+                continue
+            if bank != it.bank:
+                q["bank_requested"] = it.bank
+                q["bank"] = bank
+            if (check.canonical, str(bank)) in refused:
                 self.stats.refused_repeats += 1
                 q["error"] = "duplicate_refused"
-                notes.append(f"bank {it.bank} already refused this exact question ({refused[(check.canonical, str(it.bank))]}).")
+                notes.append(f"bank {bank} already refused this exact question ({refused[(check.canonical, str(bank))]}).")
                 continue
-            if (check.canonical, str(it.bank)) in keys:
+            if (check.canonical, str(bank)) in keys:
                 self.stats.duplicates += 1
                 q["error"] = "duplicate_in_wave"
-                notes.append(f"{check.canonical} to bank {it.bank} appears twice in the wave.")
+                notes.append(f"{check.canonical} to bank {bank} appears twice in the wave.")
                 continue
             fam = _family(check.canonical)
             if fam is not None and fam in families:
@@ -226,20 +252,20 @@ class LLMPlanner:
                 q["error"] = "wave_over_eps"
                 notes.append(f"the wave's questions do not fit the eps left together ({session.eps_left:g}).")
                 continue
-            keys.add((check.canonical, str(it.bank)))
+            keys.add((check.canonical, str(bank)))
             if fam is not None:
                 families.add(fam)
             reserved += eps
             q["canonical"] = check.canonical
-            sent.append((it, check, eps, q))
+            sent.append((it, check, eps, q, bank))
         rec["wave"] = per_q
         self.stats.usable += bool(sent)
         if not sent:
             rec["error"] = "wave: no valid question"
             return "retry", " ".join(notes) + " Propose a different wave, or stop."
-        results = session.ask_wave([(it.bank, check, eps, step) for it, check, eps, _ in sent])
+        results = session.ask_wave([(bank, check, eps, step) for it, check, eps, _, bank in sent])
         any_allowed, outcome_, why_last = False, "asked", None
-        for (it, check, eps, q), entry in zip(sent, results, strict=True):
+        for (it, check, eps, q, bank), entry in zip(sent, results, strict=True):
             if isinstance(entry, DuplicateQuestion):
                 self.stats.duplicates += 1
                 q["error"] = "duplicate"
@@ -249,16 +275,16 @@ class LLMPlanner:
             if entry.gate_decision != "allowed":
                 self.stats.refusals += 1
                 why = session.last_refusal or entry.gate_decision
-                refused[(check.canonical, str(it.bank))] = why
+                refused[(check.canonical, str(bank))] = why
                 q["error"] = f"refused: {why}"
-                notes.append(f"the {entry.gate_decision} refusal for bank {it.bank}: {why}.")
+                notes.append(f"the {entry.gate_decision} refusal for bank {bank}: {why}.")
                 why_last = why
                 continue
             any_allowed = True
             if isinstance(entry.response, Reply):
                 q.update(answer_value=entry.response.value, answer_kind=entry.response.kind)
             if it.action == "compose" and self.batch_writer is not None:
-                self.batch_writer.add(canonical=check.canonical, kind=check.kind, family=check.family, eps=eps, bank=it.bank,
+                self.batch_writer.add(canonical=check.canonical, kind=check.kind, family=check.family, eps=eps, bank=bank,
                                       alert_id=alert.alert_id, split=alert.split, step=step, mode=self.mode.value,
                                       typology_guess=action.typology)  # fmt: skip
         if not any_allowed:
@@ -274,10 +300,16 @@ class LLMPlanner:
         budget = BudgetedClient(self.llm, limits, tag=alert.alert_id, trim=False)  # trims itself below
         evidence, rules, strategies = self._context(alert, tools)
         banks = list(alert.summary.get("partner_banks", []))
-        summary = {k: v for k, v in alert.summary.items() if k not in _SUMMARY_HIDDEN}
+        summary = {"home_bank": alert.home_bank, **{k: v for k, v in alert.summary.items() if k not in _SUMMARY_HIDDEN}}
         trace: list[dict] = []
         feedback, failures, belief, typology = None, 0, None, None
-        menu = [q for q in self.questions.values() if self.question_filter is None or self.question_filter(q, alert)]
+        menu = []
+        for q in self.questions.values():
+            if self.question_filter is not None and not self.question_filter(q, alert):
+                continue
+            bank, none_held = route(q["program"], alert, None)
+            if none_held is None:  # offered only where a partner holds the subject; each item names its bank
+                menu.append({**q, "bank": bank} if bank is not None else q)
         refused: dict[tuple[str, str], str] = {}  # (canonical, bank) the gate / accountant refused -> why
         step, slot = 0, 0  # slot: position in batch_schedule (a retried step does not use one up)
         token_scale, refits = 1.0, 0  # per alert, so results do not depend on alert order
@@ -289,7 +321,7 @@ class LLMPlanner:
                 alert_summary=summary, evidence_text=evidence, partner_banks=banks, eps_left=session.eps_left,
                 calls_left=budget.calls_left, questions=menu, strategies=strategies,
                 rules=rules, answers=session.answers_so_far(), posterior=session.posterior, feedback=feedback,
-                wave_k=schedule[slot] if schedule else 1,
+                wave_k=schedule[slot] if schedule else 1, p0=alert.p0, threshold=self.threshold,
             )  # fmt: skip
             rec: dict = {"step": step}
             trace.append(rec)
@@ -367,31 +399,37 @@ class LLMPlanner:
                 rec["error"] = f"dsl: {check.error}"
                 continue
             self.stats.dsl_ok += 1
+            bank, why_not = route(check.canonical, alert, action.bank)
+            if why_not:
+                feedback = f"{check.canonical} cannot be asked: {why_not}. Ask a question about the other party or a set slot, or stop."
+                failures += 1
+                rec["error"] = "no_partner_holds_subject"
+                continue
+            if bank != action.bank:
+                rec["bank_requested"] = action.bank
             self.stats.usable += 1
-            if (check.canonical, str(action.bank)) in refused:
+            if (check.canonical, str(bank)) in refused:
                 self.stats.refused_repeats += 1
-                feedback = (f"bank {action.bank} already refused this exact question ({refused[(check.canonical, str(action.bank))]}). "
-                            "Ask a different question or another bank, or stop.")
+                feedback = (f"bank {bank} already refused this exact question ({refused[(check.canonical, str(bank))]}). "
+                            "Ask a different question, or stop.")
                 failures += 1
                 rec["error"] = "duplicate_refused"
                 continue
             try:
-                entry = session.ask(action.bank, check, eps, step)
+                entry = session.ask(bank, check, eps, step)
             except DuplicateQuestion as e:
                 self.stats.duplicates += 1
-                fresh = next((b for b in banks if not session.already_asked(check.canonical, b)), None)
-                feedback = (f"{e} (the answer is under Answers so far). Ask a different question"
-                            + (f", or this question to another bank such as {fresh}" if fresh is not None else "") + ", or stop.")
+                feedback = f"{e} (the answer is under Answers so far; only bank {bank} holds this subject). Ask a different question, or stop."
                 failures += 1
                 rec["error"] = "duplicate"
                 continue
-            rec.update(canonical=check.canonical, bank=action.bank, eps=eps, outcome=outcome(entry),
+            rec.update(canonical=check.canonical, bank=bank, eps=eps, outcome=outcome(entry),
                        posterior_after=entry.posterior_after)  # fmt: skip
             if entry.gate_decision != "allowed":  # blocked / over budget: not a success, counts toward the stop rule
                 self.stats.refusals += 1
                 why = session.last_refusal or entry.gate_decision
-                refused[(check.canonical, str(action.bank))] = why
-                feedback = f"the {entry.gate_decision} refusal for bank {action.bank}: {why}. Ask a different question or bank, or stop."
+                refused[(check.canonical, str(bank))] = why
+                feedback = f"the {entry.gate_decision} refusal for bank {bank}: {why}. Ask a different question or bank, or stop."
                 failures += 1
                 rec["error"] = f"refused: {why}"
                 if "used up" in why:  # the clock or the per-alert eps budget is spent: no question can succeed any more
@@ -402,7 +440,7 @@ class LLMPlanner:
                 rec.update(answer_value=entry.response.value, answer_kind=entry.response.kind)
             if action.action == "compose" and self.batch_writer is not None and entry.gate_decision == "allowed":
                 self.batch_writer.add(canonical=check.canonical, kind=check.kind, family=check.family, eps=eps,
-                                      bank=action.bank, alert_id=alert.alert_id, split=alert.split, step=step,
+                                      bank=bank, alert_id=alert.alert_id, split=alert.split, step=step,
                                       mode=self.mode.value, typology_guess=action.typology)  # fmt: skip
         if self.mode.has_belief:
             probability = belief if belief is not None else alert.p0

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ftm.llm.investigation import LREntry, LRTable
+from ftm.llm.routing import asked_bank
 
 TABLE_NAME = "lr_table.jsonl"
 PLANNER_EPS_LEVELS = (0.25, 0.5, 1.0, 2.0)  # ftm.planners.llm_prompt.EPS_LEVELS, configs/compliance/gate.yaml
@@ -120,17 +121,34 @@ def program_slots(program: str) -> frozenset[str]:
     return frozenset(_SLOT.findall(program))
 
 
-def _lr_text(lr: dict[str, float]) -> str:
-    """How the answer moves the odds of laundering (LR > 1 raises them), shown to the planner as back-test statistics."""
+def _edge(x: float) -> str:
+    return f"{x:g}"
+
+
+def _lr_text(e: LREntry) -> str:
+    """How each answer moves the odds of laundering (LR > 1 raises them), as the full answer -> LR map. The LRs are
+    marginal (measured on their own, not given other answers)."""
+    lr = e.lr
     if set(lr) <= {"true", "false"}:
         return ", ".join(f"{'yes' if k == 'true' else 'no'} x{lr[k]:.2f}" for k in ("true", "false") if k in lr)
+    edges = list(e.bins or ())
+    if edges and all(f"b{i}" in lr for i in range(len(edges) + 1)):
+        parts = [f"<{_edge(edges[0])} x{lr['b0']:.2f}"]
+        parts += [f"{_edge(edges[i - 1])} to <{_edge(edges[i])} x{lr[f'b{i}']:.2f}" for i in range(1, len(edges))]
+        parts.append(f">={_edge(edges[-1])} x{lr[f'b{len(edges)}']:.2f}")
+        return "; ".join(parts)
     vals = list(lr.values())
     return f"x{min(vals):.2f} to x{max(vals):.2f} depending on the answer"
 
 
+def _max_shift(es: list[LREntry]) -> float:
+    """Largest |log LR| any answer of the question can give (the most one answer can move the log-odds)."""
+    return max((abs(math.log(v)) for e in es for v in e.lr.values() if v > 0), default=0.0)
+
+
 def accepted_menu(table: LRTable, id_prefix: str = "B") -> list[dict]:
     """One menu item per accepted canonical program (its accepted eps levels merged), in a neutral order (family, then
-    program), with a stable id. Item: {id, program, family, eps (accepted levels, ascending), slots, lr_text}.
+    program), with a stable id. Item: {id, program, family, eps (accepted levels, ascending), slots, lr_text, max_shift}.
     Only rows accepted by e-BH are offered: a question that failed back-testing cannot move the posterior."""
     by_prog: dict[str, list[LREntry]] = {}
     for e in table.entries():
@@ -139,9 +157,9 @@ def accepted_menu(table: LRTable, id_prefix: str = "B") -> list[dict]:
     items = []
     for prog, es in by_prog.items():
         es.sort(key=lambda e: e.eps)
-        lr_text = _lr_text(es[0].lr) if len(es) == 1 else "; ".join(f"eps {e.eps:g}: {_lr_text(e.lr)}" for e in es)
+        lr_text = _lr_text(es[0]) if len(es) == 1 else " | ".join(f"eps {e.eps:g}: {_lr_text(e)}" for e in es)
         items.append({"program": prog, "family": es[0].family or "", "eps": [e.eps for e in es],
-                      "slots": sorted(program_slots(prog)), "lr_text": lr_text})  # fmt: skip
+                      "slots": sorted(program_slots(prog)), "lr_text": lr_text, "max_shift": _max_shift(es)})  # fmt: skip
     items.sort(key=lambda x: (x["family"], x["program"]))
     width = max(2, len(str(len(items))))
     return [{"id": f"{id_prefix}{i + 1:0{width}d}", **it} for i, it in enumerate(items)]
@@ -150,3 +168,14 @@ def accepted_menu(table: LRTable, id_prefix: str = "B") -> list[dict]:
 def applicable_to(item: dict, available_slots: frozenset[str] = ACCOUNT_SLOTS) -> bool:
     """A menu question applies to an alert iff every ALERT.<slot> it names is bound for that alert."""
     return set(item.get("slots") or ()) <= set(available_slots)
+
+
+def routed_bank(item: dict, alert) -> int | str | None:
+    """The one bank the question can be asked of for this alert (ftm.llm.routing), None if no partner holds it."""
+    return asked_bank(item["program"], alert.summary, alert.home_bank)
+
+
+def bank_routable(item: dict, alert) -> bool:
+    """Menu filter: the question is offered only if a partner bank holds its subject for this alert (a question about
+    a home-bank account would be answered by a bank that knows nothing, and carries no back-tested LR)."""
+    return routed_bank(item, alert) is not None

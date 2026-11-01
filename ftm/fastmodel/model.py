@@ -34,11 +34,16 @@ def label_logps(top_logprobs: list[dict], decision: str) -> np.ndarray:
     """Label log-probs (in DECISIONS order) from one token's top logprobs [{token, logprob}, ...]."""
     d = DECISIONS[decision]
     t2l = {t.lower(): i for i, t in enumerate(d.tokens)}
-    out = np.full(len(d.labels), FLOOR_LOGP)
+    seen: list[list[float]] = [[] for _ in d.labels]
     for item in top_logprobs:
         i = t2l.get(item["token"].strip().lower())
         if i is not None:
-            out[i] = max(out[i], item["logprob"])  # " yes" and "yes" both count; keep the larger
+            seen[i].append(item["logprob"])  # " yes" and "yes" are the same label: their probabilities add
+    out = np.full(len(d.labels), FLOOR_LOGP)
+    for i, lp in enumerate(seen):
+        if lp:
+            m = max(lp)
+            out[i] = m + math.log(sum(math.exp(x - m) for x in lp))  # logsumexp; the floor only fills a missing label
     return out
 
 

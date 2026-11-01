@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--backtest", type=Path, required=True)
     ap.add_argument("--keying", choices=["shape", "account"], default="shape")
-    ap.add_argument("--n-min", type=int, default=20)
+    ap.add_argument("--n-min", type=int, default=None, help="default 20 (shape) / 1 (account)")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--freeze", action="store_true")
     a = ap.parse_args(argv)

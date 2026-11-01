@@ -66,6 +66,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
     BacktestTableError,
     accepted_menu,
     applicable_to,
+    bank_routable,
     load_backtest,
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
@@ -399,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
         if bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
             menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
         system = LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
-                            question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))), seed=a.seed, extra=extra, fusion=fusion,
+                            question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
                             use_library=a.library is not None, keep_prompts=a.keep_prompts,
                             max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
         system_name = system.system_name

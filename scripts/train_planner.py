@@ -135,7 +135,7 @@ def cmd_distill(a) -> int:
 
     labels = {}
     for split in a.splits:
-        df = pl.read_parquet(ROOT / "data" / "alerts" / a.data / f"{split}.parquet", columns=["alert_id", "label", "split"])  # time-guard: not transactions
+        df = pl.read_parquet(ROOT / "data" / "alerts" / a.data / f"{split}.parquet", columns=["alert_id", "label", "split", "bank", "timestamp"])  # time-guard: not transactions
         labels.update({r["alert_id"]: r for r in df.to_dicts()})
     try:  # the mode is read from T2's cache entries beside the table; --backtest-mode is only a cross-check
         bt = load_backtest(a.backtest, mode=a.backtest_mode, require="realistic")
@@ -155,7 +155,7 @@ def cmd_distill(a) -> int:
         fusion = NaiveLRFusion(table)
     examples, counts = distill_examples(traces, labels, TableAcceptance(bt), fusion=fusion,
                                         teacher=Teacher(a.teacher_model, a.teacher_revision), splits=tuple(a.splits),
-                                        allow_naive=a.fusion_params is None)  # fmt: skip
+                                        allow_naive=a.fusion_params is None, filter=a.filter, table=table, stop_threshold=a.stop_threshold)  # fmt: skip
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text("".join(json.dumps(e) + "\n" for e in examples), encoding="utf-8")
     summary = {"out": str(a.out), "runs": [str(r) for r in a.runs], "backtest": str(a.backtest), "backtest_mode": bt.mode,
@@ -241,6 +241,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="cross-check, or the stated mode of a table copied away from its cache; read from the cache otherwise")
     d.add_argument("--fusion-params", type=Path, default=None,
                    help="Fusion.params() JSON of the model fitted on val; default: the naive summed fusion (the one the teacher runs used)")
+    d.add_argument("--filter", choices=["expected", "realised"], default="expected",
+                   help="expected: right-bank accepted steps of families with positive cross-fitted held-out gain, plus stop examples; "
+                        "realised: the E16 v1 filter (moved toward the alert's own label)")
+    d.add_argument("--stop-threshold", type=float, default=0.5, help="decision threshold for the expected filter's stop rule")
     d.add_argument("--teacher-model", required=True)
     d.add_argument("--teacher-revision", required=True, help="weights revision (commit hash) of the served teacher")
     d.add_argument("--out", type=Path, required=True)

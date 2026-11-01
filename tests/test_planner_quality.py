@@ -182,10 +182,11 @@ def test_refusals_count_as_failures_with_reason_and_stop_the_loop():
     assert len(v.questions_log) == 1
 
 
-def test_duplicate_feedback_names_a_bank_that_was_not_asked_yet():
+def test_duplicate_feedback_does_not_suggest_another_bank():
     llm = MockLLM(script=[step(bank=220), step(bank=220), STOP])
     LLMPlanner(llm).investigate(alert(), ScriptedToolBox([reply(True)]), Limits())
-    assert "such as 1588" in llm.requests[2]["messages"][1]["content"]
+    fb = llm.requests[2]["messages"][1]["content"]
+    assert "such as 1588" not in fb and "only bank 220 holds this subject" in fb
 
 
 def test_a_used_up_refusal_ends_the_loop_at_once():

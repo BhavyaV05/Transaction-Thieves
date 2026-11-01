@@ -55,7 +55,7 @@ def test_shared_types_are_frozen():
     assert dataclasses.asdict(T.Limits()) == {"eps_per_alert": 2.0, "max_llm_calls": 20, "max_tokens": 6000,
                                               "max_sim_time_days": 5.0}  # fmt: skip
     assert [f[0] for f in fields(T.QuestionLogEntry)] == ["step", "bank", "program", "eps", "response", "gate_decision",
-                                                          "posterior_after"]  # fmt: skip
+                                                          "posterior_after", "expected_bank"]  # fmt: skip
     assert [f[0] for f in fields(T.Verdict)] == ["alert_id", "probability", "questions_log", "tokens_in", "tokens_out",
                                                  "llm_calls", "gpu_seconds", "trials"]  # fmt: skip
     # `trials` (Reflexion trials per alert, default None) was added by T3 after the freeze: additive and optional, accepted by T2
