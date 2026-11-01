@@ -7,7 +7,14 @@ import numpy as np
 import polars as pl
 import pytest
 
-from ftm.backtest.engine import BacktestCache, BacktestConfig, Backtester, accept, lr_table_rows, write_alert_rows
+from ftm.backtest.engine import (
+    BacktestCache,
+    BacktestConfig,
+    Backtester,
+    accept,
+    lr_table_rows,
+    write_alert_rows,
+)
 from ftm.backtest.synth import make_world
 from ftm.fusion.conditional import ConditionalFusion, alert_matrix, choose_shrink, fit_ridge_cv
 from ftm.fusion.fuse import logit, sigmoid

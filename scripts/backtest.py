@@ -24,7 +24,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ftm.backtest.engine import BacktestCache, BacktestConfig, Backtester, assemble, lr_table_rows, write_alert_rows  # noqa: E402
+from ftm.backtest.engine import (  # noqa: E402
+    BacktestCache,
+    BacktestConfig,
+    Backtester,
+    assemble,
+    lr_table_rows,
+    write_alert_rows,
+)
 from ftm.backtest.world import load_world  # noqa: E402
 from ftm.dsl.expert import expert_programs  # noqa: E402
 from ftm.dsl.parser import canonical, check, parse  # noqa: E402
