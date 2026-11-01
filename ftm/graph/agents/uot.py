@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 from ftm.external._infoseek import ask_question, binary_belief_update, call_json
-from ftm.external.uot import MAX_CANDIDATES, Uot as _Legacy, _outcome, _schema
+from ftm.external.uot import MAX_CANDIDATES, _outcome, _schema
+from ftm.external.uot import Uot as _Legacy
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient
 from ftm.llm.investigation import Investigation

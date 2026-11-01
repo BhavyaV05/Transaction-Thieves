@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import warnings
 
-from ftm.external.dspy_react import _CTX
+from ftm.external.dspy_react import _CTX, build_program, client_lm
 from ftm.external.dspy_react import DspyReact as _Legacy
-from ftm.external.dspy_react import build_program, client_lm
 from ftm.external.text_agent import ToolExecutor, case_text, tools_doc
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong

@@ -65,7 +65,7 @@ def text_responder(salt: int):
         if sys.startswith("Given an anti-money"):  # LLMCompiler planner
             lines = []
             for i in range(1, r.randint(1, 5)):
-                dep = f" $%d" % r.randint(1, i) if i > 1 and r.random() < 0.3 else ""
+                dep = " $%d" % r.randint(1, i) if i > 1 and r.random() < 0.3 else ""
                 lines.append(f"{i}. " + r.choice([f"ask_bank[{r.choice([220, 1588])} | 0.5 | {r.choice(ALL_QS)}]", f"lookup_rules[r{dep}]"]))
             return "\n".join(lines + [f"{len(lines) + 1}. join()"])
         if sys.startswith("You see an anti-money"):  # LLMCompiler joiner
@@ -195,5 +195,117 @@ def dspy_responder(salt: int):
             return "garbage"
         p = r.choice(["0.62", "0.2", "1.7", "high"])
         return f"[[ ## reasoning ## ]]\nr\n\n[[ ## probability ## ]]\n{p}\n\n[[ ## completed ## ]]"
+
+    return f
+
+
+# -- adapted arms: a minimal fake pipeline driver (the real one lives in ftm.graph.pipeline) -------------------------
+def menu_items():
+    from ftm.graph.policy import MenuItem
+
+    return [MenuItem("q1", BOOL_QS[0], 0.5, "1588", "passed_on", [("false", 0.4), ("true", 2.5)]),
+            MenuItem("q1", BOOL_QS[0], 1.0, "1588", "passed_on", [("false", 0.2), ("true", 4.0)]),
+            MenuItem("q2", BOOL_QS[2], 0.5, "1588", "at_least", [("false", 0.7), ("true", 1.6)]),
+            MenuItem("q3", COUNT_QS[0], 1.0, "220", "n_counterparties", [("b0", 0.5), ("b1", 1.0), ("b2", 2.2)]),
+            MenuItem("q4", COUNT_QS[1], 0.5, "220", "n_counterparties", [("b0", 0.8), ("b1", 1.1), ("b2", 1.3)])]
+
+
+def drive(policy, llm, *, calls=20, eps=2.0, seed=0, max_steps=12):
+    """Run `policy` against a fake pipeline: answers drawn at random, LRs from the menu bins. Checks the contract on every action."""
+    import math
+
+    from ftm.graph.policy import Ask, PlannerView, Stop
+    from ftm.llm.budget import BudgetedClient
+
+    budget = BudgetedClient(llm, Limits(max_llm_calls=calls), tag="fake")
+    rng = random.Random(seed)
+    menu, answers, scratch = menu_items(), [], {}
+    logit = math.log(0.3 / 0.7)
+    stop, failures, step = None, 0, 0
+    asked_log = []
+    while stop is None and step < max_steps:
+        step += 1
+        view = PlannerView({"home_bank": "7"}, 0.3, 1 / (1 + math.exp(-logit)), 0.5, "t1 A -> B 100\nt2 B -> C 99", [{"rule_id": "R1", "text": "rule"}], [],
+                           menu, list(answers), eps, budget.calls_left, step, False)  # fmt: skip
+        actions = policy.propose(view, budget, scratch)
+        asks = [a for a in actions if isinstance(a, Ask)]
+        stops = [a for a in actions if isinstance(a, Stop)]
+        for a in asks:
+            item = next((m for m in menu if m.canonical == a.canonical and abs(m.eps - a.eps) < 1e-9), None)
+            assert item is not None, f"{policy.name}: ask outside the menu {a}"
+            assert a.eps <= eps + 1e-9, f"{policy.name}: ask over the eps left"
+            assert a.canonical not in [x["program"] for x in answers], f"{policy.name}: repeated question"
+        if not asks:
+            if stops:
+                stop = stops[0].reason or "policy_stop"
+            else:
+                failures += 1
+                if failures >= 3:
+                    stop = "failures"
+            continue
+        failures = 0
+        wave_eps = sum(a.eps for a in asks)
+        for a in asks:
+            if sum(x["eps"] for x in answers) + a.eps > 2.0 + 1e-9:
+                continue
+            item = next(m for m in menu if m.canonical == a.canonical and abs(m.eps - a.eps) < 1e-9)
+            label, lr = rng.choice(item.lr_bins)
+            answers.append({"program": a.canonical, "bank": item.bank, "eps": a.eps, "outcome": "reply" if rng.random() > 0.15 else "decline",
+                            "step": step, "value": label, "lr": lr})  # fmt: skip
+            logit += math.log(lr)
+            asked_log.append(a.canonical)
+        eps = max(eps - wave_eps, 0.0)
+        if eps < 0.25:
+            stop = "eps_used"
+        if budget.calls_left <= 0:
+            stop = "calls_used"
+        if stops:
+            stop = stops[0].reason
+    return asked_log, stop, scratch, budget
+
+
+def adapted_responder(salt: int):
+    def f(messages: list[dict], kw: dict) -> str:
+        r = rng_for(messages, kw, salt)
+        schema = kw.get("json_schema") or {}
+        t = schema.get("title")
+        if r.random() < 0.05:
+            return "not json"
+        props = schema.get("properties", {})
+        if t in ("adapted_choice",):
+            return json.dumps({"thought": "hm", "choice": r.randint(0, props["choice"]["maximum"])})
+        if t == "adapted_eval":
+            return json.dumps({"verdict": r.choice(["CONFIDENT", "RETRY"]), "reason": "r"})
+        if t == "adapted_reflect":
+            return json.dumps({"reflection": "ask something with more signal"})
+        if t == "adapted_plan":
+            n = props["plan"]["items"]["properties"]["choice"]["maximum"]
+            return json.dumps({"plan": [{"why": "w", "choice": r.randint(1, n)} for _ in range(r.randint(0, 5))]})
+        if t == "adapted_scores":
+            return json.dumps({"scores": [r.randint(1, 10) for _ in range(r.randint(0, 3))]})
+        if t == "adapted_dag":
+            n = props["tasks"]["items"]["properties"]["choice"]["maximum"]
+            return json.dumps({"tasks": [{"id": i, "choice": r.randint(1, n), "deps": [j for j in range(1, i) if r.random() < 0.3]}
+                                         for i in range(1, r.randint(1, 5))]})  # fmt: skip
+        if t == "adapted_join":
+            return json.dumps({"decision": r.choice(["FINISH", "REPLAN"]), "note": "n"})
+        if t == "adapted_uot":
+            n = props["candidates"]["items"]["properties"]["choice"]["maximum"]
+            return json.dumps({"candidates": [{"choice": r.randint(1, n), "p_launder": _dist(r, 2 + r.randint(0, 1))} for _ in range(r.randint(0, 3))]})
+        if t == "adapted_bed_hyp":
+            return json.dumps({"hypotheses": [{"label": r.choice(["launder", "clean"]), "description": "d"} for _ in range(r.randint(0, 4))]})
+        if t == "adapted_bed_q":
+            import re
+
+            user = messages[-1]["content"]
+            n_h = len(re.findall(r"^H\d+ \[", user, re.MULTILINE))
+            n_p = len(re.findall(r"^P\d+:", user, re.MULTILINE))
+            n = props["candidates"]["items"]["properties"]["choice"]["maximum"]
+            return json.dumps({"past": [[_dist(r, 2) for _ in range(n_h)] for _ in range(n_p)],
+                               "candidates": [{"choice": r.randint(1, n), "predictions": [_dist(r, r.choice([2, 3])) for _ in range(n_h)]}
+                                              for _ in range(r.randint(0, 3))]})  # fmt: skip
+        if t == "adapted_mediq_state":
+            return json.dumps({"probability": r.random(), "confidence": r.choice([0.3, 0.6, 0.9])})
+        return "{}"
 
     return f
