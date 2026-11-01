@@ -293,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
     chosen = selection(a, jobs)
     t1_all = t1.load_steps(cfg)
     t1_chosen = t1_selection(a, t1_all)
-    report = pf.run_preflight(p, a.confirm_final, fp.external_agents(ext))
+    report = pf.run_preflight(p, a.confirm_final, fp.external_agents(ext), jobs)
     if a.plan and not a.confirm_final:
         report["--confirm-final"] = []  # not needed to look
     report["commands for the selected jobs"] = pf.check_job_commands(chosen) + t1.check_commands(t1_chosen)

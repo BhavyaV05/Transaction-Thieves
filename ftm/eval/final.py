@@ -254,7 +254,7 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
     if bad_split:
         raise AnalysisInputError(f"--split {split} but the logs hold rows of split {bad_split}: a val analysis never reads test rows")
     if split == "test" and never_results:
-        bad = log.filter(pl.col("variant").is_in(never_results))["variant"].unique().to_list()
+        bad = log.filter(pl.col("variant").str.split(".").list.first().is_in(never_results))["variant"].unique().to_list()  # `devtools.<label>` too
         if bad:
             raise AnalysisInputError(f"variants {bad} are never results (random answers or mock banks): refused on --split test")
     problems += _check_jobs(log, jobs)
@@ -335,7 +335,11 @@ def _check_jobs(log: pl.DataFrame, jobs: list[JobSpec]) -> list[str]:
             out.append(f"verdict rows lack the column {c!r}")
     if out:
         return out
-    dup = v.group_by(["_job", "system", "variant", "mode", "seed", "alert_id"]).len().filter(pl.col("len") > 1)
+    seen = v.group_by(["system", "variant", "mode", "_alert_set"]).agg(pl.col("_job").n_unique().alias("n")).filter(pl.col("n") > 1)
+    if seen.height:  # two jobs writing the same key would be merged by score_runs: the plan must give each job its own variant
+        out.append("different jobs write the same (system, variant, mode, alert set) and would be merged: "
+                   + ", ".join("/".join(map(str, r[:4])) for r in seen.iter_rows()) + " (run_llm_agent --variant-label)")
+    dup = v.group_by(["_job", "system", "variant", "mode", "seed", "alert_id"] + (["injection_id"] if "injection_id" in v.columns else [])).len().filter(pl.col("len") > 1)
     if dup.height:
         out.append(f"{dup.height} (system, variant, seed, alert) have more than one verdict row, e.g. {dup.row(0)[:6]}")
     for i, j in enumerate(jobs):

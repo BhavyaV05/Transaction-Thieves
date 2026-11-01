@@ -219,7 +219,7 @@ def llm_argv(job: Job, ctx: Ctx, seed: int, out: Path, ids_file: Path) -> list[s
             "--seed", str(seed), "--machine", ctx.machine_name, "--out", str(out.parent), "--run-dir", str(out),
             "--run-id", f"{ctx.run_id}.{job.job_id}.s{seed}", "--data", ctx.data,
             "--max-prompt-tokens", str(ctx.limits["max_tokens"]), "--max-llm-calls", str(ctx.limits["max_llm_calls"]),
-            "--alert-ids", str(ids_file), "--blind"]  # fmt: skip
+            "--alert-ids", str(ids_file), "--blind", "--variant-label", job.variant]  # fmt: skip
     if job.llm_system == "planner":
         argv += ["--mode", job.llm_mode or "compose"]
     if ctx.thinking:
@@ -260,7 +260,8 @@ def run_llm_job(job: Job, ctx: Ctx, d: Path, ids_file: Path) -> dict:
 def command_for(job: Job, ctx: Ctx, d: Path, ids_file: Path, seed: int) -> list[str]:
     fields = {"out": str(d), "alert_ids": str(ids_file), "alerts": job.alerts, "run_dir": str(ctx.run_dir),
               "data": ctx.data, "seed": str(seed), "system": job.system, "variant": job.variant, "job_id": job.job_id,
-              "machine": ctx.machine_name, "run_id": ctx.run_id, "commit": ctx.commit}  # fmt: skip
+              "machine": ctx.machine_name, "run_id": ctx.run_id, "commit": ctx.commit,
+              "endpoint": ctx.endpoint or "", "model": ctx.model or ""}  # fmt: skip
     quoted = {k: shlex.quote(v) for k, v in fields.items()}  # a Windows path keeps its backslashes through shlex.split
     try:
         return t1._cmd_argv(job.cmd.format(**quoted))  # quoted: a Windows path keeps its backslashes; a leading `python` is this interpreter
@@ -309,7 +310,8 @@ def validate_runlog(path: Path, expected_ids: set[str], *, allow_labels: bool = 
     stray = ids - expected_ids
     if stray:
         raise JobFailed(f"{path.name}: {len(stray)} verdict alert ids are not in the frozen set (first: {sorted(stray)[0]})")
-    dup = v.select(pl.struct(["system", "variant", "seed", "alert_id"]).is_duplicated().any()).item()
+    key = ["system", "variant", "seed", "alert_id"] + (["injection_id"] if "injection_id" in v.columns else [])  # E15: one item per kind
+    dup = v.select(pl.struct(key).is_duplicated().any()).item()
     if dup:
         raise JobFailed(f"{path.name}: more than one verdict for the same (system, variant, seed, alert)")
     return {"n_verdict_rows": v.height, "n_alerts_with_verdict": len(ids), "n_expected": len(expected_ids),

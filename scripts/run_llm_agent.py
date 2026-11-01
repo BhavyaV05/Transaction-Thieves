@@ -157,7 +157,10 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         guards.require_final_run("test alerts")
     cfg = io.load_config(data)
     alerts_path = ROOT / "data" / "alerts" / data / f"{split}.parquet"
-    alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
+    if split == "test":  # the label column is never read in-process on test (the analysis joins labels later)
+        alerts = pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
+    else:
+        alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
     alerts = select_alerts(alerts, split, val_part, seed, n, offset)
@@ -176,7 +179,7 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         summary["shape"] = {**shape_from_edges(edges, row["dst_id"], row["timestamp"]).as_dict(),
                             "receiver": summary["receiver"]}  # receiver: only the E11 account-keyed ablation reads it
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
-        out.append((ctx, int(a["label"])))
+        out.append((ctx, None if split == "test" else int(a["label"])))
     return out
 
 
@@ -251,6 +254,14 @@ def investigate_one(system, ctx: AlertContext, tools, session, limits: Limits) -
     v = finish_session(v, log, session)
     return v, {"eps_spent": session.eps_spent, "sim_days": session.elapsed_days,
                "system_only_refusals": max(own - len(log), 0)}  # asks the system refused itself (eps left), never sent
+
+
+def written_variant(variant: str, label: str | None) -> str:
+    """The run-log `variant`: the toolbox's (harness) unless the job names its own. Devtools / mock-bank runs keep their tag as
+    the prefix (`devtools.compose`), so they stay recognisable as never-a-result."""
+    if not label:
+        return variant
+    return label if variant == "harness" else f"{variant}.{label}"
 
 
 def refuse_devtools_test(variant: str, split: str) -> None:
@@ -342,6 +353,9 @@ def main(argv: list[str] | None = None) -> int:
                          "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
     ap.add_argument("--dspy-program", type=Path, default=None,
                     help="dspy_react: the MIPROv2-optimised program saved by scripts/optimize_dspy.py (its sha256 is recorded in summary.json)")
+    ap.add_argument("--variant-label", default=None,
+                    help="run-log `variant` of a harness run (default: harness). The final plan sets it to the job's variant, so jobs "
+                         "that share a system (compose, eps_*, library_account, student_*) stay separate rows in the analysis")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--alert-ids", type=Path, default=None,
                     help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set, "
@@ -438,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
         library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
     limits = Limits(eps_per_alert=eps_budget, max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
-            "variant": variant, "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
+            "variant": written_variant(variant, a.variant_label), "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
             "thinking": int(a.thinking), "mode": "native" if a.system.endswith("_native") else "ported"}  # fmt: skip
 
     rows, sq, n_scored, seconds, trials, per_alert, refusals = [], 0.0, 0, [], {}, [], 0
@@ -460,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
                               "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
                               "eps_spent": facts["eps_spent"], "sim_days": facts["sim_days"],
                               **{k: after[k] - before[k] for k in after}})  # fmt: skip
-            refuse_devtools_test(base["variant"], ctx.split)
+            refuse_devtools_test(variant, ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id},
                                  None if ctx.split == "test" else label, ctx=ctx, fusion=fusion, facts=facts, val_part=a.val_part)
             if v.trials is not None:

@@ -12,6 +12,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 import yaml
@@ -150,7 +151,7 @@ def test_missing_inputs_are_not_run_with_a_reason(tmp_path):
 def test_ambiguous_role_is_reported(tmp_path):
     env = build_run(tmp_path)
     s = yaml.safe_load((ROOT / "configs/analysis/systems.yaml").read_text())
-    s["roles"]["no_backtest"] = {"system": "ours_*", "variant": ["harness"]}
+    s["roles"]["no_backtest"] = {"system": "ours_*", "variant": ["no_backtest", "compose", "fixed_list"]}
     sp = tmp_path / "systems.yaml"
     sp.write_text(yaml.safe_dump(s))
     out = tmp_path / "out"
@@ -266,7 +267,7 @@ def test_subset_jobs_on_different_alerts_are_refused(tmp_path):
 
 def test_logs_without_manifest(tmp_path):
     env = build_run(tmp_path)
-    logs = [str(p) for k, p in env["files"].items() if not k.startswith("ext_") and not k.startswith("inj")]
+    logs = [str(p) for k, p in env["files"].items() if not k.startswith("ext_") and not k.startswith("inj") and k != "ours_subset"]  # no manifest: full and subset would share one key
     run = fn.load_run("val", None, logs)
     assert run.run_id == "logs" and run.manifest is None and len(run.jobs) == len(logs)
 
@@ -288,7 +289,7 @@ def test_table_5a_has_both_upper_limits_native_vs_ported_and_costs(val_run):
 def test_table_5b_and_privacy_curve(val_run):
     rows = {r["arm"]: r for r in __import__("csv").DictReader((val_run["out"] / "table_5b.csv").open())}
     assert float(rows["Random planner"]["brier"]) > float(rows["LLM, compose (ours, eps 2)"]["brier"])
-    assert rows["Fine-tuned planner (E16)"]["note"].startswith("not_run")  # arms without results are listed, not dropped
+    assert rows["Fine-tuned planner, seed 0 (E16)"]["note"].startswith("not_run")  # arms without results are listed, not dropped
     curve = list(__import__("csv").DictReader((val_run["out"] / "privacy_curve.csv").open()))
     ceil = {float(r["eps"]): float(r["gap vs gfp"]) for r in curve if r["arm"] == "ceiling"}
     assert ceil[0.5] < ceil[1.0] < ceil[2.0] < ceil[4.0]  # the theoretical ceiling rises with eps
@@ -331,7 +332,7 @@ def test_error_tags_and_case_studies(val_run):
     errs = [float(r["brier"]) for r in cs if r["kind"] == "error"]
     assert errs == sorted(errs, reverse=True)
     tags = list(csv.DictReader((val_run["out"] / "error_tags.csv").open()))
-    row = next(r for r in tags if r["system"] == "ours_compose" and r["variant"] == "harness" and r["alerts"] == "full_test")
+    row = next(r for r in tags if r["system"] == "ours_compose" and r["variant"] == "compose" and r["alerts"] == "full_test")
     assert sum(int(row[t]) for t in ft.TAGS) == int(row["wrong calls (p>=0.5 vs label)"])
 
 
@@ -532,3 +533,31 @@ def test_synthetic_option_runs_the_whole_pipeline(tmp_path, capsys):
 def test_synthetic_option_refuses_test(tmp_path):
     with pytest.raises(SystemExit):
         script.main(["--synthetic", "--split", "test", "--outdir", str(tmp_path)])
+
+
+# ---- one system, many jobs (finding 9) ---------------------------------------------------------------------------------
+def _ours_jobs(tmp_path, labels, same_label=False):
+    """Final-run style logs: system ours_compose, variant = the job's --variant-label."""
+    from ftm.eval.final_synth import World, _steps, _verdicts, _write
+
+    w = World("val")
+    jobs = []
+    for i, lab in enumerate(labels):
+        rows = _verdicts(w, "ours_compose", labels[0] if same_label else lab, "ported", w.ids, w.prob(1.0 + i), (0,)) + _steps(w, "ours_compose", lab, "ported", w.ids)
+        jobs.append(_write(rows, tmp_path / f"{i}.parquet"))
+    return w, jobs
+
+
+def test_arms_of_one_system_stay_separate(tmp_path):
+    labels = ["compose", "eps_1", "library_account", "batched_2_1", "student_s0", "prompted_qwen3_8b"]
+    w, jobs = _ours_jobs(tmp_path, labels)
+    run = fn.load_run("val", logs=jobs)
+    scores, _ = fn.score_runs(run, w.alerts.select("alert_id", "label", "p0"))
+    assert sorted(k.variant for k in scores) == sorted(labels)
+    assert len({float(np.nanmean(s.se_e2e)) for s in scores.values()}) == len(labels)  # not one merged arm
+
+
+def test_two_jobs_with_the_same_key_fail_loudly(tmp_path):
+    _, jobs = _ours_jobs(tmp_path, ["compose", "eps_1"], same_label=True)
+    with pytest.raises(fn.AnalysisInputError, match="would be merged"):
+        fn.load_run("val", logs=jobs)
