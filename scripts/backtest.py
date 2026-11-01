@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ftm.backtest.engine import BacktestCache, BacktestConfig, Backtester, assemble, lr_table_rows  # noqa: E402
+from ftm.backtest.engine import BacktestCache, BacktestConfig, Backtester, assemble, lr_table_rows, write_alert_rows  # noqa: E402
 from ftm.backtest.world import load_world  # noqa: E402
 from ftm.dsl.expert import expert_programs  # noqa: E402
 from ftm.dsl.parser import canonical, check, parse  # noqa: E402
@@ -66,8 +66,8 @@ def main(argv=None):
     ap.add_argument("--max-size", type=int, default=4, help="program size bound for --questions enumerate")
     ap.add_argument("--questions-file", default=None)
     ap.add_argument("--shard", default="0/1", help="i/n")
-    ap.add_argument("--time-blocks", type=int, default=1,
-                    help="> 1: e-values permute labels within this many time blocks (robust to drift; changes the namespace)")
+    ap.add_argument("--time-blocks", type=int, default=4,
+                    help="e-values permute labels within this many time blocks (robust to drift; part of the namespace; 1 = pooled)")
     ap.add_argument("--exact", action="store_true", help="no-noise variant (eps = inf) on the same alerts")
     ap.add_argument("--exact-labels", action="store_true",
                     help="exact mode proper: every bank's labels (a label-stratified sample of cross-bank transactions), no noise")
@@ -110,6 +110,7 @@ def main(argv=None):
         with (outdir / "lr_table.jsonl").open("w", encoding="utf-8") as f:
             for r in lr_table_rows(entries):
                 f.write(json.dumps(r) + "\n")
+        rows_path = write_alert_rows(cache)
         fam = {}
         for e in entries:
             d = fam.setdefault(e["family"], {"tested": 0, "accepted": 0})
@@ -117,7 +118,7 @@ def main(argv=None):
             d["accepted"] += bool(e["accepted"])
         report = {"namespace": ns, "alert_set": world.alert_set_id, "n_hypotheses": len(entries),
                   "n_eligible": sum(e["eligible"] for e in entries), "n_accepted": sum(e["accepted"] for e in entries),
-                  "fdr": a.fdr, "by_family": fam}  # fmt: skip
+                  "fdr": a.fdr, "time_blocks": a.time_blocks, "alert_rows": str(rows_path), "by_family": fam}  # fmt: skip
         (outdir / "report.json").write_text(json.dumps(report, indent=1))
         print(json.dumps(report, indent=1))
         return
