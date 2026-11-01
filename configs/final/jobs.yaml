@@ -49,7 +49,7 @@ llm:
     bed_llm: 12.5
     torres: 17.6
     sharma: 6.2
-    co_investigator: 15                   # PLACEHOLDER: no val timing yet (both modes failed every call on the vLLM grammar error; rerun queued); refill with scripts/t3_fill_s_per_alert.py after it lands
+    co_investigator: 23.3
     finfre_rag: 4.0
   pin_gpu_s3: ["ours.compose.*"]          # job ids (fnmatch) that must run on the reference machine; the rest is balanced
 
