@@ -132,3 +132,10 @@ sensitivity:
     interval: "95% cluster bootstrap, the regression refitted on every resample of whole clusters"
     rule: "the unadjusted difference stays primary; S2 is reported next to it as 'sensitivity, unadjusted is primary'"
     experiment: E2
+  S3:
+    tier: sensitivity
+    title: "Recalibrated one-bank baseline"
+    claim: "p0 is miscalibrated on later alerts (label rate falls across validation); report how much of any gain over raw p0 is recalibration. H1 stays against raw p0."
+    statistic: "Brier(system) - Brier(p0 recalibrated) and Brier(p0 recalibrated) - Brier(p0), paired cluster bootstrap"
+    recalibration: "logit p' = a + b logit p, fitted on labelled validation alerts only (scripts/fit_p0_recal.py); validation analysis: parts before eval, primary = cal; test analysis: all validation alerts"
+    interval: "95% paired cluster bootstrap; descriptive, no p-value, no verdict"

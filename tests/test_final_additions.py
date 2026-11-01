@@ -277,4 +277,66 @@ def test_prereg_lists_s1_and_s2_outside_the_holm_families():
 
 def test_new_outline_ids_are_in_the_numbers_table():
     ids = ft.outline_ids(ROOT / "docs" / "report" / "00_outline.md")
-    assert {"power_statement", "eps_infinity", "review_capacity", "adjusted_estimates"} <= set(ids)
+    assert {"power_statement", "eps_infinity", "review_capacity", "adjusted_estimates", "p0_recalibration"} <= set(ids)
+
+
+# ---- 5. recalibrated one-bank baseline (issue 108) --------------------------------------------------------------------
+def test_recalibration_recovers_a_known_map():
+    rng = np.random.default_rng(0)
+    p = rng.uniform(0.02, 0.98, 20000)
+    true_a, true_b = -0.6, 0.4
+    y = (rng.uniform(size=p.size) < fadd.apply_recal(p, true_a, true_b)).astype(float)
+    a, b = fadd.fit_logit_recal(p, y, ridge=1e-6)
+    assert a == pytest.approx(true_a, abs=0.08) and b == pytest.approx(true_b, abs=0.08)
+
+
+def test_intercept_mode_fixes_the_slope_and_matches_the_base_rate():
+    rng = np.random.default_rng(1)
+    p = rng.uniform(0.05, 0.95, 5000)
+    y = (rng.uniform(size=p.size) < 0.15).astype(float)
+    a, b = fadd.fit_logit_recal(p, y, "intercept", ridge=1e-6)
+    assert b == 1.0 and a < 0
+    assert fadd.apply_recal(p, a, b).mean() == pytest.approx(y.mean(), abs=0.01)
+
+
+def test_recalibration_stays_finite_when_scores_nearly_separate_the_labels():
+    p = np.r_[np.full(50, 0.001), np.full(50, 0.999)]
+    y = np.r_[np.zeros(49), 1.0, np.zeros(1), np.ones(49)]
+    a, b = fadd.fit_logit_recal(p, y)
+    assert np.isfinite(a) and np.isfinite(b) and abs(b) < 50  # unpenalised Newton diverges here (the real `cal` part did)
+
+
+def test_recalibration_refuses_one_class():
+    with pytest.raises(ValueError):
+        fadd.fit_logit_recal([0.2, 0.4, 0.6], [0, 0, 0])
+
+
+def test_p0_recalibration_table_identity_map_is_zero_and_systems_are_listed(run, tmp_path):
+    import csv
+
+    maps = tmp_path / "maps.json"
+    maps.write_text(json.dumps({"maps": {"identity": {"a": 0.0, "b": 1.0, "parts": "none", "n_fit": 0, "base_rate_fit": 0.5},
+                                          "shift": {"a": -0.5, "b": 1.0, "parts": "cal", "n_fit": 100, "base_rate_fit": 0.4}}}))
+    inp = yaml.safe_load(Path(run["inputs"]).read_text())
+    inp["p0_recal"] = {"path": str(maps), "primary": "shift"}
+    inputs2 = tmp_path / "inputs2.yaml"
+    inputs2.write_text(yaml.safe_dump(inp))
+    out = tmp_path / "out"
+    assert script.main(["--split", "val", "--run", str(run["run_dir"]), "--inputs", str(inputs2), "--outdir", str(out), "--n-boot", "200", "--no-figures"]) == 0
+    rows = list(csv.DictReader((out / "p0_recalibration.csv").open()))
+    ident = next(r for r in rows if r["comparison"].startswith("p0 recalibrated [identity]"))
+    assert float(ident["difference"]) == pytest.approx(0.0, abs=1e-12)
+    assert any("minus p0 recalibrated [shift]" in r["comparison"] for r in rows) and any(r["note"] == "primary recalibrated baseline" for r in rows)
+    status = json.loads((out / "status.json").read_text())["p0_recalibration"]
+    assert status["status"] == "ok" and status["primary"] == "shift"
+
+
+def test_p0_recalibration_not_run_without_maps(run):
+    assert run["status"]["p0_recalibration"]["status"] != "ok"  # inputs.yaml of the synthetic world sets no p0_recal.path
+    assert "p0_recal.path" in json.dumps(run["status"]["p0_recalibration"])
+
+
+def test_prereg_lists_s3_outside_the_holm_families():
+    h = yaml.safe_load((ROOT / "prereg" / "hypotheses.yaml").read_text())
+    assert h["sensitivity"]["S3"]["tier"] == "sensitivity" and "S3" not in h["hypotheses"]
+    assert "S3" not in {x for t in h["statistics"]["correction"].values() for x in t["family"]}
