@@ -158,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     rows, p0row, meta = [], None, {}
     for root in [a.root, *a.extra_root]:
         for d in sorted(root.iterdir()) if root.exists() else []:
-            if not d.is_dir():
+            if not d.is_dir() or d.name.startswith("e16_"):  # E16 is Qwen3-8B, not a G4 candidate: scripts/t3_e16_report.py, docs/t3_e16.md
                 continue
             data = load_spec(d)
             if data is None:
