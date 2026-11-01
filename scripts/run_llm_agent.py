@@ -39,6 +39,7 @@ from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
 from ftm.external.bed_llm import BedLlm  # noqa: E402
 from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
+from ftm.external.case_memory import CaseMemory  # noqa: E402
 from ftm.external.co_investigator import CoInvestigator  # noqa: E402
 from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
 from ftm.external.debate_autogen import Debate  # noqa: E402
@@ -50,6 +51,7 @@ from ftm.external.lats import Lats  # noqa: E402
 from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.mediq import MediQ  # noqa: E402
 from ftm.external.mediq import dev_responder as mediq_dev_responder  # noqa: E402
+from ftm.external.memory_build import build_case_memory, load_p0_override  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
@@ -131,6 +133,18 @@ def sample_order(height: int, seed: int, n: int, offset: int = 0) -> list[int]:
     return order[offset:offset + n]
 
 
+def stratified_order(alerts: pl.DataFrame, seed: int, n: int, pos_frac: float) -> pl.DataFrame:
+    """n alerts of which round(n * pos_frac) are positive (all of a class if it has fewer), each class in seeded order.
+    Train alerts only (labels are read): the exemplar pool and the case memory."""
+    y = alerts["label"].to_list()
+    n_pos = round(n * pos_frac)
+    parts = []
+    for lab, k in ((1, n_pos), (0, n - n_pos)):
+        sub = alerts.filter(pl.Series(y) == lab)
+        parts.append(sub[sample_order(sub.height, seed + lab, k)])
+    return pl.concat(parts)
+
+
 def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: int, n: int, offset: int = 0) -> pl.DataFrame:
     """The alert rows a run takes, in run order. `val_part` "all" (E18 stage 2, prereg/e18_decision.yaml): every val
     part, the eval alerts first in the seeded order a `--val-part eval` run uses (so that run's alerts are a prefix),
@@ -146,9 +160,10 @@ def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: 
 
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0,
-                evidence_view: str | None = None) -> list[tuple[AlertContext, int | None]]:
+                evidence_view: str | None = None, pos_frac: float | None = None) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
     Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`.
+    `pos_frac` (train only): a stratified draw with this share of positives (exemplar pool, case memory), None = natural.
     `evidence_view` (E8 / H6): replace the week-2 stub's trail with T1's `evidence_views.view(alert, name, k)` text."""
     from ftm.data import alias, io
     from ftm.retrieval import evidence_views, views
@@ -163,7 +178,12 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
-    alerts = select_alerts(alerts, split, val_part, seed, n, offset)
+    if pos_frac is not None:
+        if split != "train":
+            raise ValueError("pos_frac stratifies train alerts only")
+        alerts = stratified_order(alerts, seed, n, pos_frac)
+    else:
+        alerts = select_alerts(alerts, split, val_part, seed, n, offset)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
     banks = io.read_banks(cfg["views_dir"])["bank"].to_list()
     out = []
@@ -183,13 +203,26 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     return out
 
 
-def exemplar_pool(a) -> ExemplarPool:
-    """FinFRE-RAG's labelled pool: TRAIN alerts only (the pool refuses anything else). Synthetic runs get toy ones."""
+def train_alerts(a, n: int, pos_frac: float | None) -> list[tuple[AlertContext, int]]:
+    """Labelled TRAIN alerts for the exemplar pool and the case memory. Synthetic runs get toy ones."""
     if a.alerts == "synthetic":
-        toy = synthetic_alerts(max(a.pool_n, 40), a.seed + 1, labelled=True)
-        return ExemplarPool.from_alerts([replace(c, split="train") for c, _ in toy], [y for _, y in toy], seed=a.seed)
-    train = data_alerts(a.data, "train", a.pool_n, a.seed + 1, a.k)
+        toy = synthetic_alerts(max(n, 40), a.seed + 1, labelled=True)
+        return [(replace(c, split="train"), y) for c, y in toy]
+    return data_alerts(a.data, "train", n, a.seed + 1, a.k, pos_frac=pos_frac)
+
+
+def exemplar_pool(a) -> ExemplarPool:
+    """FinFRE-RAG's labelled pool: TRAIN alerts only (the pool refuses anything else), stratified to `--pool-pos-frac`."""
+    train = train_alerts(a, a.pool_n, getattr(a, "pool_pos_frac", None))
     return ExemplarPool.from_alerts([c for c, _ in train], [y for _, y in train], seed=a.seed)
+
+
+def case_memory(a) -> CaseMemory:
+    """Sharma / Torres / Co-Investigator: nearest past TRAIN alerts per class (prereg fixed_choices), `--memory-p0` replaces the
+    train p0 feature (the alert table's train p0 is inflated, audit finding 17)."""
+    train = train_alerts(a, a.memory_n, a.memory_pos_frac)
+    p0 = load_p0_override(a.memory_p0, a.memory_p0_col) if a.memory_p0 else None
+    return build_case_memory([c for c, _ in train], [y for _, y in train], p0)
 
 
 def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic", eps_per_alert: float | None = None,
@@ -314,6 +347,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")
     ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
+    ap.add_argument("--pool-pos-frac", type=float, default=0.5,
+                    help="FinFRE-RAG: share of positives in the exemplar pool (default 0.5, 1:1: the natural train rate is ~13%% so a "
+                         "nearest-neighbour query rarely meets a laundering exemplar; the calibration map absorbs the prior shift). "
+                         "-1 = natural")
+    ap.add_argument("--memory-n", type=int, default=500, help="Sharma / Torres / Co-Investigator: TRAIN alerts in the case memory")
+    ap.add_argument("--memory-pos-frac", type=float, default=0.5,
+                    help="case memory: share of positives (the memory answers 'nearest per class', so both need enough cases); -1 = natural")
+    ap.add_argument("--memory-p0", type=Path, default=None,
+                    help="parquet (alert_id, p0) with a recalibrated TRAIN p0 for the memory's p0 feature (the alert table's train p0 is inflated)")
+    ap.add_argument("--memory-p0-col", default="p0")
+    ap.add_argument("--no-memory", action="store_true", help="Group C: run with an empty case memory (the pre-fix behaviour)")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
     ap.add_argument("--evidence-view", default=None,
                     help="E8 / H6: amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (T1's view(); "
@@ -418,12 +462,15 @@ def main(argv: list[str] | None = None) -> int:
                             max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
         system_name = system.system_name
     else:
+        a.pool_pos_frac = None if a.pool_pos_frac < 0 else a.pool_pos_frac
+        a.memory_pos_frac = None if a.memory_pos_frac < 0 else a.memory_pos_frac
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
+        mem_kw = {"memory": case_memory(a)} if a.system.split("_")[0] in ("sharma", "torres", "co") and not a.no_memory else {}
         if a.dspy_program is not None and a.system != "dspy_react":
             ap.error("--dspy-program applies to --system dspy_react only")
         kw = {"program_path": str(a.dspy_program)} if a.dspy_program is not None else {}
         system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
-                                                  **({"pool": pool} if a.system in GROUP_C else {}), **kw)
+                                                  **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
         system_name = a.system
     tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
     refuse_devtools_test(variant, a.alerts)
