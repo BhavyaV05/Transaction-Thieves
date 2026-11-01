@@ -52,7 +52,7 @@ def test_distill_keeps_accepted_questions_that_move_toward_label():
     alerts = {"T1": {"split": "train", "label": 1}, "T2": {"split": "train", "label": 0},
               "T3": {"split": "train", "label": 1}, "V1": {"split": "val", "label": 1}}  # fmt: skip
     fusion = FusedLR(Fusion("naive"), TABLE)
-    kw = {"fusion": fusion, "teacher": TEACHER}
+    kw = {"fusion": fusion, "teacher": TEACHER, "filter": "realised"}  # the E16 v1 filter
     ex, counts = distill_examples(traces, alerts, accepted=lambda c, e: c == Q, **kw)
     kept = [(e["alert_id"], e["step"]) for e in ex]
     assert kept == [("T1", 1), ("T1", 3), ("T2", 1), ("T2", 2)]  # T1 step 2 moved away; T3 has no kept question
@@ -67,7 +67,7 @@ def test_distill_posteriors_follow_the_given_fusion_not_the_trace():
     # the same answer moves the posterior toward label 1 under naive fusion, away from it under a flipped fitted one
     traces = [{"alert_id": "T1", "p0": 0.2, "trace": [trace_rec(1)]}]
     alerts = {"T1": {"split": "train", "label": 1}}
-    kw = {"accepted": lambda c, e: True, "teacher": TEACHER}
+    kw = {"accepted": lambda c, e: True, "teacher": TEACHER, "filter": "realised"}
     flipped = FusedLR(Fusion("shared", ["f"], a=1.0, w=np.array([-1.0]), c=0.0, fitted=True), TABLE)
     assert len(distill_examples(traces, alerts, fusion=FusedLR(Fusion("naive"), TABLE), **kw)[0]) == 1
     assert distill_examples(traces, alerts, fusion=flipped, **kw)[0] == []
@@ -78,13 +78,51 @@ def test_distill_refuses_missing_acceptance_placeholder_fusion_and_old_traces():
     alerts = {"T1": {"split": "train", "label": 1}}
     good = FusedLR(Fusion("naive"), TABLE)
     with pytest.raises(ValueError, match="realistic"):
-        distill_examples(traces, alerts, fusion=good, teacher=TEACHER)
+        distill_examples(traces, alerts, fusion=good, teacher=TEACHER, filter="realised")
     with pytest.raises(ValueError, match="placeholder"):
-        distill_examples(traces, alerts, lambda c, e: True, fusion=NaiveLRFusion(TABLE), teacher=TEACHER)
+        distill_examples(traces, alerts, lambda c, e: True, fusion=NaiveLRFusion(TABLE), teacher=TEACHER, filter="realised")
     with pytest.raises(ValueError, match="no p0"):
-        distill_examples([{"alert_id": "T1", "trace": traces[0]["trace"]}], alerts, lambda c, e: True, fusion=good, teacher=TEACHER)
+        distill_examples([{"alert_id": "T1", "trace": traces[0]["trace"]}], alerts, lambda c, e: True, fusion=good, teacher=TEACHER, filter="realised")
     with pytest.raises(ValueError):
         Teacher("m", "")
+
+
+def _alert_msgs(i, eps_left=2.0):
+    summ = {"home_bank": "70", "sender_bank": 220, "receiver_bank": 70, "counterparty_bank": 220}
+    return [{"role": "user", "content": f"## Alert\n{json.dumps(summ)}\n\n## Budget\neps left: {eps_left:g}; LLM calls left: 9\n"}]
+
+
+def test_distill_expected_filter_is_cross_fitted_right_bank_and_adds_stops():
+    # sender is at bank 220, receiver at home 70: ALERT.sender questions go to 220, ALERT.receiver ones to nobody
+    q_s = "new_account(ALERT.sender, days=2)"
+    table = LRTable([LREntry(q_s, 0.5, True, {"true": 4.0, "false": 0.25}, family="new_account")])
+    fusion = FusedLR(Fusion("naive"), table)
+
+    def tr(aid, label_helps, bank=220):
+        r = trace_rec(1, canonical=q_s, answer=label_helps, eps=0.5)
+        r["messages"], r["bank"] = _alert_msgs(1), bank
+        r["text"] = json.dumps({"hypothesis": {"typology": "x", "rationale": "r"}, "action": "compose", "question_id": None,
+                                "program": q_s, "bank": bank, "eps": 0.5, "rule_id": None})
+        return {"alert_id": aid, "p0": 0.4, "trace": [r]}
+
+    # 40 alerts over time; "true" answers on label-1 alerts (gain > 0), so the family has positive held-out gain
+    traces = [tr(f"T{i}", i % 2 == 0) for i in range(40)]
+    alerts = {f"T{i}": {"split": "train", "label": int(i % 2 == 0), "bank": 70, "timestamp": f"2022-09-01T{i // 2:02d}:00"} for i in range(40)}
+    wrong = tr("TW", True, bank=1588)
+    alerts["TW"] = {"split": "train", "label": 1, "bank": 70, "timestamp": "2022-09-02T00:00"}
+    kw = {"fusion": fusion, "teacher": TEACHER, "table": table, "folds": 4, "min_family_support": 5}
+    ex, counts = distill_examples([*traces, wrong], alerts, accepted=lambda c, e: True, **kw)
+    assert counts["kept_questions"] == 40 and counts["wrong_bank"] == 1 and counts["filter"] == "expected"
+    assert not any(e["alert_id"] == "TW" and e["kind"] != "stop" for e in ex)  # the wrong-bank step is never a question example
+    # flipped labels: the family now hurts on held-out folds -> nothing kept, whatever each alert's own outcome
+    bad = {k: {**v, "label": 1 - v["label"]} for k, v in alerts.items()}
+    assert distill_examples(traces, bad, accepted=lambda c, e: True, **kw)[1]["kept_questions"] == 0
+    # stop examples: p0 far from the threshold and the best accepted question cannot cross it
+    far = [{**t, "p0": 0.001} for t in traces[:3]]
+    ex2, c2 = distill_examples(far, alerts, accepted=lambda c, e: True, stop_threshold=0.5, **kw)
+    assert c2["stop_examples"] == 3 and all(json.loads(e["messages"][-1]["content"])["action"] == "stop" for e in ex2 if e["kind"] == "stop")
+    s = json.loads(next(e for e in ex2 if e["kind"] == "stop")["messages"][-1]["content"])
+    assert s["program"] is None and s["bank"] is None and s["eps"] == 0.0
 
 
 def test_planner_keep_prompts_records_what_distillation_needs():
@@ -146,10 +184,10 @@ class LogprobClient:
 def test_logprob_fast_model_reads_label_tokens_and_temperature():
     top = [{"token": "yes", "logprob": np.log(0.6)}, {"token": " Yes", "logprob": np.log(0.2)},
            {"token": "no", "logprob": np.log(0.1)}, {"token": "maybe", "logprob": np.log(0.1)}]  # fmt: skip
-    assert label_logps(top, "stop") == pytest.approx(np.log([0.6, 0.1]))
+    assert label_logps(top, "stop") == pytest.approx(np.log([0.8, 0.1]))  # " Yes" and "yes" add (logsumexp)
     client = LogprobClient(top)
     p = LogprobFastModel(client).predict_proba(DecisionExample("stop", "ctx"))
-    assert p["yes"] == pytest.approx(6 / 7) and client.requests[0]["max_tokens"] == 1
+    assert p["yes"] == pytest.approx(8 / 9) and client.requests[0]["max_tokens"] == 1
     assert client.requests[0]["extra"]["logprobs"] is True
     hot = LogprobFastModel(client, temperature=5.0).predict_proba(DecisionExample("stop", "ctx"))
     assert 0.5 < hot["yes"] < p["yes"]
