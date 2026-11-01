@@ -44,6 +44,7 @@ class ConditionalFusion:
     base: str = "fitted"
     default_w: float = 1.0  # weight of a family the fit never saw (the ridge prior: trust the back-tested LR)
     fitted: bool = False
+    p0_clip: float = 1e-6  # logit(p0) is taken at p0 clipped to [c, 1 - c]; headroom_v1 uses 0.1 (val p0 has exact 0/1 scores)
     meta: dict = field(default_factory=dict)  # provenance (p0 file, table, n rows); part of the hash
 
     def _check(self, p0, X) -> tuple[np.ndarray, np.ndarray]:
@@ -80,7 +81,7 @@ class ConditionalFusion:
         return self
 
     def logit_base(self, p0) -> np.ndarray:
-        z0 = logit(p0)
+        z0 = logit(np.clip(np.asarray(p0, dtype="f8"), self.p0_clip, 1 - self.p0_clip))
         return z0 if self.base == "p0" else self.a + self.b * z0
 
     def predict(self, p0, X) -> np.ndarray:
@@ -101,7 +102,8 @@ class ConditionalFusion:
     def params(self) -> dict:
         return {"kind": "conditional_fusion", "families": list(self.families), "a": self.a, "b": self.b,
                 "w": [float(x) for x in self.w], "ridge": self.ridge, "shrink": self.shrink, "base": self.base,
-                "default_w": self.default_w, "fitted": self.fitted, "meta": self.meta}  # fmt: skip
+                "default_w": self.default_w, "fitted": self.fitted, "meta": self.meta,
+                **({"p0_clip": self.p0_clip} if self.p0_clip != 1e-6 else {})}  # fmt: skip  (absent = default: old hashes hold)
 
     def content_hash(self) -> str:
         return hashlib.blake2b(json.dumps(self.params(), sort_keys=True).encode(), digest_size=8).hexdigest()
@@ -117,7 +119,7 @@ class ConditionalFusion:
         if p.get("kind") != "conditional_fusion":
             raise ValueError("not a conditional_fusion params file")
         return cls(list(p["families"]), p["a"], p["b"], np.asarray(p["w"], dtype="f8"), p["ridge"], p["shrink"], p["base"],
-                   p.get("default_w", 1.0), p["fitted"], dict(p.get("meta", {})))  # fmt: skip
+                   p.get("default_w", 1.0), p["fitted"], p.get("p0_clip", 1e-6), dict(p.get("meta", {})))  # fmt: skip
 
     @classmethod
     def from_json(cls, path: str | Path) -> ConditionalFusion:
