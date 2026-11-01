@@ -704,7 +704,7 @@ SEES_P0 = {
     "uot": "yes (prompt, initial belief)", "bed_llm": "yes (prompt, 1 particle)", "sharma_native": "yes (tool; not in the number)",
     "sharma_ported": "yes (tool; not in the number)", "torres_native": "yes (evidence item)", "torres_ported": "yes (evidence item)",
     "finfre_rag_native": "yes (row feature)", "finfre_rag_ported": "yes (row feature)",
-    "co_investigator_native": "yes (evidence item); no val result", "co_investigator_ported": "yes (evidence item); no val result",
+    "co_investigator_native": "yes (evidence item)", "co_investigator_ported": "yes (evidence item)",
 }
 
 

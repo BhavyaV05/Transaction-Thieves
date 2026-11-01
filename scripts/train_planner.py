@@ -87,6 +87,7 @@ def train(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> Path: 
     """QLoRA SFT with plain transformers + PEFT + TRL + bitsandbytes (NF4, double quant, bf16 compute). Unsloth is not used:
     its release that resolves against torch 2.8 / sm_120 here is mid-2025 and does not run with transformers 5
     (docs/t3_finetune_fastmodel.md, environment). Same algorithm: 4-bit frozen base, LoRA on all linear layers."""
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # the 8B run OOMed on fragmentation at step 10 (16 GB)
     import torch
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
