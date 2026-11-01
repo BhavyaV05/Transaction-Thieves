@@ -47,6 +47,20 @@ N_NEIGHS = (100, 100)
 ARGS = dict(model="pna", emlps=True, reverse_mp=True, ego=True, ports=True, tds=False, data="ours", testing=True, tqdm=False)
 
 
+def causal_kwargs(data, key, pos) -> dict:
+    """LinkNeighborLoader kwargs that make the neighbour sampler time-respecting for the seed edges `pos` (finding 19).
+
+    Without them (the official `get_loaders` of Multi-GNN and MEGA-GNN, and ours) the sampler draws from ALL edges of the graph, so a val edge's
+    subgraph can contain later val edges (README: 12.6 % of incident edges are later than the seed edge on HI-Small). With `time_attr` PyG samples only
+    edges whose time is <= the seed edge's `edge_label_time`; the reverse edge type gets the same timestamps. Needs the edge-level `timestamps` the
+    hetero object already carries (seconds). Untested here: torch_geometric is not installed on the CPU box; run on the GPU box (docs/t1_baselines_val.md)."""
+    import torch
+
+    ts = data[key].timestamps.clone()
+    data["node", "rev_to", "node"].timestamps = ts
+    return {"time_attr": "timestamps", "edge_label_time": ts[torch.as_tensor(pos)], "temporal_strategy": "uniform"}
+
+
 def edge_arrays(frame: pl.DataFrame, codes: dict | None = None):
     """Multi-GNN edge features of a time-sorted frame of train/val rows: seconds since the first row, amount received,
     receiving currency code, payment format code (the four columns of its `format_kaggle_files.py`), plus dense node ids.
@@ -84,7 +98,7 @@ def _hetero(ei, ea, y, n_nodes, ns, mean=None, std=None):
 
 
 def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epochs: int, fit_mask: np.ndarray,
-                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False, score_splits: tuple = ("val",)) -> dict:  # fmt: skip
+                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False, score_splits: tuple = ("val",), causal: bool = False) -> dict:  # fmt: skip
     """Train Multi-PNA+EU on the train rows of `frame` (time-sorted, split in {train, val}), pick the epoch by AP on
     the val `fit` rows, return raw P(laundering) for every val row.
 
@@ -93,6 +107,9 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     (reported in ftm/baselines/README.md). Epoch selection uses a weighted AP on all fit positives and 10% of the
     fit negatives. `fit_mask` is a bool array over `frame` rows (val `fit` rows). The model is always scored in `eval()`
     mode (dropout off, running batch-norm statistics).
+
+    `causal=True`: the val/test edges are scored with a time-respecting sampler (`causal_kwargs`: only edges at or before the seed edge's time), the
+    training loader is unchanged (so train and scoring neighbourhoods differ); use with resume=True, max_epochs=0 to re-score a trained checkpoint.
     """
     import json
 
@@ -126,9 +143,10 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     kw = dict(num_neighbors=ns.num_neighs, batch_size=batch_size, transform=AddEgoIds(), num_workers=num_workers, persistent_workers=num_workers > 0)
 
-    def loader(data, pos, shuffle):
+    def loader(data, pos, shuffle, causal=False):
         pos = torch.as_tensor(pos)
-        return LinkNeighborLoader(data, edge_label_index=(key, data[key].edge_index[:, pos]), edge_label=data[key].y[pos], shuffle=shuffle, **kw)
+        return LinkNeighborLoader(data, edge_label_index=(key, data[key].edge_index[:, pos]), edge_label=data[key].y[pos], shuffle=shuffle, **kw,
+                                  **(causal_kwargs(data, key, pos) if causal else {}))
 
     tr_loader = loader(tr, np.arange(ntr), True)
     model = to_hetero(get_model(next(iter(tr_loader)), cfg, ns), tr.metadata(), aggr="mean").to(dev)
@@ -149,7 +167,7 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
         Always in eval() mode: no dropout, batch-norm running statistics."""
         model.eval()
         out = np.full(len(y), np.nan, dtype="f4")
-        lo = loader(va, pos, False)
+        lo = loader(va, pos, False, causal)
         for batch in lo:
             seeds = batch[key].input_id  # index into the label-index tensor, i.e. into `pos`
             seeds = torch.as_tensor(pos)[seeds.cpu()]

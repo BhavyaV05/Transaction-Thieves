@@ -27,7 +27,7 @@ from types import SimpleNamespace
 import numpy as np
 import polars as pl
 
-from ftm.baselines.multi_gnn import N_NEIGHS, edge_arrays  # noqa: F401  (same inputs and neighbour sampling as Multi-GNN)
+from ftm.baselines.multi_gnn import N_NEIGHS, causal_kwargs, edge_arrays  # noqa: F401  (same inputs and neighbour sampling as Multi-GNN)
 
 MEGA_GNN_COMMIT = "ef60a71"  # last code commit of the archived hcagri/MEGA-GNN
 # MEGA-GenAgg of arXiv:2412.00241 (`assets/commands.md` of the clone): GIN with GenAgg node aggregation, GIN parallel-edge aggregation.
@@ -73,10 +73,11 @@ def _hetero(ei, ea, y, n_nodes, mean=None, std=None):
 
 
 def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epochs: int, fit_mask: np.ndarray,
-                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False, score_splits: tuple = ("val",)) -> dict:  # fmt: skip
+                    seed: int = 1, batch_size: int = 2048, num_workers: int = 0, log=print, ckpt: Path | None = None, resume: bool = False, score_splits: tuple = ("val",), causal: bool = False) -> dict:  # fmt: skip
     """Train MEGA-GenAgg on the train rows of `frame` (time-sorted, split in {train, val}), pick the epoch by weighted AP on the val
     `fit` rows, return raw P(laundering) for every val row. Same contract, epoch rule, scoring (always `eval()` mode) and val
-    look-ahead (a val edge is scored on the graph of train + the whole val split) as `multi_gnn.train_and_score`."""
+    look-ahead (a val edge is scored on the graph of train + the whole val split) as `multi_gnn.train_and_score`; `causal=True` scores with the
+    time-respecting sampler of `multi_gnn.causal_kwargs`."""
     import json
 
     import torch
@@ -109,9 +110,10 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
     dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     kw = dict(num_neighbors=ns.num_neighs, batch_size=batch_size, transform=AddEgoIds(), num_workers=num_workers, persistent_workers=num_workers > 0)
 
-    def loader(data, pos, shuffle):
+    def loader(data, pos, shuffle, causal=False):
         pos = torch.as_tensor(pos)
-        return LinkNeighborLoader(data, edge_label_index=(key, data[key].edge_index[:, pos]), edge_label=data[key].y[pos], shuffle=shuffle, **kw)
+        return LinkNeighborLoader(data, edge_label_index=(key, data[key].edge_index[:, pos]), edge_label=data[key].y[pos], shuffle=shuffle, **kw,
+                                  **(causal_kwargs(data, key, pos) if causal else {}))
 
     def strip(batch):
         """drop the id column in place (the model never sees it)"""
@@ -137,7 +139,7 @@ def train_and_score(frame: pl.DataFrame, clone: Path, budget_s: float, max_epoch
         """P(laundering) for graph positions `pos` (val edges), NaN where a seed edge was not in its sampled subgraph."""
         model.eval()
         out = np.full(len(y), np.nan, dtype="f4")
-        for batch in loader(va, pos, False):
+        for batch in loader(va, pos, False, causal):
             seeds = torch.as_tensor(pos)[batch[key].input_id.cpu()]
             mask, ids = prep(batch, seeds)
             batch = batch.to(dev)

@@ -59,13 +59,13 @@ def val_cut(pq) -> tuple:
     return v["a"][0], v["b"][0]
 
 
-def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_epochs: int, clone: Path, cm: str, workers: int, ckpt, batch_size: int = 2048, resume: bool = False, model_name: str = "multi_gnn"):
+def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_epochs: int, clone: Path, cm: str, workers: int, ckpt, batch_size: int = 2048, resume: bool = False, model_name: str = "multi_gnn", causal: bool = False):
     """Train + score one graph, calibrate on the val `fit` part, return (p0 table of the val rows, metadata)."""
     frame = frame.sort(["timestamp", "tx_id"])
     sp = frame["split"].to_numpy()
     part = np.full(frame.height, "", dtype="U4")
     part[sp == "val"] = g.val_parts(frame["timestamp"].filter(pl.Series(sp == "val")), *cut)
-    res = MODELS[model_name][0].train_and_score(frame, clone, budget_s, max_epochs, part == "fit", num_workers=workers, log=log, ckpt=ckpt, batch_size=batch_size, resume=resume)
+    res = MODELS[model_name][0].train_and_score(frame, clone, budget_s, max_epochs, part == "fit", num_workers=workers, log=log, ckpt=ckpt, batch_size=batch_size, resume=resume, causal=causal)
     v = frame.filter(pl.col("split") == "val")
     raw, y, vpart = res["raw"], v["is_laundering"].cast(pl.Int8).to_numpy(), part[sp == "val"]
     ok, fit = ~np.isnan(raw), vpart == "fit"
@@ -77,7 +77,7 @@ def run_graph(frame: pl.DataFrame, cut, mode: str, bank, budget_s: float, max_ep
         cal, name = g.fit_calibrator(raw[fit & ok], y[fit & ok], has_signal=sig)
         p0[ok] = cal(raw[ok])
     tab = pl.DataFrame({"tx_id": v["tx_id"], "bank": pl.Series([bank] * v.height, dtype=pl.Int64), "mode": [mode] * v.height,
-                        "model": [model_name] * v.height, "split": ["val"] * v.height, "val_part": vpart,
+                        "model": [model_name + ("_causal" if causal else "")] * v.height, "split": ["val"] * v.height, "val_part": vpart,
                         "p0": pl.Series(p0).fill_nan(None), "score_raw": pl.Series(raw.astype("f8")).fill_nan(None),
                         "label": v["is_laundering"], "seed": [1] * v.height, "commit": [cm] * v.height})  # fmt: skip
     res.pop("raw"), res.pop("tx_id")
@@ -94,7 +94,8 @@ def our_split(a) -> None:
     RUNS.mkdir(parents=True, exist_ok=True)
     meta = {"dataset": a.data, "model": a.model, "mode": a.mode, "commit": cm, "seed": 1, "batch_size": a.batch_size, "neighbours": list(multi_gnn.N_NEIGHS), "val_cut": [str(cut[0]), str(cut[1])], "graphs": {}, "skipped": {}}
     t0, parts = time.time(), []
-    f_tab, f_meta = out / f"p0_{a.model}__{a.mode}.parquet", RUNS / f"p0_{a.data}_{a.model}_{a.mode}.json"
+    tag = a.model + ("_causal" if a.causal else "")  # --causal: re-score with the time-respecting sampler into p0_<model>_causal*.parquet (the checkpoints are shared)
+    f_tab, f_meta = out / f"p0_{tag}__{a.mode}.parquet", RUNS / f"p0_{a.data}_{tag}_{a.mode}.json"
     base = None  # --banks resumes: the other banks' rows already on disk stay (written back with every checkpoint)
     if a.mode == "one_bank" and a.banks and f_tab.exists():
         base = pl.read_parquet(f_tab).filter(~pl.col("bank").is_in(list(a.banks)))  # time-guard: not transactions
@@ -105,7 +106,7 @@ def our_split(a) -> None:
     ckdir.mkdir(parents=True, exist_ok=True)
     if a.mode == "see_everything":
         frame = io.scan_transactions(pq, split=["train", "val"], columns=cols).collect()
-        tab, m = run_graph(frame, cut, a.mode, None, a.budget_s, a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_see.pt", a.batch_size, a.resume, a.model)
+        tab, m = run_graph(frame, cut, a.mode, None, a.budget_s, a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_see.pt", a.batch_size, a.resume, a.model, a.causal)
         meta["graphs"]["all"] = m
         parts.append(tab)
     else:
@@ -123,7 +124,7 @@ def our_split(a) -> None:
         size = {b: f.filter(pl.col("split") == "train").height for b, f in frames.items()}
         for b, f in frames.items():
             share = a.budget_s * size[b] / sum(size.values())
-            tab, m = run_graph(f, cut, a.mode, b, max(share, 90.0), a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_bank{b}.pt", a.batch_size, model_name=a.model)
+            tab, m = run_graph(f, cut, a.mode, b, max(share, 90.0), a.max_epochs, clone, cm, a.workers, ckdir / f"{a.data}_bank{b}.pt", a.batch_size, resume=a.resume, model_name=a.model, causal=a.causal)
             meta["graphs"][str(b)] = m
             parts.append(tab)
             log(f"bank {b} done, {time.time() - t0:.0f}s")
@@ -136,7 +137,7 @@ def our_split(a) -> None:
             meta["skipped"] = old["skipped"] | meta["skipped"]
     meta["seconds"] = time.time() - t0
     f_meta.write_text(json.dumps(meta, indent=1, default=str))
-    combine(a.data, a.model)
+    combine(a.data, tag)
     log(f"done {a.mode} {meta['seconds']:.0f}s")
 
 
@@ -309,6 +310,7 @@ def main() -> None:
     ap.add_argument("--max-epochs", type=int, default=30)
     ap.add_argument("--batch-size", type=int, default=2048, help="2048 = reproduction config; 1024 if VRAM is short")
     ap.add_argument("--resume", action="store_true", help="see_everything: continue from models/multi_gnn/<ds>_see.pt (best epoch so far)")
+    ap.add_argument("--causal", action="store_true", help="--our-split: score val edges with a time-respecting neighbour sampler (PyG time_attr); with --resume --max-epochs 0 it re-scores the stored checkpoints. Needs the GPU box")
     ap.add_argument("--workers", type=int, default=0, help="LinkNeighborLoader workers")
     ap.add_argument("--model", choices=sorted(MODELS), default="multi_gnn")
     ap.add_argument("--clone", default=None, help="default: the model's clone under ~/Documents/t1_external")
