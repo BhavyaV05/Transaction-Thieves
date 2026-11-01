@@ -1,16 +1,16 @@
 """E10 on the test split: the frozen fast model and conformal cascade score the small-decision rows of the test alerts (T3).
 
 Run by `scripts/run_final.py` as three `external_cmd` jobs (configs/final/jobs.yaml, system `fast_model`), one per phase, each when its
-model is the one served at the endpoint (T4 swaps servers, as for E16): `fast_tier` (tuned Qwen3-4B adapter `fast-s0` on
+model is the one served at the endpoint (T4 swaps servers, as for E16): `fast_tier` (tuned Qwen3-4B adapter named by `served_model` in the frozen file on
 the `qwen3-4b-lora` server), `large_tier` (Gemma 4 12B; scores only the rows the fast tier could not settle), `cascade` (CPU: applies the frozen
-temperatures and conformal thresholds of outputs/e10/fast.json and writes the decisions). BLIND, like the LLM jobs: no label and no Brier in any
+temperatures and conformal thresholds of outputs/e10/fast_v2.json and writes the decisions). BLIND, like the LLM jobs: no label and no Brier in any
 output file or on the console; the decision rows are rebuilt from the test alerts by the same deterministic builder as the validation set
 (`ftm/orchestrator/decision_set.py`, seed 0, threshold 0.3), identified by (alert_id, decision, k), and T4's analysis rebuilds the labels the
 same way (`--labels-only` writes them to a file the job directory never holds). Output: <out>/{fast,large}.jsonl, <out>/decisions.jsonl,
 <out>/runlog.parquet (run-log v1: one verdict row per alert; probability = p0, the fast model does not change an alert's probability;
 detection loss is not measured here: H5's third clause stays untested).
 
-    python scripts/e10_final.py --phase fast --alert-ids ids.txt --out DIR [--endpoint URL --model fast-s0]
+    python scripts/e10_final.py --phase fast --alert-ids ids.txt --out DIR [--endpoint URL --model fast-s2]
     python scripts/e10_final.py --phase large --alert-ids ids.txt --out DIR [--endpoint URL --model gemma4-12b]
     python scripts/e10_final.py --phase cascade --alert-ids ids.txt --out DIR
     python scripts/e10_final.py --synthetic 40 --phase fast ...     # offline, mock LLM, never a result (the --dry-run path of run_final.py)
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--data", default="hi_medium")
     ap.add_argument("--table", default="data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl")
-    ap.add_argument("--frozen", type=Path, default=ROOT / "outputs" / "e10" / "fast.json")
+    ap.add_argument("--frozen", type=Path, default=ROOT / "outputs" / "e10" / "fast_v2.json")
     ap.add_argument("--fast-dir", type=Path, default=None, help="job directory of the fast_tier phase (default: --out)")
     ap.add_argument("--large-dir", type=Path, default=None, help="job directory of the large_tier phase (default: --out)")
     ap.add_argument("--endpoint", default=None)
@@ -141,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.phase == "fast":
         from concurrent.futures import ThreadPoolExecutor
 
-        m = LogprobFastModel(client(a, "fast-s0"))
+        m = LogprobFastModel(client(a, frozen.get("served_model") or "fast-s0"))  # the adapter of the frozen arm
         todo = [r for r in rows if key(r) not in fast]
         with (a.out / "fast.jsonl").open("a") as f, ThreadPoolExecutor(a.workers) as pool:
             for r, lp in zip(todo, pool.map(lambda r: m.raw_logps(example(r)).tolist(), todo), strict=True):
