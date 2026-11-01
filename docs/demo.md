@@ -6,26 +6,28 @@ Use the repo venv: `export PYTHONPATH=$PWD; PY=/home/akshat/projects/Transaction
 
 ## Commands
 
+The demo runs the production profile (`configs/llm/tuned.yaml`: p0 v2, edge scorer v2 evidence view, headroom_v1 table and fitted fusion) and escalates at the
+threshold of `configs/decision/headroom_v1.yaml` (0.3227, fitted on val fit+cal). The default is a real model: live on the endpoint, or a replay of a recorded real run.
+The scripted LLM exists only behind an explicit `--llm mock` and is labelled "SCRIPTED MOCK LLM" in every output.
+
 ```bash
-# run the investigation now with the scripted mock LLM (no GPU), compare with an adapted external arm, play it with a 1 s pause
-$PY scripts/demo.py --data hi_medium --alert V000438 --llm mock \
-    --backtest data/backtest/hi_medium/7df6bad5337d --compare react_adapted --pause 1
-
-# the same with the real model (vLLM endpoint; env/flags as scripts/run_llm_agent.py: FTM_LLM_ENDPOINT, FTM_LLM_MODEL)
-$PY scripts/demo.py --data hi_medium --alert V000438 --llm endpoint --backtest data/backtest/hi_medium/7df6bad5337d \
-    --compare react_adapted --record-dir outputs/demo/V000438
-
-# present later from recorded runs (no GPU, no LLM); repeat --replay for a side-by-side comparison
+# present recorded real runs (no GPU, no LLM); repeat --replay for a side-by-side comparison
 $PY scripts/demo.py --alert V001549 --replay outputs/demo/V001549/planner --replay outputs/demo/V001549/react_adapted --pause 1.5
+
+# run it now against the model endpoint (vLLM; FTM_LLM_ENDPOINT / FTM_LLM_MODEL or --endpoint / --model), keep the runs for later
+$PY scripts/demo.py --data hi_medium --alert V000438 --compare react_adapted --record-dir outputs/demo/V000438
 
 # one self-contained HTML page (inline CSS, no external assets) for slides; combine with any mode above
 $PY scripts/demo.py --alert V001549 --replay outputs/demo/V001549/planner --replay outputs/demo/V001549/react_adapted --html outputs/demo/V001549.html
 
 # reveal the true label at the end (train / val only; off by default)
 $PY scripts/demo.py --alert V001549 --replay outputs/demo/V001549/planner --reveal-label
+
+# no GPU, development only: the scripted stand-in (banner + labels in the output; never a result)
+$PY scripts/demo.py --data hi_medium --alert V000438 --llm mock --compare react_adapted
 ```
 
-Recorded examples (mock LLM, back-test `7df6bad5337d`, not committed): `outputs/demo/{V000438,V001549,V001835,V001453}/{planner,react_adapted}`.
+Recorded examples from before the profile (SCRIPTED MOCK LLM, back-test `7df6bad5337d`, not committed; shown with the mock banner; re-record on the endpoint for real ones): `outputs/demo/{V000438,V001549,V001835,V001453}/{planner,react_adapted}`.
 V001549 (laundering): the questions lift p from 0.441 to 0.666 and the case moves from human review to escalate. V001835 (clean): 0.713 to 0.431,
 a false escalation becomes a human review. V001453 (laundering): the answers pull 0.618 down to 0.313, a failure case, honestly shown.
 The new back-test namespace `7613b89b5dcc` loads too (`--backtest data/backtest/hi_medium/7613b89b5dcc`, 440 rows) but only 6 questions are accepted
@@ -38,11 +40,10 @@ there (all at eps 2), none that the mock finds applicable on V000438 / V001835, 
   are the same renderer, so a run recorded on the GPU box can be shown anywhere. No change to `ftm/graph` was needed (no hook).
 * `--replay RUN_DIR [--replay ...]`: renders from `runlog.parquet`, `traces.jsonl`, `per_alert.jsonl`, `summary.json` of each run dir.
   Two or more run dirs (or `--compare` live) render side by side, with a comparison table and "p0 only".
-* `--llm mock`: a scripted stand-in (`ftm/demo/mock.py`), labelled "[scripted mock LLM]" in the output. It works through the back-tested
+* `--llm mock` (explicit only): a scripted stand-in (`ftm/demo/mock.py`), labelled "[scripted mock LLM]" in the output. It works through the back-tested
   menu (largest possible odds shift per unit eps, two questions) so the posterior visibly moves; its thoughts are canned. Not a result.
 * `--pause S`: seconds between steps on a terminal (0 or a non-terminal: all at once). `--width`, `--evidence-rows`, `--evidence-view` tune the layout.
-* `--threshold` (escalate at or above, default 0.5) and `--clear-below` (auto-clear below, default 0.1): illustrative three-way zones. No frozen
-  threshold exists yet in the repo; pass the fitted one when it does.
+* `--threshold` (default: `configs/decision/headroom_v1.yaml`) and the optional `--clear-below` (adds a human-review band; off by default because the deployed decision is two-way).
 
 ## What the replay needs from a run dir
 
