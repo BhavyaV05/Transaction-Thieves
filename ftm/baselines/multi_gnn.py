@@ -53,12 +53,13 @@ def causal_kwargs(data, key, pos) -> dict:
     Without them (the official `get_loaders` of Multi-GNN and MEGA-GNN, and ours) the sampler draws from ALL edges of the graph, so a val edge's
     subgraph can contain later val edges (README: 12.6 % of incident edges are later than the seed edge on HI-Small). With `time_attr` PyG samples only
     edges whose time is <= the seed edge's `edge_label_time`; the reverse edge type gets the same timestamps. Needs the edge-level `timestamps` the
-    hetero object already carries (seconds). Untested here: torch_geometric is not installed on the CPU box; run on the GPU box (docs/t1_baselines_val.md)."""
+    hetero object already carries (seconds). Run on the GPU box (docs/t1_baselines_val.md)."""
     import torch
 
-    ts = data[key].timestamps.clone()
-    data["node", "rev_to", "node"].timestamps = ts
-    return {"time_attr": "timestamps", "edge_label_time": ts[torch.as_tensor(pos)], "temporal_strategy": "uniform"}
+    ts = data[key].timestamps.round().long()  # PyG's temporal sampler needs int64 times (float raised "expected scalar type Long")
+    data[key].t_sample = ts
+    data["node", "rev_to", "node"].t_sample = ts
+    return {"time_attr": "t_sample", "edge_label_time": ts[torch.as_tensor(pos)], "temporal_strategy": "uniform"}
 
 
 def edge_arrays(frame: pl.DataFrame, codes: dict | None = None):
