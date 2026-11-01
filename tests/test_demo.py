@@ -184,3 +184,14 @@ def test_live_mock_on_real_val_alert_then_replay(tmp_path):
     assert cli.main(["--alert", "V001549", "--replay", str(rec / "planner"), "--evidence-view", "", "--pause", "0"], console=c2) == 0
     assert "Step 1" in c2.file.getvalue()
     assert (tmp_path / "a.html").exists()
+
+
+def test_mock_banner_and_production_threshold(tmp_path):
+    from ftm.demo.build import DECISION, build_replay
+
+    d = make_run(tmp_path)  # summary model "mock"
+    demo = build_replay([d], "V000001", data="hi_medium")
+    assert demo.threshold == pytest.approx(0.322699) and demo.clear_below is None and demo.threshold_source == DECISION
+    out = text_of(demo)
+    assert "SCRIPTED MOCK LLM" in out and "illustrative" not in out and DECISION in out
+    assert zone(0.2, 0.3227) == "auto-clear" and zone(0.4, 0.3227) == "escalate"
