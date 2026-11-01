@@ -1,4 +1,4 @@
-"""Headroom study and tuning of the non-LLM question pipeline (docs/t3_headroom.md).  CPU only.  Owner: A1.
+"""Headroom study and tuning of the non-LLM question pipeline (docs/t3_headroom.md).  CPU only.  Owner: T3 (headroom worker).
 
     python scripts/t3_headroom.py select   # TRAIN cross-fitted + val fit+cal choices; writes the frozen files
     python scripts/t3_headroom.py eval     # val eval (160 askable alerts), ONCE, after the freeze

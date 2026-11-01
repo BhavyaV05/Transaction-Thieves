@@ -1,6 +1,6 @@
 """Headroom study: per-alert answer matrices from back-test rows, out-of-fold LRs, regularised fusion, offline policy simulation.
 
-Owner: A1 (rewrite of 1 Nov).  Companion of `ftm.fusion.conditional`; the numbers and the protocol are in docs/t3_headroom.md.
+Owner: T3 (rewrite of 1 Nov, headroom worker).  Companion of `ftm.fusion.conditional`; the numbers and the protocol are in docs/t3_headroom.md.
 
 A *hypothesis* is one (canonical program, eps) cell of the back-test.  Per split the rows give, for every alert and every
 hypothesis the right bank could answer, one DP answer (the noise draw is fixed by the bank's seed), so any policy can be
@@ -367,10 +367,10 @@ def load_all(alerts_dir: str = "data/alerts/hi_medium_v2", train_ns: str = TRAIN
     hyps = load_table(f"{train_ns}/lr_table.jsonl")
     out = []
     for name, ns in (("train", train_ns), ("val", val_ns)):
-        al = pl.read_parquet(f"{alerts_dir}/{name}.parquet")
+        al = pl.read_parquet(f"{alerts_dir}/{name}.parquet")  # time-guard: not transactions
         if "val_part" not in al.columns or name == "train":
             al = al.with_columns(pl.lit("train").alias("val_part"))
-        rows = pl.read_parquet(f"{ns}/alert_rows.parquet")
+        rows = pl.read_parquet(f"{ns}/alert_rows.parquet")  # time-guard: not transactions
         al = al.filter(pl.col("alert_id").is_in(rows["alert_id"].unique().to_list()))
         out.append(build_split(rows, hyps, al))
     return hyps, out[0], out[1]
