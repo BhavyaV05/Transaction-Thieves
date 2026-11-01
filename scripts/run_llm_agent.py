@@ -400,6 +400,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--variant-label", default=None,
                     help="run-log `variant` of a harness run (default: harness). The final plan sets it to the job's variant, so jobs "
                          "that share a system (compose, eps_*, library_account, student_*) stay separate rows in the analysis")
+    ap.add_argument("--coinv-emit-unvalidated", action="store_true",
+                    help="co_investigator: emit the narrative's confidence even when the validator still rejects it after the revision "
+                         "(validated=0 in per_alert.jsonl). Default: no verdict, as prereg fixed_choices. Both views are logged either way")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--alert-ids", type=Path, default=None,
                     help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set, "
@@ -469,6 +472,10 @@ def main(argv: list[str] | None = None) -> int:
         if a.dspy_program is not None and a.system != "dspy_react":
             ap.error("--dspy-program applies to --system dspy_react only")
         kw = {"program_path": str(a.dspy_program)} if a.dspy_program is not None else {}
+        if a.coinv_emit_unvalidated:
+            if not a.system.startswith("co_investigator"):
+                ap.error("--coinv-emit-unvalidated applies to co_investigator only")
+            kw["emit_unvalidated"] = True
         system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
                                                   **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
         system_name = a.system
@@ -520,6 +527,7 @@ def main(argv: list[str] | None = None) -> int:
                               "seconds": seconds[-1], "gpu_seconds": v.gpu_seconds, "llm_calls": v.llm_calls,
                               "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
                               "eps_spent": facts["eps_spent"], "sim_days": facts["sim_days"],
+                              **getattr(system, "last_views", {}),  # Co-Investigator: validated, p_draft (both views)
                               **{k: after[k] - before[k] for k in after}})  # fmt: skip
             refuse_devtools_test(variant, ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id},
@@ -565,6 +573,8 @@ def main(argv: list[str] | None = None) -> int:
         summary["askable_alerts_in_world"] = len(only_ids)
     if trials:  # Reflexion: also the run-log v1 `trials` column (verdict rows); the per-alert map stays here for the traces
         summary["trials_per_alert"] = trials
+    if per_alert and "validated" in per_alert[0]:
+        summary["validated_rate"] = sum(r["validated"] for r in per_alert) / len(per_alert)
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
