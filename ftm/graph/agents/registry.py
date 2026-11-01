@@ -1,6 +1,6 @@
 """Registration of the agent graphs for scripts/run_llm_agent.py.
 
-PORTED: `ported_group_d()` -> {system: Investigator class}, the StateGraph versions by default; FTM_LEGACY_AGENT_LOOPS=1 returns the
+PORTED: `ported_group_d()` / `ported_group_c()` -> {system: Investigator class}, the StateGraph versions by default; FTM_LEGACY_AGENT_LOOPS=1 returns the
 old hand-written loops of ftm/external (kept, parity-tested against the graphs, for A/B checks).
 ADAPTED: `adapted_system(...)` -> a GraphInvestigator running the agent's PlannerPolicy inside the system graph (ftm.graph.pipeline).
 
@@ -33,6 +33,19 @@ def legacy_loops() -> bool:
 def ported_group_d(legacy: bool | None = None) -> dict:
     legacy = legacy_loops() if legacy is None else legacy
     return {name: _classes(name, legacy) for name in _GROUP_D}
+
+
+_GROUP_C = {"sharma": ("sharma", "Sharma"), "torres": ("torres", "Torres"), "co_investigator": ("co_investigator", "CoInvestigator"),
+            "finfre_rag": ("finfre_rag", "FinfreRag")}
+
+
+def ported_group_c(legacy: bool | None = None) -> dict:
+    """{agent: class} for the Group C agents (each has native and ported modes, chosen by the `mode` argument)."""
+    import importlib
+
+    legacy = legacy_loops() if legacy is None else legacy
+    return {name: getattr(importlib.import_module(("ftm.external." if legacy else "ftm.graph.agents.") + mod), cls)
+            for name, (mod, cls) in _GROUP_C.items()}
 
 
 def adapted_system(system: str, llm, *, menu=None, question_filter=None, fusion=None, seed: int = 0, extra: dict | None = None,

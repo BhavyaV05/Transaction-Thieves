@@ -85,7 +85,7 @@ def snapshot(v, agent) -> dict:
     return d
 
 
-def same(make_old, make_new, responder_factory, *, seeds=range(25), limits=None, extra_attrs=(), alert_fn=alert):
+def same(make_old, make_new, responder_factory, *, seeds=range(25), limits=None, extra_attrs=(), alert_fn=alert, observe=None):
     """Run the legacy loop and the graph on identical mock LLM + toolbox for every seed; they must agree exactly."""
     lim = limits or Limits()
     nonempty = 0
@@ -107,6 +107,8 @@ def same(make_old, make_new, responder_factory, *, seeds=range(25), limits=None,
             for a in extra_attrs:
                 snap[a] = json.loads(json.dumps(getattr(agent, a, None), default=str))
             snap["_requests"] = seen
+            if observe is not None and not new:
+                observe(snap, agent)  # branch-coverage hook: sees the legacy run
             out.append(snap)
         assert out[0] == out[1], f"seed {seed} differs"
         nonempty += bool(out[0]["questions_log"])

@@ -39,22 +39,20 @@ from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
 from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
 from ftm.external.case_memory import CaseMemory  # noqa: E402
-from ftm.external.co_investigator import CoInvestigator  # noqa: E402
 from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
 from ftm.external.debate_autogen import dev_responder as debate_dev_responder  # noqa: E402
-from ftm.external.finfre_rag import ExemplarPool, FinfreRag  # noqa: E402
+from ftm.external.finfre_rag import ExemplarPool  # noqa: E402
 from ftm.external.finfre_rag import dev_responder as finfre_dev_responder  # noqa: E402
 from ftm.external.mediq import dev_responder as mediq_dev_responder  # noqa: E402
 from ftm.external.memory_build import build_case_memory, load_p0_override  # noqa: E402
-from ftm.external.sharma import Sharma  # noqa: E402
 from ftm.external.sharma import dev_responder as sharma_dev_responder  # noqa: E402
-from ftm.external.torres import Torres  # noqa: E402
 from ftm.external.torres import dev_responder as torres_dev_responder  # noqa: E402
 from ftm.external.uot import dev_responder as uot_dev_responder  # noqa: E402
 from ftm.graph.agents.registry import (  # noqa: E402
     ADAPTED_SYSTEMS,
     adapted_dev_responder,
     adapted_system,
+    ported_group_c,
     ported_group_d,
 )
 from ftm.graph.runner import Worker, lock_world, run_alerts, share_session_toolbox  # noqa: E402
@@ -79,16 +77,17 @@ from ftm.planners.llm_prompt import Mode  # noqa: E402
 from ftm.types import AlertContext, Limits, Reply, Verdict  # noqa: E402
 
 PY_TYPES = {"str": pl.Utf8, "int": pl.Int64, "float": pl.Float64}
+_C = ported_group_c()  # StateGraph ports (ftm/graph/agents); FTM_LEGACY_AGENT_LOOPS=1 gives the old loops of ftm/external
 GROUP_C = {  # T4 ports (Group C, native and ported modes)
-    "sharma_native": lambda llm, pool=None, **kw: Sharma(llm, mode="native", **kw),  # T4 ports take no question pool
-    "sharma_ported": lambda llm, pool=None, **kw: Sharma(llm, mode="ported", **kw),  # T4 ports take no question pool
-    "torres_native": lambda llm, pool=None, **kw: Torres(llm, mode="native", **kw),  # T4 ports take no question pool
-    "torres_ported": lambda llm, pool=None, **kw: Torres(llm, mode="ported", **kw),  # T4 ports take no question pool
+    "sharma_native": lambda llm, pool=None, **kw: _C["sharma"](llm, mode="native", **kw),  # T4 ports take no question pool
+    "sharma_ported": lambda llm, pool=None, **kw: _C["sharma"](llm, mode="ported", **kw),  # T4 ports take no question pool
+    "torres_native": lambda llm, pool=None, **kw: _C["torres"](llm, mode="native", **kw),  # T4 ports take no question pool
+    "torres_ported": lambda llm, pool=None, **kw: _C["torres"](llm, mode="ported", **kw),  # T4 ports take no question pool
     # T2 ports (Group C secondary). FinFRE-RAG retrieves labelled TRAIN exemplars: main() passes `pool`
-    "co_investigator_native": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="native", **kw),
-    "co_investigator_ported": lambda llm, pool=None, **kw: CoInvestigator(llm, mode="ported", **kw),
-    "finfre_rag_native": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="native", **kw),
-    "finfre_rag_ported": lambda llm, pool=None, **kw: FinfreRag(llm, pool, mode="ported", **kw),
+    "co_investigator_native": lambda llm, pool=None, **kw: _C["co_investigator"](llm, mode="native", **kw),
+    "co_investigator_ported": lambda llm, pool=None, **kw: _C["co_investigator"](llm, mode="ported", **kw),
+    "finfre_rag_native": lambda llm, pool=None, **kw: _C["finfre_rag"](llm, pool, mode="native", **kw),
+    "finfre_rag_ported": lambda llm, pool=None, **kw: _C["finfre_rag"](llm, pool, mode="ported", **kw),
 }
 DEV_RESPONDERS = {"sharma": sharma_dev_responder, "torres": torres_dev_responder,
                   "co_investigator": coinv_dev_responder, "finfre_rag": finfre_dev_responder, "debate": debate_dev_responder,
