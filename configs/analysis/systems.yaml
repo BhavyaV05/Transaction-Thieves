@@ -124,6 +124,17 @@ externals:
   debate_autogen:  {group: D, tier: secondary, ported: {system: debate}}
   uot:             {group: D, tier: secondary, ported: {system: uot}}
   bed_llm:         {group: D, tier: secondary, ported: {system: bed_llm}}
+  # NEW ARMS (rewrite wave 2): adapted Group D agents (PlannerPolicy in the system graph; verdict = fused posterior)
+  react_adapted:          {group: D, tier: new_arm, ported: {system: react_adapted}}
+  reflexion_adapted:      {group: D, tier: new_arm, ported: {system: reflexion_adapted}}
+  rewoo_adapted:          {group: D, tier: new_arm, ported: {system: rewoo_adapted}}
+  lats_adapted:           {group: D, tier: new_arm, ported: {system: lats_adapted}}
+  llmcompiler_adapted:    {group: D, tier: new_arm, ported: {system: llmcompiler_adapted}}
+  dspy_react_adapted:     {group: D, tier: new_arm, ported: {system: dspy_react_adapted}}
+  debate_adapted:         {group: D, tier: new_arm, ported: {system: debate_adapted}}
+  uot_adapted:            {group: D, tier: new_arm, ported: {system: uot_adapted}}
+  bed_llm_adapted:        {group: D, tier: new_arm, ported: {system: bed_llm_adapted}}
+  mediq_adapted:          {group: D, tier: new_arm, ported: {system: mediq_adapted}}
 
 # Variants that are never results (devtools = random answers, harness_mock = mock banks): refused on --split test.
 never_results: [devtools, harness_mock, synthetic]
