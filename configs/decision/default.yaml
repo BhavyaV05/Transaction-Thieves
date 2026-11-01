@@ -7,5 +7,5 @@ cost_fn: null                # for objective: cost (cost of a missed launderer)
 cost_fp: null                # for objective: cost (cost of a false alarm)
 stop:
   min_eps: 0.25              # smallest eps level (configs/compliance/gate.yaml)
-  max_delta: 1.0             # ceiling per unit eps: 1 for yes/no answers; raise to the largest count gap in use
-  max_weight: 1.0            # largest fusion weight a, w_f after fitting (1 = naive Bayes)
+  max_delta: null            # no default: derived from the accepted LR table (largest |log LR| per unit eps), ftm.decision.threshold.stop_bounds
+  max_weight: null           # no default: derived from the fusion (largest |w_f| times its shrink; 1 = naive Bayes)

@@ -46,30 +46,30 @@ def test_decide():
 
 
 def test_stop_budget_first():
-    s = th.should_stop(0.5, 0.5, eps_left=0.1, min_eps=0.25, calls_left=5, sim_days_left=2, fast_says_clear=True)
+    s = th.should_stop(0.5, 0.5, eps_left=0.1, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=1, max_weight=1, fast_says_clear=True)
     assert s == th.StopDecision(True, "budget")
-    assert th.should_stop(0.5, 0.5, eps_left=2, min_eps=0.25, calls_left=0, sim_days_left=2).reason == "budget"
-    assert th.should_stop(0.5, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=0).reason == "budget"
+    assert th.should_stop(0.5, 0.5, eps_left=2, min_eps=0.25, calls_left=0, sim_days_left=2, max_delta=1, max_weight=1).reason == "budget"
+    assert th.should_stop(0.5, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=0, max_delta=1, max_weight=1).reason == "budget"
 
 
 def test_stop_fast_model_clear():
-    s = th.should_stop(0.4, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2, fast_says_clear=True)
+    s = th.should_stop(0.4, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=1, max_weight=1, fast_says_clear=True)
     assert s.reason == "fast_clear"
 
 
 def test_stop_when_ceiling_cannot_cross_threshold():
     # posterior 0.01 vs threshold 0.5: log-odds gap 4.6; eps 2 with yes/no answers moves it at most 2
-    assert th.should_stop(0.01, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2).reason == "cannot_cross"
+    assert th.should_stop(0.01, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=1, max_weight=1).reason == "cannot_cross"
     # counts with a gap of 3 per unit eps could move it 6: keep asking
-    s = th.should_stop(0.01, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=3)
+    s = th.should_stop(0.01, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=3, max_weight=1)
     assert s == th.StopDecision(False, "continue")
     # close to the threshold: keep asking
-    assert not th.should_stop(0.4, 0.5, eps_left=1, min_eps=0.25, calls_left=5, sim_days_left=2).stop
+    assert not th.should_stop(0.4, 0.5, eps_left=1, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=1, max_weight=1).stop
 
 
 def test_ceiling_matches_proposal_example():
     # proposal step 3: at eps = 1, yes/no answers cannot move 0.46 above ~0.70
-    z = np.log(0.46 / 0.54) + th.max_log_odds_shift(1.0)
+    z = np.log(0.46 / 0.54) + th.max_log_odds_shift(1.0, max_delta=1, max_weight=1)
     assert 1 / (1 + np.exp(-z)) == pytest.approx(0.70, abs=0.005)
 
 
@@ -95,3 +95,21 @@ def test_vectorised_fit_matches_brute_force(seed):
     y = (rng.random(300) < p).astype(int)
     assert th.fit_threshold(p, y, "cost", cost_fn=3, cost_fp=1) == pytest.approx(_brute(p, y, "cost", 3, 1))
     assert th.fit_threshold(p, y, "f1") == pytest.approx(_brute(p, y, "f1"))
+
+
+# --- the stop bounds come from the table and the fusion, never from a default (rewrite finding 23) ---------------------
+def test_stop_bounds_follow_the_largest_log_lr_per_eps_and_the_fusion_weights():
+    entries = [(2.0, {"true": 3.0, "false": 0.5}), (0.5, {"b0": 0.25, "b1": 2.0})]  # |log 3| / 2 = 0.55, |log 0.25| / 0.5 = 2.77
+    delta, weight = th.stop_bounds(entries, [0.4, 1.6], shrink=0.5)
+    assert delta == pytest.approx(np.log(4) / 0.5) and weight == pytest.approx(0.8)
+    assert th.stop_bounds([(float("inf"), {"true": 2.0})])[0] == float("inf")
+    assert th.max_log_odds_shift(2.0, max_delta=delta, max_weight=weight) == pytest.approx(2 * delta * weight)
+    assert th.max_log_odds_shift(2.0, max_delta=float("inf"), max_weight=1.0) == float("inf")
+
+
+def test_should_stop_has_no_default_bounds_and_a_wide_count_lr_keeps_the_search_going():
+    with pytest.raises(TypeError):
+        th.should_stop(0.01, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2)
+    delta, weight = th.stop_bounds([(1.0, {"b0": 0.1, "b1": 6.0})], [1.5])  # log 10 per eps, weight 1.5
+    s = th.should_stop(0.01, 0.5, eps_left=2, min_eps=0.25, calls_left=5, sim_days_left=2, max_delta=delta, max_weight=weight)
+    assert not s.stop  # the old delta = weight = 1 bound would have said cannot_cross

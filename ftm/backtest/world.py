@@ -4,7 +4,9 @@ Owner: T2 (Bhavya).  Reads only through `ftm.data.io` (time guard and test lock)
 (`data/alerts/<ds>/{train,val}.parquet`, hand-off #6) and the per-bank views (hand-off #1). Only the train and val
 splits can be loaded here; the test split stays locked (ftm.guards).
 
-A partner bank's ledger is its view restricted to the split being back-tested, so an answer can never see a later split.
+A partner bank's ledger is its view of every earlier split plus the split being back-tested (history questions must not
+cold-start at a split boundary); each answer is cut at the question's own as_of + latency (`ftm.dsl.executor`), so no row
+after that time is visible, and a later split never is.
 The alert's label comes from the alert set and goes into `BtAlert.label`, which only the back-test engine reads.
 """
 
@@ -26,6 +28,11 @@ LEDGER_COLUMNS = [
     "receiving_currency", "payment_currency", "payment_format",
 ]  # fmt: skip
 ALERT_TX_COLUMNS = ["tx_id", "timestamp", "from_bank", "to_bank", "src_id", "dst_id", "amount_received", "receiving_currency"]
+
+
+def history_splits(split: str) -> list[str]:
+    """The splits a bank's ledger covers when answering about `split`: the earlier ones and this one, in time order."""
+    return list(io.SPLITS[: io.SPLITS.index(split) + 1])
 
 
 @dataclass
@@ -75,7 +82,7 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
 
     def view(bank: int) -> pl.DataFrame:
         if bank not in ledgers:
-            ledgers[bank] = io.scan_view(views, bank, split=split, columns=LEDGER_COLUMNS, heldout_cycles=heldout_cycles,
+            ledgers[bank] = io.scan_view(views, bank, split=history_splits(split), columns=LEDGER_COLUMNS, heldout_cycles=heldout_cycles,
                                          parquet_dir=pq).collect()
         return ledgers[bank]
 
