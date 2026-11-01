@@ -49,7 +49,7 @@ def test_the_no_noise_arm_is_an_explicit_opt_in_and_is_exact_and_free():
                 t.ask_bank(bank, PROG, math.inf)
             continue
         first = t.ask_bank(bank, PROG, math.inf)
-        for _ in range(11):  # far beyond the 2.0 budget: nothing is priced
+        with pytest.raises(GateBlocked, match="already asked"):  # an exact re-ask adds nothing
             t.ask_bank(bank, PROG, math.inf)
         r = first
         assert t.eps_spent == 0 and not h.accountant.alert_spent
@@ -254,9 +254,9 @@ def test_exact_all_answers_every_level_exactly_and_free():
     t = h.toolbox()
     t.begin(ctx, Limits(eps_per_alert=math.inf, max_sim_time_days=1000.0))
     r = t.ask_bank(bank, PROG, 0.5)  # a nominal level: answered as if eps = inf
-    for _ in range(9):
-        t.ask_bank(bank, PROG, 2.0)
-    t.ask_bank(bank, PROG, 1)  # an int level (LLM JSON "eps": 1) is exact too
+    for e in (2.0, 1.0, 0.25, 4.0, 3.0, 5.0, 6.0, 7.0, 8.0):  # many asks, none priced
+        t.ask_bank(bank, PROG, e)
+    t.ask_bank(bank, PROG, 9)  # an int level (LLM JSON "eps": 1) is exact too
     assert t.eps_spent == 0 and not h.accountant.alert_spent
     assert r == w.banks[bank].handle(Question(canonical(parse(PROG)), math.inf, a.binding), a.binding.t0)
 

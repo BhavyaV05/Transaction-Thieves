@@ -131,8 +131,9 @@ def test_the_run_limit_can_be_tighter_than_the_accountants():
 def test_declines_and_timeouts_release_nothing_so_they_cost_nothing():
     h, _, acc = harness({2: Fixed(Decline(2, "declined"), 0.3), 3: Fixed(Timeout(3, 5.0), 5.0)})
     t = session(h, limits=Limits(max_sim_time_days=50))
-    for _ in range(5):
-        assert isinstance(t.ask_bank(2, PROG, 2.0), Decline)
+    for e in (0.25, 0.5, 1.0, 2.0):
+        assert isinstance(t.ask_bank(2, PROG, e), Decline)
+    assert isinstance(t.ask_bank(2, "dormant(ALERT.receiver, days=7)", 2.0), Decline)
     assert isinstance(t.ask_bank(3, PROG, 2.0), Timeout)
     assert t.eps_spent == 0 and not acc.alert_spent and t.elapsed_days == pytest.approx(5 * 0.3 + 5.0)
 
@@ -145,7 +146,7 @@ def test_time_runs_out():
     r = t.ask_bank(3, "returns_home(ALERT.receiver, window=after(24))", 0.25)  # would arrive at day 6: cut at day 4
     assert isinstance(r, Timeout) and r.after_days == pytest.approx(1.0) and t.elapsed_days == pytest.approx(4.0)
     with pytest.raises(BudgetRefused):
-        t.ask_bank(2, PROG, 0.25)
+        t.ask_bank(2, PROG, 0.5)
 
 
 def test_native_mode_has_no_ask_bank():
@@ -291,3 +292,47 @@ def test_systems_outside_the_harness_cannot_import_banks_or_the_accountant():
                 mods = [a.name for a in n.names] if isinstance(n, ast.Import) else [n.module or ""] if isinstance(n, ast.ImportFrom) else []
                 offenders += [f"{f.name}: {m}" for m in mods if m.startswith(banned)]
     assert not offenders, offenders
+
+
+# --- routing and re-asks (rewrite findings 1, 24) ------------------------------------------------------------------
+def _world_toolbox():
+    from ftm.backtest.synth import PARTNERS
+    from ftm.banks.binding import alert_context
+    from ftm.orchestrator.runner import make_harness
+
+    w = make_world(40, seed=3)
+    a = w.alerts[0]
+    h = make_harness(w.banks, {a.alert_id: a.binding})
+    t = h.toolbox()
+    t.begin(alert_context(a.binding, 0.2), Limits(max_sim_time_days=1000.0))
+    other = next(b for b in PARTNERS if b != a.binding.partner_bank)
+    return t, a, other
+
+
+def test_a_question_to_a_bank_that_does_not_hold_the_subject_is_refused_and_free():
+    t, a, other = _world_toolbox()
+    with pytest.raises(GateBlocked, match="does not hold"):
+        t.ask_bank(other, PROG, 1.0)
+    assert t.eps_spent == 0 and t.questions_log[-1].gate_decision == "blocked"
+    assert isinstance(t.ask_bank(a.binding.partner_bank, PROG, 1.0), (Reply, Decline, Timeout))
+
+
+def test_a_subject_at_the_home_bank_is_asked_of_nobody():
+    t, a, _ = _world_toolbox()
+    # the sender is a home-bank account in the synthetic world: no partner holds it
+    with pytest.raises(GateBlocked, match="does not hold"):
+        t.ask_bank(a.binding.partner_bank, PROG.replace("receiver", "sender"), 1.0)
+
+
+def test_the_same_question_cannot_be_asked_twice_but_another_eps_or_question_can():
+    t, a, _ = _world_toolbox()
+    b = a.binding.partner_bank
+    t.ask_bank(b, PROG, 0.5)
+    spent = t.eps_spent
+    with pytest.raises(GateBlocked, match="already asked"):
+        t.ask_bank(b, PROG, 0.5)
+    assert t.eps_spent == spent
+    t.ask_bank(b, PROG, 1.0)
+    t.ask_bank(b, "dormant(ALERT.receiver, days=7)", 0.5)
+    t.begin(t._alert, t._limits)  # a new session starts afresh
+    t.ask_bank(b, PROG, 0.5)
