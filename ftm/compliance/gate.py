@@ -124,7 +124,9 @@ class Gate:
     jurisdiction_by_bank: dict = field(default_factory=dict)
     allow_raw_share: bool = False
     red_flags: dict = field(default_factory=dict)
-    retrieval: str = "bm25"  # bm25 (default, ftm.compliance.rag) | keyword (v0, ablation)
+    retrieval: str = "bm25"  # bm25 (default, ftm.compliance.rag) | hybrid (bm25 + bge-small, ftm.compliance.dense) | keyword (v0, ablation)
+    retrieval_alpha: float = 0.5  # hybrid: weight of the dense score
+    embedder: object = field(default=None, repr=False, compare=False)  # hybrid: embedder(texts) -> vectors; None = bge-small (pinned)
     _retriever: object = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -136,7 +138,7 @@ class Gate:
                   jurisdiction_by_bank={str(k): v for k, v in (cfg.get("jurisdiction_by_bank") or {}).items()},
                   allow_raw_share=cfg["allow_raw_share"],
                   red_flags=load_red_flags(cfg["red_flags_file"]) if cfg.get("red_flags_file") else {},
-                  retrieval=cfg.get("retrieval", "bm25"))  # fmt: skip
+                  retrieval=cfg.get("retrieval", "bm25"), retrieval_alpha=float(cfg.get("retrieval_alpha", 0.5)))  # fmt: skip
         kw.update(overrides)
         return cls(**kw)
 
@@ -196,20 +198,31 @@ class Gate:
             return Decision("over_budget", "privacy accountant refused", r.rule_id)
         return Decision("allowed", rule_id=r.rule_id)
 
-    def lookup_rules(self, query: str, jurisdiction: str | None = None, k: int = 5) -> list[dict]:
-        """Retrieval over legal bases and red flags: BM25 (ftm.compliance.rag) or the v0 keyword match.
+    def lookup_rules(self, query: str, jurisdiction: str | None = None, k: int = 5, rules_first: bool = True) -> list[dict]:
+        """Retrieval over legal bases and red flags: BM25 / hybrid (ftm.compliance.rag) or the v0 keyword match.
+        `rules_first` (default): the citable rules (those that permit ask_bank in the jurisdiction) head the list, so they are never
+        crowded out of the top k by the red flags.
 
         Returns dicts with rule_id (a legal-basis rule id or a red-flag id), kind ("rule" | "red_flag"),
         jurisdiction, text, source. Only `kind == "rule"` ids are valid citations for ask_bank.
         """
-        if self.retrieval == "bm25":
+        if self.retrieval in ("bm25", "hybrid"):
             if self._retriever is None:
                 from ftm.compliance.rag import Retriever, docs_from_gate
 
-                self._retriever = Retriever(docs_from_gate(self))
+                emb = None
+                if self.retrieval == "hybrid":
+                    from ftm.compliance.dense import bge_embedder
+
+                    emb = self.embedder or bge_embedder()
+                self._retriever = Retriever(docs_from_gate(self), embedder=emb, alpha=self.retrieval_alpha)
             return [{k_: h[k_] for k_ in ("rule_id", "kind", "jurisdiction", "text", "source")}
-                    for h in self._retriever.search(query, jurisdiction=jurisdiction, k=k)]  # fmt: skip
-        return self._keyword_lookup(query, jurisdiction, k)
+                    for h in self._retriever.search(query, jurisdiction=jurisdiction, k=k, rules_first=rules_first)]  # fmt: skip
+        out = self._keyword_lookup(query, jurisdiction, 10_000)
+        if rules_first:  # the citable rules head the list here too
+            cit = {r.rule_id for r in self.rules.values() if "ask_bank" in r.permits}
+            out = [h for h in out if h["rule_id"] in cit] + [h for h in out if h["rule_id"] not in cit]
+        return out[:k]
 
     def _keyword_lookup(self, query: str, jurisdiction: str | None = None, k: int = 5) -> list[dict]:
         """v0: count of query words (> 2 letters) found in the document."""

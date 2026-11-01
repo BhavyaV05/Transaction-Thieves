@@ -11,6 +11,7 @@ from dataclasses import replace
 import polars as pl
 import pytest
 
+from ftm import guards
 from ftm.compliance.gate import Gate, GateBlocked
 from ftm.dsl.spec import PRIMS
 from ftm.eval import runlog
@@ -332,8 +333,8 @@ def test_plan_prints_investigation_counts_and_hours(capsys):
 
 
 def test_script_refuses_test_split_and_bad_arguments():
-    with pytest.raises(SystemExit):
-        rit.main(["--alerts", "test"])
+    with pytest.raises(guards.TestSplitLocked):
+        rit.main(["--alerts", "test"])  # test: final run only (FTM_FINAL_RUN)
     with pytest.raises(SystemExit):
         rit.main(["--alerts", "val"])  # val needs --val-part
     with pytest.raises(SystemExit):
@@ -398,3 +399,10 @@ def test_native_systems_get_the_evidence_channel(tmp_path):
                      "--out", str(tmp_path), "--run-id", "n"]) == 0
     s = json.loads((tmp_path / "n" / "sharma_native" / "summary.json").read_text())
     assert s["channel"] == "evidence" and s["rows"][0]["n_exposed"] == 1
+
+
+def test_variant_label_keeps_the_devtools_tag_and_replaces_harness():
+    assert rla.written_variant("harness", None) == "harness"
+    assert rla.written_variant("harness", "eps_1") == "eps_1"
+    assert rla.written_variant("devtools", "compose") == "devtools.compose"  # still never a result
+    assert rla.written_variant("harness_mock", "compose").startswith("harness_mock")

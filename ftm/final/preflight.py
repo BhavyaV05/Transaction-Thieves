@@ -100,6 +100,8 @@ def check_commit_ancestor(p: Paths) -> list[str]:
     rel = p.prereg.resolve().relative_to(p.repo.resolve()).as_posix()
     problems = []
     for name, want in sorted(fr.get("files", {}).items()):
+        if name in fz.EXTRA_UNTRACKED:  # not in git: check_hashes_match compares it with the file on disk
+            continue
         try:
             where = name if "/" in name else f"{rel}/{name}"  # EXTRA_FROZEN names are repo-relative
             raw = subprocess.check_output(["git", "show", f"{commit}:{where}"], cwd=p.repo, stderr=subprocess.DEVNULL)
@@ -108,6 +110,32 @@ def check_commit_ancestor(p: Paths) -> list[str]:
             continue
         if fz.sha256_bytes(fz.normalized_bytes(name, raw)) != want:
             problems.append(f"{name} at the freeze commit {commit[:10]} does not match FREEZE.json")
+    return problems
+
+
+def check_dspy_program(p: Paths, jobs=None) -> list[str]:
+    """The MIPROv2 program of the dspy_react jobs exists, is in FREEZE.json with the hash of the file on disk, and every
+    dspy_react job of the plan loads exactly it (--dspy-program)."""
+    prog = fz.EXTRA_UNTRACKED[0]
+    if not any(j.llm_system == "dspy_react" for j in jobs or []):
+        return []  # no dspy_react job selected / planned
+    f = fz.frozen_path(p.prereg, prog)
+    if not f.exists():
+        return [f"{prog} does not exist: dspy_react would run untuned (scripts/optimize_dspy.py writes it)"]
+    problems = []
+    try:
+        want = fz.read_freeze(p.prereg).get("files", {}).get(prog)
+    except (ValueError, OSError):
+        want = None
+    if want is None:
+        problems.append(f"{prog} is not in FREEZE.json: re-run scripts/freeze_prereg.py")
+    elif fz.sha256_bytes(f.read_bytes()) != want:
+        problems.append(f"{prog} changed since the freeze")
+    for j in jobs or []:
+        if j.llm_system == "dspy_react":
+            a = list(j.extra_args)
+            if "--dspy-program" not in a or Path(a[a.index("--dspy-program") + 1]).as_posix() != prog:
+                problems.append(f"{j.job_id} does not pass --dspy-program {prog}")
     return problems
 
 
@@ -274,13 +302,14 @@ def check_test_alert_source(path: Path, cmd: str | None) -> list[str]:
     return [f"{path} does not exist and test_alerts.cmd is not set in configs/final/jobs.yaml (T1: the command that builds it)"]
 
 
-def run_preflight(p: Paths, confirm: str | None, known_agents: set[str] | None = None) -> dict[str, list[str]]:
+def run_preflight(p: Paths, confirm: str | None, known_agents: set[str] | None = None, jobs=None) -> dict[str, list[str]]:
     """All checks, in the order the runbook fixes them. Nothing is set or written."""
     return {
         "freeze manifest": check_freeze_manifest(p),
         "prereg hashes": check_hashes_match(p),
         "working tree clean": check_tree_clean(p),
         "freeze commit is an ancestor of HEAD": check_commit_ancestor(p),
+        "DSPy program frozen": check_dspy_program(p, jobs),
         "hash sent to the TA": check_ta_ack(p),
         "E18 decision and backbone": check_e18_decision(p),
         "no fix_on_val left": check_unresolved(p),

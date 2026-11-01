@@ -39,6 +39,7 @@ from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
 from ftm.external.bed_llm import BedLlm  # noqa: E402
 from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
+from ftm.external.case_memory import CaseMemory  # noqa: E402
 from ftm.external.co_investigator import CoInvestigator  # noqa: E402
 from ftm.external.co_investigator import dev_responder as coinv_dev_responder  # noqa: E402
 from ftm.external.debate_autogen import Debate  # noqa: E402
@@ -50,6 +51,7 @@ from ftm.external.lats import Lats  # noqa: E402
 from ftm.external.llmcompiler import LlmCompiler  # noqa: E402
 from ftm.external.mediq import MediQ  # noqa: E402
 from ftm.external.mediq import dev_responder as mediq_dev_responder  # noqa: E402
+from ftm.external.memory_build import build_case_memory, load_p0_override  # noqa: E402
 from ftm.external.react import React  # noqa: E402
 from ftm.external.reflexion import Reflexion  # noqa: E402
 from ftm.external.rewoo import Rewoo  # noqa: E402
@@ -132,6 +134,18 @@ def sample_order(height: int, seed: int, n: int, offset: int = 0) -> list[int]:
     return order[offset:offset + n]
 
 
+def stratified_order(alerts: pl.DataFrame, seed: int, n: int, pos_frac: float) -> pl.DataFrame:
+    """n alerts of which round(n * pos_frac) are positive (all of a class if it has fewer), each class in seeded order.
+    Train alerts only (labels are read): the exemplar pool and the case memory."""
+    y = alerts["label"].to_list()
+    n_pos = round(n * pos_frac)
+    parts = []
+    for lab, k in ((1, n_pos), (0, n - n_pos)):
+        sub = alerts.filter(pl.Series(y) == lab)
+        parts.append(sub[sample_order(sub.height, seed + lab, k)])
+    return pl.concat(parts)
+
+
 def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: int, n: int, offset: int = 0) -> pl.DataFrame:
     """The alert rows a run takes, in run order. `val_part` "all" (E18 stage 2, prereg/e18_decision.yaml): every val
     part, the eval alerts first in the seeded order a `--val-part eval` run uses (so that run's alerts are a prefix),
@@ -147,9 +161,10 @@ def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: 
 
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0,
-                evidence_view: str | None = None) -> list[tuple[AlertContext, int | None]]:
+                evidence_view: str | None = None, pos_frac: float | None = None) -> list[tuple[AlertContext, int | None]]:
     """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
     Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`.
+    `pos_frac` (train only): a stratified draw with this share of positives (exemplar pool, case memory), None = natural.
     `evidence_view` (E8 / H6): replace the week-2 stub's trail with T1's `evidence_views.view(alert, name, k)` text."""
     from ftm.data import alias, io
     from ftm.retrieval import evidence_views, views
@@ -158,10 +173,18 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         guards.require_final_run("test alerts")
     cfg = io.load_config(data)
     alerts_path = ROOT / "data" / "alerts" / data / f"{split}.parquet"
-    alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
+    if split == "test":  # the label column is never read in-process on test (the analysis joins labels later)
+        alerts = pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
+    else:
+        alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
-    alerts = select_alerts(alerts, split, val_part, seed, n, offset)
+    if pos_frac is not None:
+        if split != "train":
+            raise ValueError("pos_frac stratifies train alerts only")
+        alerts = stratified_order(alerts, seed, n, pos_frac)
+    else:
+        alerts = select_alerts(alerts, split, val_part, seed, n, offset)
     aliases = alias.read_aliases(cfg["parquet_dir"], seed=0)
     banks = io.read_banks(cfg["views_dir"])["bank"].to_list()
     out = []
@@ -177,17 +200,30 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
         summary["shape"] = {**shape_from_edges(edges, row["dst_id"], row["timestamp"]).as_dict(),
                             "receiver": summary["receiver"]}  # receiver: only the E11 account-keyed ablation reads it
         ctx = AlertContext(a["alert_id"], str(a["bank"]), a["timestamp"].isoformat(), split, float(a["p0"]), summary)
-        out.append((ctx, int(a["label"])))
+        out.append((ctx, None if split == "test" else int(a["label"])))
     return out
 
 
-def exemplar_pool(a) -> ExemplarPool:
-    """FinFRE-RAG's labelled pool: TRAIN alerts only (the pool refuses anything else). Synthetic runs get toy ones."""
+def train_alerts(a, n: int, pos_frac: float | None) -> list[tuple[AlertContext, int]]:
+    """Labelled TRAIN alerts for the exemplar pool and the case memory. Synthetic runs get toy ones."""
     if a.alerts == "synthetic":
-        toy = synthetic_alerts(max(a.pool_n, 40), a.seed + 1, labelled=True)
-        return ExemplarPool.from_alerts([replace(c, split="train") for c, _ in toy], [y for _, y in toy], seed=a.seed)
-    train = data_alerts(a.data, "train", a.pool_n, a.seed + 1, a.k)
+        toy = synthetic_alerts(max(n, 40), a.seed + 1, labelled=True)
+        return [(replace(c, split="train"), y) for c, y in toy]
+    return data_alerts(a.data, "train", n, a.seed + 1, a.k, pos_frac=pos_frac)
+
+
+def exemplar_pool(a) -> ExemplarPool:
+    """FinFRE-RAG's labelled pool: TRAIN alerts only (the pool refuses anything else), stratified to `--pool-pos-frac`."""
+    train = train_alerts(a, a.pool_n, getattr(a, "pool_pos_frac", None))
     return ExemplarPool.from_alerts([c for c, _ in train], [y for _, y in train], seed=a.seed)
+
+
+def case_memory(a) -> CaseMemory:
+    """Sharma / Torres / Co-Investigator: nearest past TRAIN alerts per class (prereg fixed_choices), `--memory-p0` replaces the
+    train p0 feature (the alert table's train p0 is inflated, audit finding 17)."""
+    train = train_alerts(a, a.memory_n, a.memory_pos_frac)
+    p0 = load_p0_override(a.memory_p0, a.memory_p0_col) if a.memory_p0 else None
+    return build_case_memory([c for c, _ in train], [y for _, y in train], p0)
 
 
 def make_toolbox(kind: str, seed: int, data: str = "hi_small", split: str = "synthetic", eps_per_alert: float | None = None,
@@ -254,6 +290,14 @@ def investigate_one(system, ctx: AlertContext, tools, session, limits: Limits) -
                "system_only_refusals": max(own - len(log), 0)}  # asks the system refused itself (eps left), never sent
 
 
+def written_variant(variant: str, label: str | None) -> str:
+    """The run-log `variant`: the toolbox's (harness) unless the job names its own. Devtools / mock-bank runs keep their tag as
+    the prefix (`devtools.compose`), so they stay recognisable as never-a-result."""
+    if not label:
+        return variant
+    return label if variant == "harness" else f"{variant}.{label}"
+
+
 def refuse_devtools_test(variant: str, split: str) -> None:
     """Random-answer devtools runs must never reach a results table, least of all with test-split rows."""
     if variant in ("devtools", "harness_mock") and split == "test":
@@ -304,6 +348,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--offset", type=int, default=0, help="skip the first OFFSET alerts of the seeded order (chunked runs)")
     ap.add_argument("--pool-n", type=int, default=500, help="FinFRE-RAG: labelled TRAIN exemplars in the pool")
+    ap.add_argument("--pool-pos-frac", type=float, default=0.5,
+                    help="FinFRE-RAG: share of positives in the exemplar pool (default 0.5, 1:1: the natural train rate is ~13%% so a "
+                         "nearest-neighbour query rarely meets a laundering exemplar; the calibration map absorbs the prior shift). "
+                         "-1 = natural")
+    ap.add_argument("--memory-n", type=int, default=500, help="Sharma / Torres / Co-Investigator: TRAIN alerts in the case memory")
+    ap.add_argument("--memory-pos-frac", type=float, default=0.5,
+                    help="case memory: share of positives (the memory answers 'nearest per class', so both need enough cases); -1 = natural")
+    ap.add_argument("--memory-p0", type=Path, default=None,
+                    help="parquet (alert_id, p0) with a recalibrated TRAIN p0 for the memory's p0 feature (the alert table's train p0 is inflated)")
+    ap.add_argument("--memory-p0-col", default="p0")
+    ap.add_argument("--no-memory", action="store_true", help="Group C: run with an empty case memory (the pre-fix behaviour)")
     ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
     ap.add_argument("--evidence-view", default=None,
                     help="E8 / H6: amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (T1's view(); "
@@ -343,6 +398,12 @@ def main(argv: list[str] | None = None) -> int:
                          "together (one wave, the clock advances by the slowest answer), the second 1 more, then stop. Default: off")
     ap.add_argument("--dspy-program", type=Path, default=None,
                     help="dspy_react: the MIPROv2-optimised program saved by scripts/optimize_dspy.py (its sha256 is recorded in summary.json)")
+    ap.add_argument("--variant-label", default=None,
+                    help="run-log `variant` of a harness run (default: harness). The final plan sets it to the job's variant, so jobs "
+                         "that share a system (compose, eps_*, library_account, student_*) stay separate rows in the analysis")
+    ap.add_argument("--coinv-emit-unvalidated", action="store_true",
+                    help="co_investigator: emit the narrative's confidence even when the validator still rejects it after the revision "
+                         "(validated=0 in per_alert.jsonl). Default: no verdict, as prereg fixed_choices. Both views are logged either way")
     ap.add_argument("--keep-prompts", action="store_true", help="teacher runs: save prompts in traces for distillation")
     ap.add_argument("--alert-ids", type=Path, default=None,
                     help="text file, one alert id per line: run only these alerts (the final run's frozen subset / test set, "
@@ -405,12 +466,19 @@ def main(argv: list[str] | None = None) -> int:
                             max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
         system_name = system.system_name
     else:
+        a.pool_pos_frac = None if a.pool_pos_frac < 0 else a.pool_pos_frac
+        a.memory_pos_frac = None if a.memory_pos_frac < 0 else a.memory_pos_frac
         pool = exemplar_pool(a) if a.system.startswith("finfre_rag") else None
+        mem_kw = {"memory": case_memory(a)} if a.system.split("_")[0] in ("sharma", "torres", "co") and not a.no_memory else {}
         if a.dspy_program is not None and a.system != "dspy_react":
             ap.error("--dspy-program applies to --system dspy_react only")
         kw = {"program_path": str(a.dspy_program)} if a.dspy_program is not None else {}
+        if a.coinv_emit_unvalidated:
+            if not a.system.startswith("co_investigator"):
+                ap.error("--coinv-emit-unvalidated applies to co_investigator only")
+            kw["emit_unvalidated"] = True
         system = {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
-                                                  **({"pool": pool} if a.system in GROUP_C else {}), **kw)
+                                                  **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
         system_name = a.system
     tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
     refuse_devtools_test(variant, a.alerts)
@@ -439,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         library_hash, tools = library.content_hash(), LibraryToolBox(tools, library)
     limits = Limits(eps_per_alert=eps_budget, max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
-            "variant": variant, "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
+            "variant": written_variant(variant, a.variant_label), "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
             "thinking": int(a.thinking), "mode": "native" if a.system.endswith("_native") else "ported"}  # fmt: skip
 
     rows, sq, n_scored, seconds, trials, per_alert, refusals = [], 0.0, 0, [], {}, [], 0
@@ -460,8 +528,9 @@ def main(argv: list[str] | None = None) -> int:
                               "seconds": seconds[-1], "gpu_seconds": v.gpu_seconds, "llm_calls": v.llm_calls,
                               "tokens_in": v.tokens_in, "tokens_out": v.tokens_out,
                               "eps_spent": facts["eps_spent"], "sim_days": facts["sim_days"],
+                              **getattr(system, "last_views", {}),  # Co-Investigator: validated, p_draft (both views)
                               **{k: after[k] - before[k] for k in after}})  # fmt: skip
-            refuse_devtools_test(base["variant"], ctx.split)
+            refuse_devtools_test(variant, ctx.split)
             rows += verdict_rows(v, {**base, "split": ctx.split, "alert_id": ctx.alert_id},
                                  None if ctx.split == "test" else label, ctx=ctx, fusion=fusion, facts=facts, val_part=a.val_part)
             if v.trials is not None:
@@ -505,6 +574,8 @@ def main(argv: list[str] | None = None) -> int:
         summary["askable_alerts_in_world"] = len(only_ids)
     if trials:  # Reflexion: also the run-log v1 `trials` column (verdict rows); the per-alert map stays here for the traces
         summary["trials_per_alert"] = trials
+    if per_alert and "validated" in per_alert[0]:
+        summary["validated_rate"] = sum(r["validated"] for r in per_alert) / len(per_alert)
     if isinstance(system, LLMPlanner):
         summary["planner"] = system.stats.as_dict()
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=str))

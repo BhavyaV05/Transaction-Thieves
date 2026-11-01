@@ -698,7 +698,7 @@ def test_mock_run_end_to_end_writes_a_manifest(tmp_path, capsys):
         assert set(verdicts["alert_id"]) <= set(rn.read_ids(run / (man["subset_ids_path"] if j["alerts"] == "subset" else man["full_test_ids_path"])))
     # the LLM jobs went through run_llm_agent in blind mode: no Brier, no label, same alert hash everywhere
     s = json.loads((run / "ours.compose.subset" / "seed-0" / "summary.json").read_text())
-    assert s["blind"] is True and s["brier"] is None and s["alerts"] == "synthetic" and s["variant"] == "devtools"
+    assert s["blind"] is True and s["brier"] is None and s["alerts"] == "synthetic" and s["variant"] == "devtools.compose"  # --variant-label keeps the devtools prefix
     assert all(json.loads(ln)["label"] is None for ln in (run / "ours.compose.subset" / "seed-0" / "per_alert.jsonl").read_text().splitlines())
     printed = capsys.readouterr().out.lower()
     assert "brier" not in printed and "0.123" not in printed
@@ -1012,3 +1012,51 @@ def test_a_second_machine_with_another_subset_is_fatal(world, tmp_path, capsys):
     assert run_final.main(args) == run_final.EXIT_OK
     assert run_final.main([*args, "--expect-subset-sha", "0" * 64]) == run_final.EXIT_FATAL
     assert "FATAL" in capsys.readouterr().out
+
+
+# -- finding 8, 9, 14: dspy program, variant labels, E15 jobs -------------------------------------------------------
+def test_dspy_jobs_load_the_frozen_program_and_every_llm_job_gets_a_variant_label():
+    jobs, _ = real_plan(top=["react", "dspy_react"])
+    prog = fp.load_jobs_config()["llm"]["dspy_program"]
+    dspy = [j for j in jobs if j.llm_system == "dspy_react"]
+    assert dspy and all(j.extra_args == ["--dspy-program", prog] for j in dspy)
+    assert prog in fz.EXTRA_UNTRACKED
+    ctx = rn.Ctx(run_dir=Path("."), repo=ROOT, run_id="r", subset={}, commit="c", machine_name="m", freeze_sha256=None, n_alerts={"full_test": 5})
+    for j in (j for j in jobs if j.kind == "llm_agent"):
+        argv = rn.llm_argv(j, ctx, 0, Path("o"), Path("ids"))
+        assert argv[argv.index("--variant-label") + 1] == j.variant
+
+
+def test_arms_that_share_a_system_get_distinct_labels():
+    jobs, _ = real_plan()
+    ours = [j for j in jobs if j.system == "ours" and j.alerts == "full_test"]
+    assert len({j.variant for j in ours}) == len(ours) >= 10  # compose, eps_*, library_account, batched_2_1, student_s*, prompted
+
+
+def test_e15_injection_jobs_are_in_the_plan_under_the_freeze():
+    jobs, _ = real_plan()
+    e15 = [j for j in jobs if j.system == "e15"]
+    assert {j.variant for j in e15} == {"planner", "react"} and all(j.cmd and j.machine_class == "gpu_s3" for j in e15)
+    assert "--alerts test" in e15[0].cmd and "{alert_ids}" in e15[0].cmd and "label" not in e15[0].cmd
+
+
+def test_dspy_program_preflight(world, tmp_path):
+    paths, _ = world
+    jobs, _ = real_plan(top=["react", "dspy_react"])
+    prog = fz.EXTRA_UNTRACKED[0]
+    assert pf.check_dspy_program(paths, []) == []  # no dspy job planned
+    assert any("does not exist" in x for x in pf.check_dspy_program(paths, jobs))
+    f = paths.repo / prog
+    f.parent.mkdir(parents=True)
+    f.write_text("{}")
+    assert any("not in FREEZE.json" in x for x in pf.check_dspy_program(paths, jobs))
+    fr = fz.read_freeze(paths.prereg)
+    fr["files"][prog] = fz.sha256_bytes(b"{}")
+    (paths.prereg / fz.FREEZE_FILE).write_text(json.dumps(fr))
+    assert pf.check_dspy_program(paths, jobs) == []
+    f.write_text('{"x": 1}')
+    assert any("changed since the freeze" in x for x in pf.check_dspy_program(paths, jobs))
+    j = next(x for x in jobs if x.llm_system == "dspy_react")
+    j.extra_args = []
+    f.write_text("{}")
+    assert any("does not pass --dspy-program" in x for x in pf.check_dspy_program(paths, jobs))

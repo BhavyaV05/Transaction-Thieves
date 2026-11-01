@@ -147,13 +147,13 @@ def build_run(root: Path, w: World | None = None, split: str = "val", drop_jobs:
 
     ours_cost = {"llm_calls": 6, "tokens_in": 3000, "tokens_out": 400, "gpu_seconds": 7.5, "eps_spent": 1.8}
     pr = {s: w.prob(w.skill["ours_compose"]) for s in seeds}
-    rows = _verdicts(w, "ours_compose", "harness", "ported", w.ids, pr, seeds, ours_cost) + _steps(w, "ours_compose", "harness", "ported", w.ids,
+    rows = _verdicts(w, "ours_compose", "compose", "ported", w.ids, pr, seeds, ours_cost) + _steps(w, "ours_compose", "compose", "ported", w.ids,
                                                                                                     useless_frac=w.useless_frac)  # fmt: skip
-    add("ours_full", "ours_compose", "harness", "ported", "full_test", rows)
+    add("ours_full", "ours_compose", "compose", "ported", "full_test", rows)
     pr = {s: w.prob(w.skill["ours_compose"]) for s in seeds}
-    add("ours_subset", "ours_compose", "harness", "ported", "subset", _verdicts(w, "ours_compose", "harness", "ported", w.subset, pr, seeds, ours_cost))
-    for name, system, variant in (("llm_fixed", "ours_fixed_list", "harness"), ("llm_nobt", "ours_no_backtest", "harness"),
-                                  ("llm_dec", "ours_llm_decides", "harness"), ("llm_act", "ours_act_only", "harness")):
+    add("ours_subset", "ours_compose", "compose", "ported", "subset", _verdicts(w, "ours_compose", "compose", "ported", w.subset, pr, seeds, ours_cost))
+    for name, system, variant in (("llm_fixed", "ours_fixed_list", "fixed_list"), ("llm_nobt", "ours_no_backtest", "no_backtest"),
+                                  ("llm_dec", "ours_llm_decides", "llm_decides"), ("llm_act", "ours_act_only", "act_only")):  # the final run's --variant-label
         add(name, system, variant, "ported", "full_test", _verdicts(w, system, variant, "ported", w.ids, {s: w.prob(w.skill[system]) for s in seeds}, seeds,
                                                                       {"llm_calls": 5, "gpu_seconds": 6.0, "eps_spent": 1.9}))  # fmt: skip
     for name, system, variant in (("random", "random", "random"), ("fixed", "fixed", "fixed_order"), ("eig", "eig", "eig"), ("learned", "learned", "learned_policy"),

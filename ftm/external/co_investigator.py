@@ -117,8 +117,10 @@ class CoInvestigator:
     seed: int = 0
     max_tokens: int = 700
     extra: dict | None = None
+    emit_unvalidated: bool = False  # True: a draft the validator still rejects after the revision is emitted (validated=False) instead of no verdict
     name: str = "co_investigator"
     last_trace: dict = field(default_factory=dict)
+    last_views: dict = field(default_factory=dict)  # per alert: validated (0/1), p_draft (the narrative's own confidence, before validation)
 
     def __post_init__(self):
         if self.mode not in ("native", "ported"):
@@ -224,8 +226,13 @@ class CoInvestigator:
                 if revised is None or "_invalid" in revised:
                     break
                 draft, problems = revised, self._validate(budget, alert, items, revised)
-        usable = draft is not None and "_invalid" not in draft and not problems
-        probability = float(draft["confidence"]) if usable else None
+        has_draft = draft is not None and "_invalid" not in draft
+        usable = has_draft and not problems
+        p_draft = float(draft["confidence"]) if has_draft else None
+        # prereg fixed_choices: the stated confidence if the validator accepts after at most 1 revision, else None (scored as p0).
+        # `emit_unvalidated` is the alternative view; both are recorded either way (last_views -> per_alert.jsonl)
+        probability = p_draft if usable or (self.emit_unvalidated and has_draft) else None
+        self.last_views = {"validated": int(usable), "p_draft": p_draft}
         self.last_trace = {"plan": chosen, "findings": findings, "draft": draft,
                            "problems": problems, "cited": sorted(set(_CITE.findall((draft or {}).get("narrative", "")))),
                            "evidence": [i.__dict__ for i in items]}  # fmt: skip

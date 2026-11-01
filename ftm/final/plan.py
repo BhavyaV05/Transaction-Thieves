@@ -37,11 +37,12 @@ DEFAULTS = {
     "n_alerts_estimate": {FULL: 3000, SUBSET: 1000},  # only for est_hours before the real counts exist (plan.md 6.3)
     "machines": {"gpu_s3": {"speed": 1.0}, "gpu_s1": {"speed": 0.5, "enabled": True}, "cpu": {"speed": 1.0}},
     "llm": {"toolbox": "harness", "common_args": [], "s_per_alert": {"default": 7.5}, "pin_gpu_s3": ["ours.compose.*"],
-            "endpoint": None, "model": None, "serving_stack": None},
+            "endpoint": None, "model": None, "serving_stack": None, "dspy_program": "outputs/t3_dspy/react_miprov2.json"},
     "ours": {"variants": list(OUR_VARIANTS), "extra_variants": [], "variant_args": {}, "variant_alerts": {}, "variant_parity": {}},
     "test_alerts": {"path": "data/alerts/{data}/test.parquet", "cmd": None},
     "external_cmd": {"templates": {}, "commands": {}, "machine_class": {}, "est_hours": {}, "default_est_hours": 0.5,
                      "detection_est_hours": 0.1},  # T1's models are computed by the t1_final steps; this job only writes their run log
+    "injection": {"systems": [], "alerts": SUBSET, "machine_class": "gpu_s3", "est_hours": {}, "default_est_hours": 2.0},  # E15
     "t1_final": {"steps": []},
     "extra_jobs": [],
 }
@@ -152,14 +153,23 @@ def build_plan(ext: dict, cfg: dict, ablations: dict | None, top_external: list[
             continue
         for mode in s["modes"]:
             llm_system = f"{s['name']}_{mode}" if s["group"] == "C" else LLM_SYSTEM_ALIASES.get(s["name"], s["name"])
+            extra = ["--dspy-program", cfg["llm"]["dspy_program"]] if s["name"] == "dspy_react" else []  # the MIPROv2 program (frozen)
             for alerts in _alert_sets(top, s["name"]):
                 jobs.append(Job(f"{s['name']}.{mode}.{alerts}", s["name"], mode, "llm_agent", alerts, seeds, None,
                                 hours_llm(s["name"], alerts), group=s["group"], tier=s["tier"], owner=s["owner"],
-                                llm_system=llm_system))  # fmt: skip
+                                llm_system=llm_system, extra_args=list(extra)))  # fmt: skip
     # 4. our non-LLM planners and ablation arms (T2), CPU, both sets
     for arm in (ablations or {}).get("arms", []):
         for alerts in (FULL, SUBSET):
             jobs.append(ext_cmd("nonllm", arm["name"], alerts, "nonllm", "core", "T2", "cpu", "non_llm_arm"))
+    # 4b. E15 injection tests (scripts/run_injection_tests.py, test alerts, no labels): one job per system, so they sit under the freeze
+    inj = cfg["injection"]
+    for system in inj["systems"]:
+        for alerts in ([inj["alerts"]] if isinstance(inj["alerts"], str) else inj["alerts"]):
+            jid = f"e15.{system}.{alerts}"
+            est = float(inj["est_hours"].get(system, inj["default_est_hours"]))
+            jobs.append(Job(jid, "e15", system, "external_cmd", alerts, seeds, inj["machine_class"], est, group="e15", tier="core",
+                            owner="T4", cmd=ec["commands"].get(jid) or ec["commands"].get(f"e15.{system}") or ec["templates"].get("injection")))  # fmt: skip
     # 5. anything else the owners plug in (one bank, raw sharing, GFP, ...)
     for e in cfg["extra_jobs"]:
         for alerts in e.get("alerts", [SUBSET, FULL]):
