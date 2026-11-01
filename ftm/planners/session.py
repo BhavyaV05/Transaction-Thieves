@@ -37,8 +37,8 @@ class PlanSession:
     limits: Limits
     fusion: Fusion | None = None
     threshold: float | None = None  # the decision threshold, for the cannot_cross stop (None: budget stops only)
-    max_delta: float = 1.0
-    max_weight: float = 1.0
+    max_delta: float | None = None  # with a threshold both are required: `ftm.decision.threshold.stop_bounds`
+    max_weight: float | None = None
     log: list = field(default_factory=list)
     asked: set = field(default_factory=set)
     families_asked: set = field(default_factory=set)
@@ -56,6 +56,8 @@ class PlanSession:
         if self.threshold is None:
             out = self.eps_left + 1e-12 < MIN_EPS or self.sim_days >= self.limits.max_sim_time_days
             return StopDecision(out, "budget" if out else "continue")
+        if self.max_delta is None or self.max_weight is None:
+            raise ValueError("the cannot_cross stop needs max_delta and max_weight (derive them with stop_bounds)")
         return should_stop(self.p, self.threshold, eps_left=self.eps_left, min_eps=MIN_EPS,
                            calls_left=self.limits.max_llm_calls - len(self.log),
                            sim_days_left=self.limits.max_sim_time_days - self.sim_days,

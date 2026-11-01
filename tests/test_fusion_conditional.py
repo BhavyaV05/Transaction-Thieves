@@ -115,3 +115,9 @@ def test_params_roundtrip_with_a_content_hash_and_a_tampered_file_is_refused(tmp
     p.write_text(json.dumps(d))
     with pytest.raises(ValueError, match="hash"):
         ConditionalFusion.from_json(p)
+
+
+def test_max_weight_is_the_largest_weight_times_the_shrink():
+    m = ConditionalFusion(["f", "g"], w=np.array([0.4, -1.6]), shrink=0.5, fitted=True)
+    assert m.max_weight() == pytest.approx(0.8)
+    assert ConditionalFusion(["f"], shrink=0.5).max_weight() == pytest.approx(0.5)  # unfitted: naive weights

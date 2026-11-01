@@ -11,13 +11,16 @@ Stop rule, checked after every answer:
   budget        no eps for the smallest question, no LLM calls, or no simulated time left
   fast_clear    the fast model (or the 8B) says the case is clear (C13)
   cannot_cross  no remaining question can move the posterior across the threshold. A DP answer bought with eps
-                shifts log-odds by at most eps * delta (plan.md 6.6 ceiling: delta = 1 for yes/no, the typical
-                launderer-vs-clean gap for counts), and fusion scales that by at most `max_weight`, so all
-                remaining questions together move it by at most max_weight * delta * eps_left.
+                shifts log-odds by at most eps * delta and fusion scales that by at most `max_weight`, so all
+                remaining questions together move it by at most max_weight * delta * eps_left. delta and weight are
+                NOT defaulted: derive them from the actual accepted LR table and the fusion's weights with `stop_bounds`
+                (a count LR or a fitted weight above 1 breaks the old delta = weight = 1 bound).
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -85,9 +88,26 @@ def decide(p, threshold: float) -> np.ndarray:
     return np.where(np.asarray(p, dtype="f8") >= threshold, "escalate", "clear")
 
 
-def max_log_odds_shift(eps_left: float, *, max_delta: float = 1.0, max_weight: float = 1.0) -> float:
+def stop_bounds(entries: Iterable[tuple[float, Mapping[str, float]]], weights: Iterable[float] = (1.0,),
+                shrink: float = 1.0) -> tuple[float, float]:  # fmt: skip
+    """(max_delta, max_weight) for `should_stop`, from what will really be asked.
+
+    `entries`: (eps, {answer cell: LR}) of every question that may be asked (the accepted rows of the back-test table).
+    max_delta = the largest |log LR| per unit eps over them, so a question bought with eps moves one fused term by at most
+    eps * max_delta whatever the cell; a no-noise entry (eps not finite) has no such bound (inf).  `weights`: the fusion's
+    per-family weights (1 for naive fusion), `shrink` its evidence scale: max_weight = max |w| * shrink."""
+    delta = 0.0
+    for eps, lr in entries:
+        m = max((abs(math.log(v)) for v in lr.values() if v > 0), default=0.0)
+        delta = max(delta, m / eps if math.isfinite(eps) and eps > 0 else (math.inf if m > 0 else 0.0))
+    w = max((abs(float(x)) for x in weights), default=1.0) * abs(float(shrink))
+    return delta, w
+
+
+def max_log_odds_shift(eps_left: float, *, max_delta: float, max_weight: float) -> float:
     """Upper bound on how far all remaining answers can move the fused log-odds (privacy ceiling)."""
-    return max(0.0, eps_left) * max_delta * max_weight
+    bound = max_delta * max_weight
+    return math.inf if math.isinf(bound) and eps_left > 0 else max(0.0, eps_left) * bound
 
 
 @dataclass(frozen=True)
@@ -97,7 +117,7 @@ class StopDecision:
 
 
 def should_stop(posterior: float, threshold: float, *, eps_left: float, min_eps: float, calls_left: int,
-                sim_days_left: float, max_delta: float = 1.0, max_weight: float = 1.0,
+                sim_days_left: float, max_delta: float, max_weight: float,
                 fast_says_clear: bool = False) -> StopDecision:  # fmt: skip
     """The stop rule, in the order above. Budget comes first so a stop is never blamed on the evidence."""
     if eps_left + 1e-12 < min_eps or calls_left <= 0 or sim_days_left <= 0:

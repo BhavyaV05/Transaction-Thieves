@@ -21,6 +21,7 @@ import math
 import random
 from dataclasses import dataclass, field
 
+from ftm.decision.threshold import stop_bounds
 from ftm.fusion.fuse import Fusion, logit, sigmoid
 from ftm.harness.interface import ToolBox
 from ftm.planners.pool import Candidate, QuestionPool
@@ -52,17 +53,28 @@ def expected_brier_gain(p: float, c: Candidate) -> float:
     return p * (1 - p) - after
 
 
+def fusion_max_weight(fusion) -> float:
+    """The largest weight the fusion puts on one family's evidence (1 when there is no fitted fusion: summed log-LRs)."""
+    return float(fusion.max_weight()) if fusion is not None and hasattr(fusion, "max_weight") else 1.0
+
+
 @dataclass
 class _Base:
     pool: QuestionPool
     fusion: Fusion | None = None
     threshold: float | None = None
     one_per_family: bool = True
-    max_delta: float = 1.0
-    max_weight: float = 1.0
+    max_delta: float | None = None  # None with a threshold: derived from the pool's LRs and the fusion's weights
+    max_weight: float | None = None
     waves: tuple[int, ...] | None = None  # batched mode (E13): wave sizes, e.g. (2, 1); None = one question at a time
     name: str = "planner"
     last_stop_reason: str | None = field(default=None, init=False, repr=False)  # of the last alert, for the run log
+
+    def __post_init__(self):
+        if self.threshold is not None and (self.max_delta is None or self.max_weight is None):
+            delta, weight = stop_bounds(((c.eps, c.lr) for c in self.pool), [fusion_max_weight(self.fusion)])
+            self.max_delta = delta if self.max_delta is None else self.max_delta
+            self.max_weight = weight if self.max_weight is None else self.max_weight
 
     def choose(self, s: PlanSession, options: list[Candidate]) -> Candidate | None:
         raise NotImplementedError

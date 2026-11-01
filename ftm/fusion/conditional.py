@@ -88,6 +88,11 @@ class ConditionalFusion:
         w = self.w if self.fitted else np.ones(len(self.families))
         return sigmoid(self.logit_base(p0) + self.shrink * (X @ w))
 
+    def max_weight(self) -> float:
+        """Largest |weight| times the shrink: the `max_weight` of the stop rule (`ftm.decision.threshold.stop_bounds`)."""
+        w = np.abs(self.w) if self.fitted else np.ones(len(self.families))
+        return float(max(w.max(initial=0.0), abs(self.default_w))) * abs(self.shrink)
+
     def weight(self, family: str) -> float:
         if family in self.families and self.fitted:
             return float(self.w[self.families.index(family)])
