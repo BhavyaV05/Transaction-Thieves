@@ -3,6 +3,8 @@
     init -> gate -> hypotheses -> candidates -> choose -> act -> gate ... -> verdict
 `hypotheses` and `candidates` are the two LLM calls of a step, `choose` scores the candidates by label EIG and applies
 the stop rule, `act` asks the best one and reweights the particle set.
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

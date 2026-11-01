@@ -1,6 +1,8 @@
 """MediQ (Li et al. 2024) as a StateGraph, ported mode (stretch). Parity with ftm/external/mediq.py is tested.
 
     init -> state (abstention step) -> question -> state ... -> verdict
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

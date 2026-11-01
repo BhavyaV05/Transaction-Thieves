@@ -3,6 +3,8 @@
 PORTED: `ported_group_d()` -> {system: Investigator class}, the StateGraph versions by default; FTM_LEGACY_AGENT_LOOPS=1 returns the
 old hand-written loops of ftm/external (kept, parity-tested against the graphs, for A/B checks).
 ADAPTED: `adapted_system(...)` -> a GraphInvestigator running the agent's PlannerPolicy inside the system graph (ftm.graph.pipeline).
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

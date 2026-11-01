@@ -1,6 +1,8 @@
 """ReWOO (Xu et al. 2023) as a StateGraph, ported mode. Parity with ftm/external/rewoo.py is tested.
 
     plan (1 LLM call) -> work* (one tool per visit, no LLM) -> solve (1 LLM call) -> verdict
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

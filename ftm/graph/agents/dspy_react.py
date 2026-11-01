@@ -4,6 +4,8 @@ ftm/external/dspy_react.py is tested on the mock LLM.
 
     init -> step* (one react predictor call + one tool call) -> extract -> verdict
 Every dspy LM call still goes through OUR BudgetedClient (client_lm). dspy is imported lazily (CI does not install it).
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

@@ -1,6 +1,8 @@
 """LLMCompiler (Kim et al. 2024) as a StateGraph, ported mode. Parity with ftm/external/llmcompiler.py is tested.
 
     plan -> wave* (independent asks sent together) -> join -> (replan -> plan | verdict)
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

@@ -1,6 +1,8 @@
 """Multi-agent debate (Du et al. 2024) as a StateGraph, ported mode. Parity with ftm/external/debate_autogen.py is tested.
 
     init -> round -> turn* (one analyst per visit) -> questions -> round ... -> verdict
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

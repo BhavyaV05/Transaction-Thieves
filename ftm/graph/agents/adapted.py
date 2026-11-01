@@ -20,6 +20,8 @@ no question text is ever generated and every Ask is a menu item (allow_compose i
     bed_llm_adapted      hypotheses + predicted bin distributions; label EIG over the weighted hypotheses (observed bins reweight them)
     mediq_adapted        self-reported confidence vs a threshold decides stop / ask (stretch)
     dspy_react_adapted   react with the MIPROv2 instruction paragraph (no re-optimisation; see docs/rewrite_prereg_proposal.md)
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

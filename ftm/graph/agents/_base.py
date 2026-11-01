@@ -7,6 +7,8 @@ class stays as the base class (prompts, parsers and helpers are shared, not copi
 
 Per-alert objects (session, budget, executor) live in the graph state; the compiled graph itself holds none, so one
 instance serves concurrent alerts.
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

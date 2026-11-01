@@ -3,6 +3,8 @@
     init -> act -(more?)-> act ... -> wrap_up -> verdict
 `act` is one Thought/Action/Observation turn (one LLM call); the edge after it is the old `while` condition.
 The node functions take the agent so Reflexion reuses them.
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

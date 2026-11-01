@@ -2,6 +2,8 @@
 
     init -> trial -> act* -> wrap_up -> (finished? room?) -> evaluate -> reflect -> trial ... -> verdict
 The inner Thought/Action/Observation loop is ReAct's `act` node.
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

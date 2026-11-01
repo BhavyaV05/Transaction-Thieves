@@ -3,6 +3,8 @@
     init -> gate -> propose -> act -> gate ... -> verdict
 `gate` holds the loop head (step cap, no banks / eps / time / calls), `propose` the candidate call and EIG scoring
 (stop rules: no candidates, low EIG), `act` the question and the belief update.
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations

@@ -1,6 +1,8 @@
 """LATS (Zhou et al. 2024, adapted: no rollouts) as a StateGraph, ported mode. Parity with ftm/external/lats.py is tested.
 
     expand (n children + value call) -> select* (best child; backtrack to a sibling when it fails) -> expand ... -> verdict
+
+Owner: T3 (Akshat).
 """
 
 from __future__ import annotations
