@@ -111,3 +111,89 @@ def same(make_old, make_new, responder_factory, *, seeds=range(25), limits=None,
         assert out[0] == out[1], f"seed {seed} differs"
         nonempty += bool(out[0]["questions_log"])
     return nonempty
+
+
+# -- JSON-schema agents (debate, UoT, BED-LLM, MediQ) ------------------------------------------------------------
+def _dist(r, n):
+    if r.random() < 0.1:
+        n += r.choice([-1, 1])  # wrong length: must be rejected the same way
+    return [round(r.random(), 2) for _ in range(max(n, 0))]
+
+
+def json_responder(salt: int):
+    import re
+
+    def f(messages: list[dict], kw: dict) -> str:
+        r = rng_for(messages, kw, salt)
+        schema = kw.get("json_schema") or {}
+        title = schema.get("title")
+        user = messages[-1]["content"]
+        if r.random() < 0.06:
+            return "not json"
+        if title == "debate_turn":
+            q = None
+            alt = schema["properties"]["question"].get("anyOf")
+            if alt and r.random() < 0.6:
+                p = alt[1]["properties"]
+                q = {"bank": r.choice(p["bank"]["enum"]), "eps": r.choice(p["eps"]["enum"]),
+                     "question": r.choice(BOOL_QS + COUNT_QS)}  # fmt: skip
+            return json.dumps({"probability": round(r.random(), 2), "rationale": f"because {r.randint(0, 3)}", "question": q})
+        if title == "uot_step":
+            props = schema["properties"]["candidates"]["items"]["properties"]
+            cands = []
+            for _ in range(r.randint(0, 3)):
+                q = r.choice(ALL_QS[:5])
+                n = 2 if q in BOOL_QS else 4
+                cands.append({"bank": r.choice(props["bank"]["enum"]), "eps": r.choice(props["eps"]["enum"]), "question": q,
+                              "p_launder": _dist(r, n), "p_clean": _dist(r, n)})  # fmt: skip
+            return json.dumps({"candidates": cands})
+        if title == "bed_hypotheses":
+            return json.dumps({"hypotheses": [{"label": r.choice(["launder", "clean"]), "description": f"scenario {i}"}
+                                              for i in range(r.randint(0, 4))]})  # fmt: skip
+        if title == "bed_questions":
+            n_h = len(re.findall(r"^H\d+ \[", user, re.MULTILINE))
+            n_p = len(re.findall(r"^P\d+:", user, re.MULTILINE))
+            props = schema["properties"]["candidates"]["items"]["properties"]
+            past = [[_dist(r, r.choice([2, 4])) for _ in range(n_h)] for _ in range(n_p)]
+            cands = []
+            for _ in range(r.randint(0, 3)):
+                q = r.choice(ALL_QS[:5])
+                n = 2 if q in BOOL_QS else 4
+                cands.append({"bank": r.choice(props["bank"]["enum"]), "eps": r.choice(props["eps"]["enum"]), "question": q,
+                              "predictions": [_dist(r, n) for _ in range(n_h)]})  # fmt: skip
+            return json.dumps({"past": past, "candidates": cands})
+        if title == "mediq_state":
+            return json.dumps({"probability": round(r.random(), 2), "confidence": round(r.choice([0.2, 0.5, 0.7, 0.9]), 2)})
+        if title == "mediq_question":
+            props = schema["properties"]
+            return json.dumps({"bank": r.choice(props["bank"]["enum"]), "eps": r.choice(props["eps"]["enum"]), "question": r.choice(ALL_QS)})
+        return "{}"
+
+    return f
+
+
+def dspy_step(tool, args):
+    return (f"[[ ## next_thought ## ]]\nt\n\n[[ ## next_tool_name ## ]]\n{tool}\n\n"
+            f"[[ ## next_tool_args ## ]]\n{args}\n\n[[ ## completed ## ]]")  # fmt: skip
+
+
+def dspy_responder(salt: int):
+    def f(messages: list[dict], kw: dict) -> str:
+        r = rng_for(messages, kw, salt)
+        last = str(messages[-1].get("content"))
+        if "next_tool_name" in " ".join(str(m.get("content")) for m in messages[:1]) or "next_tool_name" in last:
+            u = r.random()
+            if u < 0.5:
+                return dspy_step("ask_bank", json.dumps({"bank": r.choice([220, 1588, 5]), "eps": r.choice([0.25, 0.5, 3.0]),
+                                                         "question": r.choice(ALL_QS)}))  # fmt: skip
+            if u < 0.6:
+                return dspy_step("lookup_rules", '{"query": "x"}')
+            if u < 0.8:
+                return dspy_step("finish", "{}")
+            if u < 0.9:
+                return dspy_step("nonexistent_tool", "{}")
+            return "garbage"
+        p = r.choice(["0.62", "0.2", "1.7", "high"])
+        return f"[[ ## reasoning ## ]]\nr\n\n[[ ## probability ## ]]\n{p}\n\n[[ ## completed ## ]]"
+
+    return f
