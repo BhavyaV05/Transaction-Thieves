@@ -160,7 +160,7 @@ def train_home(data: str = "hi_medium", seed: int = 0, epochs: int = 120, neg_fr
            "feature_seconds": t_feat, "seconds": time.time() - t0, "features": FEATURES_HOME, "history": hist}  # fmt: skip
     v1 = out / "edge_scores.parquet"
     if v1.exists():  # v1 on the same (tx, bank) rows: global features, train rows in-sample
-        old = pl.read_parquet(v1, columns=["tx_id", "score"]).rename({"score": "s1"})
+        old = pl.read_parquet(v1, columns=["tx_id", "score"]).rename({"score": "s1"})  # time-guard: not transactions
         j = meta.select("tx_id", "bank", "split", "y").with_columns(pl.Series("part", part)).join(old, on="tx_id", how="left")
         for name, m in (("val_eval", j["part"] == "eval"), ("train", j["split"] == "train")):
             jj = j.filter(m)
