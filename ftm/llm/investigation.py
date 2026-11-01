@@ -29,6 +29,7 @@ from typing import Protocol
 
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import Usage
+from ftm.llm.routing import expected_bank
 from ftm.llm.untrusted import wrap_untrusted
 from ftm.planners.llm_dsl import DslCheck
 from ftm.planners.llm_prompt import AnswerSoFar
@@ -109,6 +110,8 @@ class NaiveLRFusion:
     def _lr(self, e: QuestionLogEntry) -> float | None:
         if not isinstance(e.response, Reply) or e.gate_decision != "allowed":
             return None
+        if e.expected_bank is not None and str(e.bank) != e.expected_bank:
+            return None  # the back-test asked another bank (or none): this answer has no measured LR
         entry = self.table.get(e.program, e.eps)
         if entry is None or not entry.accepted:
             return None
@@ -193,7 +196,7 @@ class Investigation:
         key = (check.canonical, str(bank))
         if key in self._asked:
             raise DuplicateQuestion(f"already asked bank {bank}: {check.canonical}")
-        entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+        entry = self._entry(step, bank, check, eps)
         self.last_refusal = None
         if eps > self.eps_left + 1e-9:
             entry.gate_decision = "over_budget"
@@ -208,6 +211,10 @@ class Investigation:
         elif entry.gate_decision == "allowed":
             self._batch.append(days)
         return entry
+
+    def _entry(self, step: int, bank, check: DslCheck, eps: float) -> QuestionLogEntry:
+        return QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps),
+                                expected_bank=expected_bank(check.canonical, self.alert.summary, self.alert.home_bank))  # fmt: skip
 
     def _refuse(self, entry: QuestionLogEntry, exc: Exception) -> None:
         decision = _gate_outcome(exc)
@@ -253,7 +260,7 @@ class Investigation:
                 continue
             seen.add(key)
             if eps > self.eps_left - reserved + 1e-9:
-                entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+                entry = self._entry(step, bank, check, eps)
                 entry.gate_decision = "over_budget"
                 out[i] = entry
             else:
@@ -278,7 +285,7 @@ class Investigation:
         waits = [0.0]
         for i, (bank, check, eps, step) in enumerate(requests):
             if i in responses:
-                entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+                entry = self._entry(step, bank, check, eps)
                 r = responses[i]
                 if isinstance(r, Exception):
                     self._refuse(entry, r)

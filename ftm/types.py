@@ -78,6 +78,7 @@ class QuestionLogEntry:
     response: BankResponse | None = None
     gate_decision: Literal["allowed", "blocked", "over_budget"] = "allowed"
     posterior_after: float | None = None
+    expected_bank: str | None = None  # the only bank whose answer has a back-tested LR (ftm.llm.routing.expected_bank); "none" = no partner holds the subject; None = unknown
 
 
 @dataclass
