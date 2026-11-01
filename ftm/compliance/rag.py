@@ -40,6 +40,7 @@ class Doc:
     text: str
     source: str
     extra: str = ""  # searchable but not shown: typologies, signal
+    citable: bool = False  # a legal-basis rule that permits ask_bank: the only kind a question may cite
 
     def searchable(self) -> str:
         return f"{self.doc_id} {self.text} {self.source} {self.extra}"
@@ -73,27 +74,34 @@ class Retriever:
         self.docs = list(docs)
         self.bm25 = BM25(self.docs)
         self.embedder, self.alpha = embedder, alpha
-        self._emb = embedder([d.text for d in self.docs]) if embedder else None
+        self._emb = embedder([f"{d.text} {d.extra}".strip() for d in self.docs]) if embedder else None
 
-    def search(self, query: str, jurisdiction: str | None = None, k: int = 5, kinds: Sequence[str] | None = None) -> list[dict]:
+    def search(self, query: str, jurisdiction: str | None = None, k: int = 5, kinds: Sequence[str] | None = None,
+               rules_first: bool = False) -> list[dict]:  # fmt: skip
+        """Top k by score. `rules_first`: the citable legal-basis rules (`Doc.citable`: they permit ask_bank) head the list, best
+        score first, even when they share no word with the query; the rest of the k follows in score order. With about 45 red
+        flags in the corpus the four rules otherwise fall out of the top k."""
         bm = self.bm25.scores(query)
         top = max(bm) if bm and max(bm) > 0 else 1.0
         dense = [0.0] * len(self.docs)
         if self._emb is not None:
             qv = self.embedder([query])[0]
             dense = [_cos(qv, v) for v in self._emb]
-        hits = []
+        pinned, hits = [], []
         for d, s, c in zip(self.docs, bm, dense, strict=True):
             if jurisdiction and d.jurisdiction not in (jurisdiction, "ANY"):
                 continue
             if kinds and d.kind not in kinds:
                 continue
             score = (1 - self.alpha) * s / top + self.alpha * c if self._emb is not None else s
-            if score > 0:
+            if rules_first and d.citable:
+                pinned.append((score, d))
+            elif score > 0:
                 hits.append((score, d))
+        pinned.sort(key=lambda t: (-t[0], t[1].doc_id))
         hits.sort(key=lambda t: (-t[0], t[1].doc_id))
         return [{"rule_id": d.doc_id, "kind": d.kind, "jurisdiction": d.jurisdiction, "text": d.text, "source": d.source,
-                 "score": round(s, 4)} for s, d in hits[:k]]  # fmt: skip
+                 "score": round(s, 4)} for s, d in (pinned + hits)[:k]]  # fmt: skip
 
     def whole_corpus(self, jurisdiction: str | None = None) -> list[dict]:
         """Ablation: every document (for the prompt), no retrieval."""
@@ -108,7 +116,7 @@ def _cos(a, b) -> float:
 
 
 def docs_from_gate(gate) -> list[Doc]:
-    docs = [Doc(r.rule_id, "rule", r.jurisdiction, r.text, r.source) for r in gate.rules.values()]
+    docs = [Doc(r.rule_id, "rule", r.jurisdiction, r.text, r.source, citable="ask_bank" in r.permits) for r in gate.rules.values()]
     docs += [Doc(f.flag_id, "red_flag", f.jurisdiction, f.text, f.source, " ".join(f.typologies) + " " + f.signal)
              for f in gate.red_flags.values()]  # fmt: skip
     return docs

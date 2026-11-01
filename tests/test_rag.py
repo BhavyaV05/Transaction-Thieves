@@ -54,3 +54,69 @@ def test_citation_cases_and_accuracy():
     n_us = sum(c["jurisdiction"] == "US" for c in cases)
     assert acc["valid"] == pytest.approx(n_us / 100) and acc["missing"] == 0
     assert rag_eval.citation_accuracy({}, cases)["missing"] == 1.0
+
+
+def test_citable_rules_head_the_list_and_never_fall_out_of_the_top_k():
+    g = Gate.from_config()
+    for jur, rid in (("US", "US-314B-SHARE"), ("SG", "SG-COSMIC-REQUEST")):
+        hits = g.lookup_rules("round dollar amounts structuring cash", jurisdiction=jur, k=3)
+        assert hits[0]["rule_id"] == rid and hits[0]["kind"] == "rule" and len(hits) == 3
+    both = g.lookup_rules("cash", k=5)
+    assert {"US-314B-SHARE", "SG-COSMIC-REQUEST"} <= {h["rule_id"] for h in both[:2]}
+    # the old order stays available for the ablation
+    assert Gate.from_config().lookup_rules("round dollar amounts structuring cash", jurisdiction="US", k=3, rules_first=False)[0]["kind"] == "red_flag"
+
+
+def test_hybrid_gate_uses_the_embedder_and_keeps_the_pinned_rules():
+    calls = []
+
+    def stub(texts):
+        calls.append(len(texts))
+        return [[1.0 if "cash" in t else 0.0, 1.0 if "layer" in t else 0.0, 0.1] for t in texts]
+
+    g = Gate.from_config(retrieval="hybrid", embedder=stub, retrieval_alpha=0.7)
+    hits = g.lookup_rules("layering through intermediaries", jurisdiction="US", k=4)
+    assert calls and hits[0]["rule_id"] == "US-314B-SHARE" and len(hits) == 4
+    assert any(h["kind"] == "red_flag" for h in hits)
+
+
+def test_bge_embedder_is_pinned_and_loads_when_installed():
+    from ftm.compliance import dense
+
+    assert len(dense.BGE_REVISION) == 40
+    pytest.importorskip("sentence_transformers")
+    try:
+        emb = dense.bge_embedder()
+    except Exception as e:  # noqa: BLE001 - weights not in the cache of this machine
+        pytest.skip(f"bge-small not available: {e}")
+    v = emb(["money moved back to the first bank", "round dollar amounts"])
+    assert len(v) == 2 and len(v[0]) == 384 and abs(sum(x * x for x in v[0]) - 1) < 1e-3
+
+
+def test_rules_query_depends_on_the_alert():
+    from ftm.compliance.query import BASE, rules_query
+    from ftm.types import AlertContext
+
+    def alert(**s):
+        return AlertContext("A", "70", "2022-09-05T12:00:00", "val", 0.2, {"partner_banks": [220, 1588], **s})
+
+    g = Gate.from_config(jurisdiction_by_bank={"1588": "SG"})
+    q1 = rules_query(alert(amount=950.0, format="ACH", currency="US Dollar"), g)
+    q2 = rules_query(alert(amount=250_000.0, format="Wire", currency="Euro", typology="fan-in"), g)
+    assert q1 != q2 and q1.startswith(BASE) and "Singapore" in q1 and "cross-border" in q1
+    assert "fan-in" not in q1 and "many senders" in q2 and "ACH" in q1 and "Euro" in q2
+    assert "A0000" not in q1 and rules_query(alert()) .startswith(BASE)
+
+
+def test_citation_by_retrieval_and_whole_corpus_floor():
+    g = Gate.from_config()
+    cases = rag_eval.citation_cases()
+    lk = lambda q, j, k: g.lookup_rules(q, j, k)  # noqa: E731
+    oracle = rag_eval.citation_by_retrieval(lk, cases, lambda c: "sharing information", "partner", gate=g)
+    assert oracle["exact"] == 1.0 and oracle["rule_in_topk"] == 1.0
+    blind = rag_eval.citation_by_retrieval(lk, cases, lambda c: "sharing information", "none", gate=g)
+    assert 0.4 < blind["valid"] < 0.7  # without the jurisdiction the query cannot tell US from SG
+    aware = rag_eval.citation_by_retrieval(lk, cases, lambda c: "sharing information " + ("Singapore COSMIC" if c["jurisdiction"] == "SG" else "United States 314(b)"), "none", gate=g)
+    assert aware["exact"] > blind["exact"]
+    floor = rag_eval.citation_whole_corpus(cases, g)
+    assert floor["valid"] == pytest.approx(0.25) and floor["n_docs_in_prompt"] > 40

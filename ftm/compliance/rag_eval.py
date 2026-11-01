@@ -62,3 +62,35 @@ def citation_accuracy(cited: dict, cases: list[dict], gate=None) -> dict:
         exact += rid == c["expected_rule_id"]
     n = len(cases)
     return {"n": n, "valid": valid / n, "exact": exact / n, "missing": missing / n}
+
+
+def citation_by_retrieval(lookup, cases: list[dict], query_of, jurisdiction: str = "partner", k: int = 5, gate=None) -> dict:
+    """No-LLM citation baseline: for each case, retrieve with `query_of(case)` and cite the top-ranked hit of kind "rule".
+    `lookup(query, jurisdiction, k) -> hits`. `jurisdiction`: "partner" (the case's partner bank, an oracle), "none" (the query has
+    to decide) or "US" (the home bank's, what the harness's lookup_rules passes today). Scored by `citation_accuracy`; also
+    `rule_in_topk`: the share of cases whose top k holds any citable rule at all."""
+    cited, has_rule = {}, 0
+    for c in cases:
+        jur = {"partner": c["jurisdiction"], "none": None}.get(jurisdiction, jurisdiction)
+        hits = lookup(query_of(c), jur, k)
+        rules = [h for h in hits if h["kind"] == "rule"]
+        has_rule += bool(rules)
+        cited[c["case_id"]] = rules[0]["rule_id"] if rules else None
+    return {**citation_accuracy(cited, cases, gate), "rule_in_topk": has_rule / len(cases)}
+
+
+def citation_whole_corpus(cases: list[dict], gate=None) -> dict:
+    """Ablation 'whole corpus in the prompt', LLM-free floor: every rule is in the prompt and the citer picks one uniformly among
+    the rules of the corpus (all jurisdictions). Expected valid / exact share, computed exactly. recall of every document is 1 by
+    construction; the cost is the prompt (n_docs documents instead of k)."""
+    from ftm.compliance.gate import Gate
+
+    gate = gate or Gate.from_config()
+    rules = list(gate.rules)
+    valid = exact = 0.0
+    for c in cases:
+        ok = [r for r in rules if gate._rule_for("ask_bank", c["jurisdiction"], c["kind"], r) is not None]  # noqa: SLF001
+        valid += len(ok) / len(rules)
+        exact += (c["expected_rule_id"] in rules) / len(rules)
+    n = len(cases)
+    return {"n": n, "valid": valid / n, "exact": exact / n, "missing": 0.0, "n_docs_in_prompt": len(gate.rules) + len(gate.red_flags)}

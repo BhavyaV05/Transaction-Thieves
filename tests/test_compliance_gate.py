@@ -139,7 +139,8 @@ def test_red_flag_corpus_integrity():
 
 
 def test_lookup_finds_red_flags_but_they_are_not_citations(gate):
-    hits = gate.lookup_rules("consolidated several banks onward", jurisdiction="SG")
+    assert gate.lookup_rules("consolidated several banks onward", jurisdiction="SG")[0]["rule_id"] == "SG-COSMIC-REQUEST"  # citable rule first
+    hits = gate.lookup_rules("consolidated several banks onward", jurisdiction="SG", rules_first=False)
     assert hits[0]["rule_id"] == "RF-SG-13" and hits[0]["kind"] == "red_flag"
     assert ask(gate, rule_id="RF-US-14").decision == "blocked"  # a red flag is not a legal basis
     assert any(h["rule_id"] == "RF-US-14" for h in gate.lookup_rules("moved back to the first bank cycle"))
