@@ -73,11 +73,12 @@ class LLMPlanner:
         max_output_tokens: int | None = None,
         batch_schedule: tuple[int, ...] | None = None,
         threshold: float | None = None,
+        stop_cannot_cross: bool = False,
     ):
         self.llm = llm
         self.mode = Mode(mode)
         self.dsl = dsl or V0Dsl()
-        self.fusion = fusion or NaiveLRFusion()
+        self.fusion = fusion or NaiveLRFusion()  # unit tests / the named naive ablation; scripts/run_llm_agent.py always passes the profile's fitted fusion
         if self.mode is Mode.NO_BACKTEST:  # the ablation sees no back-test information: a plain list, no eps, no LRs
             questions = [{k: q[k] for k in ("id", "program", "family", "note") if k in q} for q in (questions or [])]
         self.questions = {q["id"]: q for q in (questions or [])}
@@ -95,7 +96,7 @@ class LLMPlanner:
         self.batch_schedule = tuple(int(k) for k in batch_schedule) if batch_schedule else None
         if self.batch_schedule and (min(self.batch_schedule) < 1 or max(self.batch_schedule) > 4):
             raise ValueError(f"batch_schedule sizes must be in 1..4, got {self.batch_schedule}")
-        self.threshold = threshold  # shown in the prompt when set (the stop-without-asking hint)
+        self.threshold = threshold  # the decision config's (configs/decision/*.yaml): shown in the prompt; with stop_cannot_cross also ends an alert whose posterior the remaining eps cannot move across it
         self.stats = PlannerStats()
         self.last_trace: list[dict] = []
         self.policy = OursPolicy(mode=self.mode, dsl=self.dsl, questions=self.questions, use_library=use_library,
@@ -105,7 +106,7 @@ class LLMPlanner:
         self.graph = GraphInvestigator(self.policy, self.fusion, llm, dsl=self.dsl, questions=list(self.questions.values()),
                                        question_filter=question_filter, evidence_fn=evidence_fn, use_rules=use_rules,
                                        use_library=use_library, threshold=threshold, max_failures_in_row=max_failures_in_row,
-                                       allow_compose=self.mode.can_compose)  # fmt: skip
+                                       allow_compose=self.mode.can_compose, stop_cannot_cross=stop_cannot_cross)  # fmt: skip
 
     @property
     def system_name(self) -> str:

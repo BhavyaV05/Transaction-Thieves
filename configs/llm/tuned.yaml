@@ -1,0 +1,14 @@
+# Production profile of the LLM runs: `scripts/run_llm_agent.py --profile tuned` (the default for every harness run; see ftm/llm/profile.py).
+# Every key is only a DEFAULT: the command line overrides it (the job files may pin a different value for an ablation).
+# Written before the val eval part was scored; fitted on val fit + cal only (configs/decision/headroom_v1.yaml, configs/fusion/headroom_v1.json).
+p0_variant: v2                        # data/alerts/<data>_v2: the recalibrated p0
+edge_scorer: v2                       # per-home-bank features, out-of-fold train scores (ftm/retrieval/edge_scorer.py)
+evidence_view: scorer_pcst            # rule: ftm.llm.profile.pick_evidence_view on configs/llm/evidence_view_fitcal_v2.json (val fit+cal, edge scorer v2; tests/test_profile.py re-derives it)
+k: 40
+backtest: configs/fusion/headroom_v1_table.jsonl      # 440 hypotheses (train rows 7613b89b5dcc, val rows f8b676b7d1fc)
+backtest_mode: realistic
+fusion_params: configs/fusion/headroom_v1.json        # kind conditional_fusion: ConditionalLR (eps free, shrink 0.5)
+decision: configs/decision/headroom_v1.yaml           # threshold (escalate >=) -> planner threshold= and the cannot_cross stop
+stop_cannot_cross: true
+concurrency: 4
+timing_sample: 4

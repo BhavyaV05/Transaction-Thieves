@@ -13,3 +13,4 @@ limits:
   max_llm_calls: 20
   max_tokens: 6000            # per-prompt cap; must fit the smallest serving machine
   max_sim_time_days: 5.0
+profile: tuned                # production components of every run: configs/llm/tuned.yaml (scripts/run_llm_agent.py --profile; ftm/llm/profile.py)

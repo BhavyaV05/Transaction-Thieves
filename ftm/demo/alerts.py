@@ -47,17 +47,20 @@ def find_alert(data: str, alert_id: str) -> tuple[str, str | None]:
     raise DemoRefusal(f"alert {alert_id!r} is not a train or val alert of {data} (test ids are refused)")
 
 
-def load_alert(data: str, alert_id: str, *, k: int = 40, evidence_view: str | None = "scorer_pcst"):
-    """(AlertContext, label, evidence_view actually used). The evidence view falls back to the week-2 stub trail when the
-    scorer behind it is not available."""
+def load_alert(data: str, alert_id: str, *, k: int = 40, evidence_view: str | None = None):
+    """(AlertContext, label, evidence_view actually used). `evidence_view` None = the production profile's. A scorer view whose
+    scorer is not trained on this machine degrades to `amount_1hop` (no scorer needed); the returned name says so and the demo notes it."""
     split, part = find_alert(data, alert_id)
     refuse_if_test(alert_id, split)
     r = runner()
-    used = evidence_view
+    from ftm.llm.profile import load_profile
+
+    tuned = load_profile("tuned")
+    used = evidence_view or tuned["evidence_view"]
     try:
-        got = r.data_alerts(data, split, 1, 0, k, part, {alert_id}, 0, evidence_view)
+        got = r.data_alerts(data, split, 1, 0, k, part, {alert_id}, 0, used, scorer=tuned["edge_scorer"])
     except FileNotFoundError:
-        used = None
-        got = r.data_alerts(data, split, 1, 0, k, part, {alert_id}, 0, None)
+        used = "amount_1hop"
+        got = r.data_alerts(data, split, 1, 0, k, part, {alert_id}, 0, used)
     ctx, label = got[0]
     return ctx, label, used

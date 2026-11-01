@@ -183,7 +183,9 @@ def decision_panel(arm: ArmRun, demo: Demo, reveal: bool, label: int | None, tit
     g.add_column(no_wrap=True)
     g.add_column(overflow="fold")
     _row(g, "Final probability", Text.assemble((pct(arm.final_p), "bold"), "  ", bar(arm.final_p, 30, demo.threshold)))
-    _row(g, "Threshold", f"escalate at >= {demo.threshold:g}, auto-clear below {demo.clear_below:g}, human review in between (illustrative)")
+    band = f", auto-clear below {demo.clear_below:g}, human review in between" if demo.clear_below is not None else ", otherwise auto-clear"
+    src = f" ({demo.threshold_source})" if demo.threshold_source else ""
+    _row(g, "Threshold", f"escalate at >= {demo.threshold:g}{band}{src}")
     _row(g, "Decision", Text(z.upper(), style=ZONE_STYLE[z]))
     spent = "n/a" if arm.eps_spent is None else f"{arm.eps_spent:g}" + (f" of {arm.eps_budget:g}" if arm.eps_budget else "")
     _row(g, "Cost", f"{arm.n_asked} question{'' if arm.n_asked == 1 else 's'} answered, eps spent {spent}" + (f", {arm.llm_calls} LLM calls" if arm.llm_calls is not None else ""))
@@ -224,6 +226,9 @@ def render(demo: Demo, console: Console, *, pause: float = 0.0, reveal_label: bo
     """Print the whole walkthrough. `pause` seconds between steps (live / replay on a terminal); 0 = all at once."""
     wait = (lambda: sleep(pause)) if pause > 0 else (lambda: None)
     console.print(Text("Privacy-preserving cross-bank AML alert triage: one alert, end to end", style="bold underline"))
+    if any(a.mock for a in demo.arms):  # never let canned thoughts pass for a model
+        console.print(Text("SCRIPTED MOCK LLM (--llm mock): the questions and thoughts below are canned, not a model's. Never a result.",
+                           style="bold black on yellow"))
     console.print(alert_panel(demo.alert, demo.threshold, evidence_rows))
     wait()
     investigated = [a for a in demo.arms if a.name != "p0_only"]

@@ -26,6 +26,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import random
 import sys
 import time
@@ -48,7 +49,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import dev_responder  # noqa: E402
-from ftm.llm.fusion_adapter import FusedLR  # noqa: E402
+from ftm.llm.fusion_adapter import ConditionalLR, FusedLR  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM  # noqa: E402
 from ftm.planners.llm import LLMPlanner  # noqa: E402
@@ -208,6 +209,11 @@ def main(argv: list[str] | None = None) -> int:
         if a.llm != "endpoint":
             ap.error("--alerts test needs --llm endpoint")
 
+    from ftm.llm.profile import load_profile
+
+    tuned = load_profile("tuned")  # the production p0 and edge scorer unless the environment names others
+    os.environ.setdefault("FTM_P0_VARIANT", tuned["p0_variant"])
+    os.environ.setdefault("FTM_EDGE_SCORER", tuned["edge_scorer"])
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -220,8 +226,13 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(str(e)) from e
     if a.fusion_params is not None and bt is None:
         ap.error("--fusion-params needs --backtest")
-    fusion = (FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), bt.table)
-              if a.fusion_params else NaiveLRFusion(bt.table if bt else None))
+    if a.fusion_params:  # the same loader as run_llm_agent: ConditionalLR for the headroom_v1 JSON, FusedLR for a Fusion.params() file
+        params = json.loads(a.fusion_params.read_text(encoding="utf-8"))
+        fusion = (ConditionalLR.from_json(a.fusion_params, bt.table) if params.get("kind") == "conditional_fusion"
+                  else FusedLR.from_params(params, bt.table))
+    else:
+        fusion = NaiveLRFusion(bt.table if bt else None)
+        print("NOTE: fusion = NaiveLRFusion (no --fusion-params): the named ablation, not the production fusion", file=sys.stderr)
     menu = accepted_menu(bt.table) if bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value else []
     extra = {"chat_template_kwargs": {"enable_thinking": a.thinking}}
     screen = heuristic_screen

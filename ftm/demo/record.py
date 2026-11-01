@@ -2,8 +2,10 @@
 
 Owner: T3 (Akshat).
 
-`--live` of the demo is: record a one-alert run with scripts/run_llm_agent.py, then replay it step by step. So the live
-and the replay views are the same code, and a recorded run dir can be shown later with no GPU.
+`--live` of the demo is: record a one-alert run with scripts/run_llm_agent.py (`--profile tuned`: the production back-test table, fusion,
+evidence view and decision threshold), then replay it step by step. So the live and the replay views are the same code, and a recorded
+run dir can be shown later with no GPU. `llm="mock"` is the scripted stand-in and is labelled in every output; `backtest` only feeds
+the mock's question menu (the real run reads the profile's table).
 """
 
 from __future__ import annotations
@@ -21,8 +23,9 @@ from ftm.demo.mock import demo_responder
 def _patched_mock(r, system: str, backtest: Path | None):
     """Install the demo's scripted responder for `system` in run_llm_agent's DEV_RESPONDERS while a mock run executes."""
     from ftm.llm.backtest_table import accepted_menu, load_backtest
+    from ftm.llm.profile import load_profile
 
-    menu = accepted_menu(load_backtest(backtest, require="realistic").table) if backtest else []
+    menu = accepted_menu(load_backtest(backtest or r.ROOT / load_profile("tuned")["backtest"], require="realistic").table)
     old = r.DEV_RESPONDERS.get(system)
     r.DEV_RESPONDERS[system] = demo_responder(menu)
     try:
@@ -45,14 +48,13 @@ def record_run(system: str, *, data: str, alert_id: str, split: str, part: str |
     run_dir.mkdir(parents=True, exist_ok=True)
     ids = run_dir / "alert_ids.txt"
     ids.write_text(alert_id + "\n", encoding="utf-8")
-    argv = ["--system", system, "--alerts", split, "--data", data, "--n", "1", "--llm", llm, "--toolbox", "harness",
+    argv = ["--profile", "tuned", "--concurrency", "1", "--timing-sample", "0",  # the production components; one alert needs no workers
+            "--system", system, "--alerts", split, "--data", data, "--n", "1", "--llm", llm, "--toolbox", "harness",
             "--alert-ids", str(ids), "--run-dir", str(run_dir), "--k", str(k), "--seed", str(seed), "--mode", mode]
     if part:
         argv += ["--val-part", part]
     if evidence_view:
         argv += ["--evidence-view", evidence_view]
-    if backtest:
-        argv += ["--backtest", str(backtest)]
     if endpoint:
         argv += ["--endpoint", endpoint]
     if model:

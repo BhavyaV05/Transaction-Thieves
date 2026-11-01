@@ -71,6 +71,7 @@ from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
 from ftm.llm.fusion_adapter import ConditionalLR, FusedLR  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM, RecordingClient  # noqa: E402
+from ftm.llm.profile import PROFILES, decision_threshold, load_profile  # noqa: E402
 from ftm.planners.llm import LLMPlanner  # noqa: E402
 from ftm.planners.llm_batches import QuestionBatchWriter  # noqa: E402
 from ftm.planners.llm_prompt import Mode  # noqa: E402
@@ -158,13 +159,20 @@ def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: 
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0,
                 evidence_view: str | None = None, pos_frac: float | None = None,
-                p0_variant: str | None = None) -> list[tuple[AlertContext, int | None]]:
-    """Real alerts from T1's alert set, with the top-K evidence view. Labels are kept server-side for scoring.
+                p0_variant: str | None = None, scorer: str | None = None,
+                max_prompt_tokens: int = Limits.max_tokens) -> list[tuple[AlertContext, int | None]]:
+    """Real alerts from T1's alert set, with the C11 evidence view `evidence_view` (ftm.retrieval.evidence_views.view, edge scorer
+    `scorer`, default FTM_EDGE_SCORER). Labels are kept server-side for scoring.
     Val alerts must name their part (fit / cal / eval, T1's `val_part`): tuning on `fit`, selection and G-checks on `eval`.
     `pos_frac` (train only): a stratified draw with this share of positives (exemplar pool, case memory), None = natural.
-    `evidence_view` (E8 / H6): replace the week-2 stub's trail with T1's `evidence_views.view(alert, name, k)` text."""
+    `evidence_view`: the view name (production: the profile's, configs/llm/tuned.yaml); None = `amount_1hop`, the week-2 selection
+    through the same function (byte-identical text). `long_prompt` fills the evidence up to the run's prompt cap minus the reserve."""
     from ftm.data import alias, io
     from ftm.retrieval import evidence_views, views
+
+    if evidence_view is None:  # a caller that names none (optimize_dspy, injection tests): the production view, not the old selection
+        tuned = load_profile("tuned")
+        evidence_view, scorer = tuned["evidence_view"], scorer or tuned["edge_scorer"]
 
     if split == "test":
         guards.require_final_run("test alerts")
@@ -188,9 +196,9 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     for a in alerts.iter_rows(named=True):
         tx = io.scan_view(cfg["views_dir"], a["bank"], as_of=a["timestamp"]).filter(pl.col("tx_id") == a["tx_id"]).collect()
         row = tx.row(0, named=True)
-        _, trail = views.top_k_by_amount_view(cfg["views_dir"], a["bank"], row, aliases, k=k)  # prompt only
-        if evidence_view is not None:  # same aliases (seed 0); the stub call above still sets home_bank for alert_summary
-            trail = evidence_views.view(a, evidence_view, k, data=data).text
+        views.stamp_home(row, a["bank"], cfg["views_dir"])  # home_bank for alert_summary (direction, counterparty_bank)
+        trail = evidence_views.view(a, evidence_view or "amount_1hop", k, data=data, scorer=scorer,
+                                    max_evidence_tokens=max(max_prompt_tokens - evidence_views.PROMPT_RESERVE_TOKENS, 1000)).text
         summary = {**views.alert_summary(row, aliases), "evidence": trail,
                    "partner_banks": [b for b in banks if b != a["bank"]]}  # fmt: skip
         edges = receiver_edges(cfg["views_dir"], a["bank"], row["dst_id"], row["timestamp"])  # not the evidence view
@@ -206,7 +214,8 @@ def train_alerts(a, n: int, pos_frac: float | None) -> list[tuple[AlertContext, 
     if a.alerts == "synthetic":
         toy = synthetic_alerts(max(n, 40), a.seed + 1, labelled=True)
         return [(replace(c, split="train"), y) for c, y in toy]
-    return data_alerts(a.data, "train", n, a.seed + 1, a.k, pos_frac=pos_frac)
+    return data_alerts(a.data, "train", n, a.seed + 1, a.k, pos_frac=pos_frac, evidence_view=a.evidence_view, scorer=a.edge_scorer,
+                       max_prompt_tokens=a.max_prompt_tokens)
 
 
 def exemplar_pool(a) -> ExemplarPool:
@@ -335,6 +344,11 @@ def verdict_rows(v: Verdict, base: dict, label: int | None, *, ctx: AlertContext
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--profile", choices=PROFILES, default=None,
+                    help="tuned: the production components of configs/llm/tuned.yaml fill every argument you leave out (p0 v2, edge scorer v2, "
+                         "evidence view, headroom_v1 table + realistic mode + fitted fusion, decision threshold + cannot_cross stop, "
+                         "concurrency 4). none: legacy, every component explicit (naive fusion unless --fusion-params). "
+                         "Default: tuned, except with --toolbox dev (random answers, dev only) where it is none")
     ap.add_argument("--system", choices=["planner", *GROUP_D, *GROUP_C, *ADAPTED_SYSTEMS], default="planner")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose")
     ap.add_argument("--alerts", default="synthetic", help="synthetic | train | val | test (test: final run only)")
@@ -356,10 +370,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="parquet (alert_id, p0) with a recalibrated TRAIN p0 for the memory's p0 feature (the alert table's train p0 is inflated)")
     ap.add_argument("--memory-p0-col", default="p0")
     ap.add_argument("--no-memory", action="store_true", help="Group C: run with an empty case memory (the pre-fix behaviour)")
-    ap.add_argument("--k", type=int, default=40, help="evidence edges (top-K by amount)")
+    ap.add_argument("--k", type=int, default=None, help="evidence edges (default: the profile's, 40)")
     ap.add_argument("--evidence-view", default=None,
-                    help="E8 / H6: amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (T1's view(); "
-                         "default: the week-2 stub)")
+                    help="amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (ftm.retrieval.evidence_views.view; "
+                         "default: the profile's, else amount_1hop = the week-2 selection)")
+    ap.add_argument("--edge-scorer", choices=["v1", "v2"], default=None,
+                    help="edge scorer behind the scorer views (default: the profile's, else FTM_EDGE_SCORER, else v1)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
     ap.add_argument("--record", type=Path, default=None, help="record LLM calls to this cassette")
     ap.add_argument("--replay", type=Path, default=None, help="replay a cassette (implies --llm mock, strict)")
@@ -383,19 +399,27 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--synthetic-labels", action="store_true", help="random labels on synthetic alerts (driver smoke tests)")
     ap.add_argument("--backtest", type=Path, default=None,
                     help="assembled back-test dir (scripts/backtest.py --assemble) or its lr_table.jsonl: LRs for fusion; "
-                         "realistic mode only (read from the cache entries beside it)")
-    ap.add_argument("--backtest-mode", default=None, help="cross-check of the table's mode (read from its cache otherwise)")
+                         "realistic mode only (read from the cache entries beside it). Default: the profile's")
+    ap.add_argument("--backtest-mode", default=None, help="cross-check of the table's mode (default: the profile's, else read from its cache)")
     ap.add_argument("--no-select-menu", action="store_true",
                     help="planner: do not show the accepted back-tested questions as a select menu (the first-run behaviour)")
     ap.add_argument("--fusion-params", type=Path, default=None,
                     help="fitted fusion JSON over the table: Fusion.params() (T4) -> FusedLR, or ConditionalFusion.to_json (kind conditional_fusion) "
-                         "-> ConditionalLR; default is the naive summed fusion")
+                         "-> ConditionalLR; default: the profile's")
+    ap.add_argument("--fusion", choices=["fitted", "naive"], default="fitted",
+                    help="naive = the NaiveLRFusion ABLATION (summed log-LRs, no fit), named explicitly; fitted (default) needs --fusion-params "
+                         "or the profile's. Profile none without --fusion-params also runs naive (legacy, labelled in summary.json)")
+    ap.add_argument("--decision", type=Path, default=None,
+                    help="decision config (configs/decision/*.yaml): its `threshold` goes to the planner (prompt hint) and the cannot_cross "
+                         "stop. Default: the profile's")
+    ap.add_argument("--no-cannot-cross", action="store_true", help="do not stop an alert whose posterior the remaining eps cannot move across the threshold")
     ap.add_argument("--p0-variant", choices=["v1", "v2"], default=None,
                     help="p0 column of the alert table: v1 or v2 (recalibrated, data/alerts/<data>_v2). Default: FTM_P0_VARIANT, else v1")
-    ap.add_argument("--concurrency", type=int, default=1,
-                    help="alerts investigated at once (thread per worker, own toolbox session over the shared world). 1 = sequential")
-    ap.add_argument("--timing-sample", type=int, default=0,
-                    help="with --concurrency > 1: the first K alerts run one by one first, for the reference per-alert latency")
+    ap.add_argument("--concurrency", type=int, default=None,
+                    help="alerts investigated at once (thread per worker, own toolbox session over the shared world). 1 = sequential. "
+                         "Default: the profile's (4), 1 for the dev toolbox")
+    ap.add_argument("--timing-sample", type=int, default=None,
+                    help="with --concurrency > 1: the first K alerts run one by one first, for the reference per-alert latency (default: the profile's)")
     ap.add_argument("--library", type=Path, default=None, help="frozen strategy library JSON (planner uses C12)")
     ap.add_argument("--batch-schedule", default=None,
                     help="planner, E13 / H8: comma-separated wave sizes, e.g. 2,1 = the first step proposes 2 questions asked "
@@ -421,6 +445,34 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run-dir", type=Path, default=None, help="write here instead of <out>/<run_id> (E18: outputs/e18/<stage>/<candidate>)")
     a = ap.parse_args(argv)
 
+    prof_name = a.profile or ("none" if a.toolbox == "dev" else "tuned")
+    prof = load_profile(prof_name)
+    a.profile = prof_name
+
+    def _default(attr: str, key: str, fallback=None):
+        if getattr(a, attr) is None:
+            setattr(a, attr, prof.get(key, fallback))
+
+    conc_explicit = a.concurrency is not None
+    for attr, key, fb in (("p0_variant", "p0_variant", None), ("evidence_view", "evidence_view", "amount_1hop"),
+                          ("edge_scorer", "edge_scorer", None), ("k", "k", 40), ("backtest_mode", "backtest_mode", None),
+                          ("concurrency", "concurrency", 1), ("timing_sample", "timing_sample", 0)):
+        _default(attr, key, fb)
+    if a.toolbox == "dev" and not conc_explicit:  # the dev toolbox draws from one shared random stream
+        a.concurrency, a.timing_sample = 1, 0
+    explicit_table = a.backtest is not None
+    for attr in ("backtest", "fusion_params", "decision"):
+        if getattr(a, attr) is None and prof.get(attr) and not (attr == "fusion_params" and explicit_table):
+            setattr(a, attr, ROOT / prof[attr])
+    if a.fusion == "naive":
+        a.fusion_params = None  # the named ablation: summed log-LRs over the (profile's or given) table
+    elif prof and explicit_table and a.fusion_params is None:
+        ap.error("--backtest given with the tuned profile: also give --fusion-params for that table (or --fusion naive for the ablation, "
+                 "or --profile none)")
+    if a.edge_scorer:
+        import os
+
+        os.environ["FTM_EDGE_SCORER"] = a.edge_scorer
     if (a.alerts == "val") != (a.val_part is not None):
         ap.error("--val-part is required with --alerts val (and only then): the val parts must not be mixed")
     if a.concurrency < 1 or a.timing_sample < 0:
@@ -459,6 +511,8 @@ def main(argv: list[str] | None = None) -> int:
                   else FusedLR.from_params(params, bt.table))
     else:
         fusion = NaiveLRFusion(bt.table if bt else None)
+        print(f"NOTE: fusion = NaiveLRFusion ({'--fusion naive: the named ablation' if a.fusion == 'naive' else 'profile none, legacy: no --fusion-params'}); "
+              "not the production fusion", file=sys.stderr)
     if a.replay:
         llm = MockLLM(cassette=a.replay, strict=True)
     elif a.llm == "endpoint":
@@ -484,6 +538,8 @@ def main(argv: list[str] | None = None) -> int:
             if not a.system.startswith("co_investigator"):
                 ap.error("--coinv-emit-unvalidated applies to co_investigator only")
             kw["emit_unvalidated"] = True
+    threshold = decision_threshold(a.decision) if a.decision else None  # configs/decision/*.yaml, fitted on val fit + cal
+    cannot_cross = threshold is not None and not a.no_cannot_cross and bool(prof.get("stop_cannot_cross"))
     menu = []
     if a.system == "planner" and bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
         menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
@@ -496,10 +552,10 @@ def main(argv: list[str] | None = None) -> int:
             return LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
                               question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
                               use_library=a.library is not None, keep_prompts=a.keep_prompts,
-                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule)
+                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule, threshold=threshold, stop_cannot_cross=cannot_cross)
         if a.system in ADAPTED_SYSTEMS:  # the agent's control strategy as a PlannerPolicy in the system graph; verdict = fused posterior
             return adapted_system(a.system, llm, menu=menu, fusion=fusion, seed=a.seed, extra=extra, use_library=a.library is not None,
-                                  program_path=a.dspy_program,
+                                  program_path=a.dspy_program, threshold=threshold, stop_cannot_cross=cannot_cross,
                                   question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c))  # fmt: skip
         return {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
                                                 **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
@@ -521,7 +577,8 @@ def main(argv: list[str] | None = None) -> int:
         if variant == "harness_mock":  # the harness's mock banks are 1..30; the toy alerts name real-looking ids
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
-        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset, a.evidence_view)
+        alerts = data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only_ids, a.offset, a.evidence_view,
+                            scorer=a.edge_scorer, max_prompt_tokens=a.max_prompt_tokens)
         if variant == "harness":  # offer only banks the harness can answer for (the first run offered 29, the world has 27)
             world = modelled_banks(tools)
             alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
@@ -588,7 +645,9 @@ def main(argv: list[str] | None = None) -> int:
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
-               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view,
+               "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view, "edge_scorer": a.edge_scorer,
+               "profile": a.profile, "decision": str(a.decision) if a.decision else None, "threshold": threshold, "stop_cannot_cross": cannot_cross,
+               "p0_variant": a.p0_variant, "fusion_params": str(a.fusion_params) if a.fusion_params else None,
                "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,
                "limits": {"max_tokens": limits.max_tokens, "max_llm_calls": limits.max_llm_calls},
                "eps_per_alert": None if a.no_noise else limits.eps_per_alert, "no_noise": a.no_noise,

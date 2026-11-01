@@ -79,14 +79,15 @@ class Demo:
     alert: AlertView
     arms: list[ArmRun]
     threshold: float = 0.5  # escalate at or above
-    clear_below: float = 0.1  # auto-clear below
+    clear_below: float | None = None  # None: the deployed decision is two-way (escalate at the threshold, else clear); a value adds a review band
+    threshold_source: str | None = None  # the decision config the threshold came from (shown on the decision panel)
 
 
-def zone(p: float, threshold: float, clear_below: float) -> str:
-    """auto-clear | human review | escalate."""
+def zone(p: float, threshold: float, clear_below: float | None = None) -> str:
+    """auto-clear | human review | escalate. Without `clear_below` there is no review band."""
     if p >= threshold:
         return "escalate"
-    return "auto-clear" if p < clear_below else "human review"
+    return "auto-clear" if clear_below is None or p < clear_below else "human review"
 
 
 def odds(p: float) -> float:

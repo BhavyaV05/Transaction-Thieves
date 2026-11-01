@@ -12,7 +12,9 @@ from ftm.demo.alerts import DemoRefusal, find_alert, load_alert, refuse_if_test
 from ftm.demo.model import AlertView, ArmRun, Demo
 from ftm.demo.replay import arm_from_run, label_from_run, load_table
 from ftm.graph.agents.adapted import ADAPTED_SYSTEMS
+from ftm.llm.profile import decision_threshold
 
+DECISION = "configs/decision/headroom_v1.yaml"  # the fitted threshold of the production profile (ftm.llm.profile)
 HIDDEN_SUMMARY = {"evidence", "partner_banks"}
 
 
@@ -46,8 +48,10 @@ def alert_view(data: str, alert_id: str, run_summary: dict | None, k: int, evide
 
 
 def build_replay(run_dirs: list[Path], alert_id: str, *, data: str | None = None, backtest: Path | None = None, k: int = 40,
-                 threshold: float = 0.5, clear_below: float = 0.1) -> Demo:
+                 threshold: float | None = None, clear_below: float | None = None, threshold_source: str | None = None) -> Demo:
     refuse_if_test(alert_id)
+    if threshold is None:  # the frozen decision config, not an illustrative number
+        threshold, threshold_source = decision_threshold(DECISION), DECISION
     summaries = [json.loads((d / "summary.json").read_text(encoding="utf-8")) if (d / "summary.json").exists() else {} for d in run_dirs]
     data = data or summaries[0].get("data") or "hi_medium"
     ev = summaries[0].get("evidence_view")
@@ -61,12 +65,13 @@ def build_replay(run_dirs: list[Path], alert_id: str, *, data: str | None = None
         av.p0 = arms[0].p0
     if av.label is None:
         av.label = label_from_run(run_dirs[0], alert_id)
-    return Demo(av, [*arms, p0_arm(av.p0)], threshold, clear_below)
+    return Demo(av, [*arms, p0_arm(av.p0)], threshold, clear_below, threshold_source)
 
 
 def build_live(alert_id: str, *, data: str, llm: str, backtest: Path | None, compare: list[str], record_dir: Path, mode: str = "compose",
-               k: int = 40, evidence_view: str | None = "scorer_pcst", seed: int = 0, endpoint: str | None = None, model: str | None = None,
-               eps_per_alert: float | None = None, threshold: float = 0.5, clear_below: float = 0.1) -> Demo:
+               k: int = 40, evidence_view: str | None = None, seed: int = 0, endpoint: str | None = None, model: str | None = None,
+               eps_per_alert: float | None = None, threshold: float | None = None, clear_below: float | None = None,
+               threshold_source: str | None = None) -> Demo:
     from ftm.demo.record import record_run
 
     refuse_if_test(alert_id)
@@ -78,4 +83,5 @@ def build_live(alert_id: str, *, data: str, llm: str, backtest: Path | None, com
         dirs.append(record_run(s, data=data, alert_id=alert_id, split=split, part=part, run_dir=Path(record_dir) / s, llm=llm,
                                backtest=backtest, mode=mode, k=k, evidence_view=used, seed=seed, endpoint=endpoint, model=model,
                                eps_per_alert=eps_per_alert))
-    return build_replay(dirs, alert_id, data=data, backtest=backtest, k=k, threshold=threshold, clear_below=clear_below)
+    return build_replay(dirs, alert_id, data=data, backtest=backtest, k=k, threshold=threshold, clear_below=clear_below,
+                        threshold_source=threshold_source)

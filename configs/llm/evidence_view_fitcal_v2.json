@@ -1,0 +1,100 @@
+{
+ "dataset": "hi_medium",
+ "parts": [
+  "fit",
+  "cal"
+ ],
+ "prize_source": "scorer",
+ "edge_cost": 0.05,
+ "k": 40,
+ "window_hours": 72,
+ "alerts": 1432,
+ "alerts_in_attempt": 587,
+ "views": [
+  {
+   "view": "amount",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.008348421751463575,
+   "mean_pattern_edges_in_k": 0.030418250950570342,
+   "connected": 0.0,
+   "one_time_respecting_trail": 0.0,
+   "mean_selected": 40.0,
+   "mean_tokens_est": 2869.079143389199,
+   "max_tokens_est": 3086.0
+  },
+  {
+   "view": "amount_1hop",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.8188015406646585,
+   "mean_pattern_edges_in_k": 2.7984790874524714,
+   "connected": 1.0,
+   "one_time_respecting_trail": 1.0,
+   "mean_selected": 14.389664804469273,
+   "mean_tokens_est": 984.5893854748603,
+   "max_tokens_est": 2904.6666666666665
+  },
+  {
+   "view": "scorer",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.41106090782896865,
+   "mean_pattern_edges_in_k": 1.349809885931559,
+   "connected": 0.0,
+   "one_time_respecting_trail": 0.0,
+   "mean_selected": 40.0,
+   "mean_tokens_est": 2683.2932960893854,
+   "max_tokens_est": 2898.0
+  },
+  {
+   "view": "scorer_greedy",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.8389733840304182,
+   "mean_pattern_edges_in_k": 2.8631178707224336,
+   "connected": 1.0,
+   "one_time_respecting_trail": 1.0,
+   "mean_selected": 17.881983240223462,
+   "mean_tokens_est": 1215.3156424581005,
+   "max_tokens_est": 3010.0
+  },
+  {
+   "view": "scorer_pcst",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.8362512962322848,
+   "mean_pattern_edges_in_k": 2.840304182509506,
+   "connected": 1.0,
+   "one_time_respecting_trail": 1.0,
+   "mean_selected": 17.881983240223462,
+   "mean_tokens_est": 1213.9869646182494,
+   "max_tokens_est": 3010.0
+  },
+  {
+   "view": "long_prompt",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.01596958174904943,
+   "mean_pattern_edges_in_k": 0.019011406844106463,
+   "connected": 0.0,
+   "one_time_respecting_trail": 0.0,
+   "mean_selected": 57.55446927374302,
+   "mean_tokens_est": 3965.5698324022346,
+   "max_tokens_est": 4000.0
+  },
+  {
+   "view": "ppr",
+   "alerts": 1432,
+   "alerts_with_pattern_edges": 263,
+   "recall_at_k": 0.7073510773130545,
+   "mean_pattern_edges_in_k": 2.4600760456273765,
+   "connected": 0.9986033519553073,
+   "one_time_respecting_trail": 0.7946927374301676,
+   "mean_selected": 18.928072625698324,
+   "mean_tokens_est": 1287.682960893855,
+   "max_tokens_est": 3060.6666666666665
+  }
+ ],
+ "source": "data/runs/evidence_views_hi_medium_scorer_fit_cal_scorerv2.json (python -m ftm.retrieval.evidence_views --data hi_medium --parts fit cal --scorer v2, 2 Nov 2026); val fit+cal only, eval not read"
+}

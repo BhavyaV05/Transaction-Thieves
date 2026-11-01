@@ -1,16 +1,18 @@
 """End-to-end demo of the triage system on ONE train / val alert (terminal, or a static HTML page for slides).
 
-    # run the investigation (scripted mock LLM, no GPU), compare with an adapted external arm, show it step by step
-    python scripts/demo.py --data hi_medium --alert V000438 --llm mock --backtest data/backtest/hi_medium/7df6bad5337d --compare react_adapted
-    # the same with the real model on an endpoint (vLLM): needs FTM_LLM_ENDPOINT / --endpoint, as scripts/run_llm_agent.py
-    python scripts/demo.py --data hi_medium --alert V000438 --llm endpoint --backtest data/backtest/hi_medium/7df6bad5337d
-    # record once, present later with no GPU and no LLM
-    python scripts/demo.py ... --llm mock --record-dir outputs/demo/V000438
+    # present recorded REAL runs (no GPU, no LLM): the default way to show it; repeat --replay for a side-by-side comparison
     python scripts/demo.py --replay outputs/demo/V000438/planner --replay outputs/demo/V000438/react_adapted --alert V000438 --pause 1.5
+    # run the investigation now against the model endpoint (vLLM): needs FTM_LLM_ENDPOINT / --endpoint, as scripts/run_llm_agent.py
+    python scripts/demo.py --data hi_medium --alert V000438 --compare react_adapted --record-dir outputs/demo/V000438
+    # scripted stand-in for the LLM, only with the explicit flag, labelled "SCRIPTED MOCK LLM" in the output (no GPU; never a result)
+    python scripts/demo.py --data hi_medium --alert V000438 --llm mock --compare react_adapted
+    python scripts/demo.py --replay outputs/demo/V000438/planner --alert V000438 --pause 1.5
     # one self-contained HTML page
     python scripts/demo.py --replay outputs/demo/V000438/planner --alert V000438 --html outputs/demo/V000438.html
 
-Train / val alerts only; test ids (F......) are refused. The true label is hidden unless --reveal-label.
+The run uses the production profile (configs/llm/tuned.yaml: p0 v2, edge scorer v2 evidence view, headroom_v1 table and fusion) and the
+escalation threshold of configs/decision/headroom_v1.yaml. Train / val alerts only; test ids (F......) are refused. The true label is
+hidden unless --reveal-label.
 """
 
 from __future__ import annotations
@@ -37,19 +39,22 @@ def parse(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--replay", type=Path, action="append", default=None,
                     help="render from an existing run dir (runlog.parquet + traces.jsonl ...); repeat for a side-by-side comparison")
     ap.add_argument("--live", action="store_true", help="run the investigation now (the default when no --replay is given)")
-    ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock", help="mock = scripted stand-in (no GPU); endpoint = vLLM, as run_llm_agent")
+    ap.add_argument("--llm", choices=["mock", "endpoint"], default="endpoint",
+                    help="endpoint (default) = the served model, as run_llm_agent; mock = the scripted stand-in, explicit and labelled in the output")
     ap.add_argument("--endpoint", default=None)
     ap.add_argument("--model", default=None)
-    ap.add_argument("--backtest", type=Path, default=None, help="assembled back-test dir, e.g. data/backtest/hi_medium/7df6bad5337d")
+    ap.add_argument("--backtest", type=Path, default=None, help="back-test table for the replay's answer bins (default: the run's own). A live run always uses the profile's table")
     ap.add_argument("--compare", default="", help="comma-separated adapted arms to run beside ours, e.g. react_adapted")
     ap.add_argument("--mode", default="compose", help="our planner's mode (run_llm_agent --mode)")
-    ap.add_argument("--evidence-view", default="scorer_pcst", help="evidence view of the trail (ftm.retrieval.evidence_views.view)")
+    ap.add_argument("--evidence-view", default=None, help="evidence view of the trail (ftm.retrieval.evidence_views.view; default: the profile's)")
     ap.add_argument("--k", type=int, default=40)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--eps-per-alert", type=float, default=None)
     ap.add_argument("--record-dir", type=Path, default=None, help="keep the recorded run dirs here (<dir>/planner, <dir>/<arm>); default: a temp dir")
-    ap.add_argument("--threshold", type=float, default=0.5, help="escalate at or above this probability (illustrative, not the frozen one)")
-    ap.add_argument("--clear-below", type=float, default=0.1, help="auto-clear below this probability")
+    ap.add_argument("--threshold", type=float, default=None,
+                    help="escalate at or above this probability (default: configs/decision/headroom_v1.yaml, fitted on val fit+cal)")
+    ap.add_argument("--clear-below", type=float, default=None,
+                    help="optional: add a human-review band between this and the threshold (default: none, the deployed decision is two-way)")
     ap.add_argument("--pause", type=float, default=1.0, help="seconds between steps on a terminal (0 = print all at once)")
     ap.add_argument("--width", type=int, default=None, help="console width (default: the terminal's; 120 for --html)")
     ap.add_argument("--evidence-rows", type=int, default=12, help="evidence rows to show (0 = all)")
@@ -65,9 +70,15 @@ def main(argv: list[str] | None = None, console: Console | None = None) -> int:
             demo = build_replay(a.replay, a.alert, data=a.data if a.data else None, backtest=a.backtest, k=a.k,
                                 threshold=a.threshold, clear_below=a.clear_below)
         else:
+            import os
+
+            if a.llm == "endpoint" and not (a.endpoint or os.environ.get("FTM_LLM_ENDPOINT")):
+                print("no model endpoint: give --endpoint / FTM_LLM_ENDPOINT, or --replay RUN_DIR to show a recorded real run, or --llm mock "
+                      "for the scripted stand-in (labelled, never a result)", file=sys.stderr)
+                return 2
             rec = a.record_dir or Path(tempfile.mkdtemp(prefix=f"demo-{a.alert}-"))
             demo = build_live(a.alert, data=a.data, llm=a.llm, backtest=a.backtest, compare=[c for c in a.compare.split(",") if c],
-                              record_dir=rec, mode=a.mode, k=a.k, evidence_view=a.evidence_view or None, seed=a.seed,
+                              record_dir=rec, mode=a.mode, k=a.k, evidence_view=a.evidence_view, seed=a.seed,
                               endpoint=a.endpoint, model=a.model, eps_per_alert=a.eps_per_alert, threshold=a.threshold,
                               clear_below=a.clear_below)
     except DemoRefusal as e:

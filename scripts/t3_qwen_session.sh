@@ -11,7 +11,7 @@ set -a; source .env; set +a
 export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1
 PY=${PY:-.venv/bin/python}
 OUT=${T3_VAL_OUT:-outputs/t3_val}
-BT=data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl
+PROFILE="--profile tuned"   # production components (configs/llm/tuned.yaml)
 SHAPE=outputs/t3_library/frozen/shape_gemma.json
 which=$1; MODEL=$2
 
@@ -53,7 +53,7 @@ case $which in
         c=$(printf "c%03d" $((off / 80))); [[ -f $dir/$c/summary.json ]] && continue
         rm -rf "${dir:?}/$c"
         $PY scripts/run_llm_agent.py --system planner --mode compose --alerts val --val-part eval --data hi_medium --n 80 --offset $off \
-            --llm endpoint --toolbox harness --model "$m" --serving-stack vllm --machine t3-5070ti --seed 0 --backtest "$BT" \
+            --llm endpoint --toolbox harness --model "$m" --serving-stack vllm --machine t3-5070ti --seed 0 $PROFILE \
             --library "$SHAPE" --run-id "$c" --run-dir "$dir/$c" > "$dir/$c.log" 2>&1
         echo "$(date -Is) $name $c: exit $?"
       done

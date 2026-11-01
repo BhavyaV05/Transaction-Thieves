@@ -9,9 +9,10 @@ One `Investigation` per alert does what must be identical across systems:
   - updates the posterior with a `Fusion` (LLM text never enters it, invariant 2);
   - assembles the Verdict with the cost fields from `BudgetedClient`.
 
-`NaiveLRFusion` + `LRTable` are PLACEHOLDERS for T4's fusion v0 (hand-off #18) and T2's back-test table
-(hand-off #9): summed log-LRs of accepted questions on top of logit(p0), i.e. the "naive summed" ablation of
-plan.md 6.9. Swap in the real ones through the `Fusion` protocol.
+`NaiveLRFusion` is the "naive summed" ablation of plan.md 6.9 (summed log-LRs of accepted questions on top of logit(p0)) and the
+shared LR lookup that `FusedLR` / `ConditionalLR` (ftm/llm/fusion_adapter.py) subclass; it is NOT the production fusion. Production
+runs (`run_llm_agent.py --profile tuned`) use the fitted ConditionalLR of configs/fusion/headroom_v1.json; the naive one is reached
+only by `--fusion naive` (named ablation) or in tests. `LRTable` is T2's assembled back-test table (ftm/llm/backtest_table.py).
 
 ASSUMPTION until harness v0 (T2, week 3) fixes it: a gate refusal surfaces from `ask_bank` as an exception whose
 class is PermissionError or named *Gate*/*Blocked*/*Compliance*, and an accountant refusal as one named
