@@ -1,5 +1,7 @@
 """The planner-policy interface of the system graph (ftm.graph.pipeline).
 
+Owner: T3 (Akshat).  Spec: LangGraph rewrite (wave 2).
+
 A policy only PROPOSES: it sees a `PlannerView` and returns Asks (a question to put to a bank) or a Stop. Everything else (the bank
 routing, the gate and accountant, the fusion that sets the probability, the stop rules) belongs to the pipeline, so every adapted
 arm shares one harness path and its verdict is the fused posterior, never an LLM number.
