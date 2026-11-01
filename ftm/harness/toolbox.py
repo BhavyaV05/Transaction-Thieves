@@ -231,7 +231,8 @@ class HarnessToolBox:
         bank_obj = h.banks.get(int(bank))
         if bank_obj is None:
             refuse("blocked", f"bank {bank} is not a partner bank", GateBlocked)
-        if self._binding is not None and asked_bank(node, self._binding) != int(bank):
+        bd = self._binding
+        if bd is not None and bd.sender_bank is not None and bd.receiver_bank is not None and asked_bank(node, bd) != int(bank):
             # the subject of the question is not in this bank's ledger: a real bank has nothing to say, and the back-test only
             # ever measured the bank that holds it
             refuse("blocked", f"bank {bank} does not hold the subject of this question", GateBlocked)
