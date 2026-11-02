@@ -58,6 +58,11 @@ class PlannerStats:
     refusals: int = 0  # asks the gate / accountant refused
     refused_repeats: int = 0  # the same refused (question, bank) proposed again, caught before it reached the gate
     seconds_per_alert: list[float] = field(default_factory=list)
+    prompts: int = 0  # planner prompts built (a refit rebuilds one)
+    rules_offered: int = 0  # summed over prompts: documents the rules mode offered
+    rules_in_prompt: int = 0  # summed over prompts: documents that fit under the prompt cap
+    questions_offered: int = 0  # summed over prompts: menu items after routing
+    questions_in_prompt: int = 0  # summed over prompts: menu items left after the trimmer (the whole-corpus arm displaces some)
 
     @property
     def json_parse_rate(self) -> float:
@@ -80,6 +85,10 @@ class PlannerStats:
         return {"alerts": self.alerts, "outputs": self.outputs, "json_parse_rate": self.json_parse_rate,
                 "valid_dsl_rate": self.valid_dsl_rate, "usable_output_rate": self.usable_output_rate,
                 "duplicates": self.duplicates, "refusals": self.refusals, "refused_repeats": self.refused_repeats,
+                "mean_rules_offered": self.rules_offered / self.prompts if self.prompts else float("nan"),
+                "mean_rules_in_prompt": self.rules_in_prompt / self.prompts if self.prompts else float("nan"),
+                "mean_questions_offered": self.questions_offered / self.prompts if self.prompts else float("nan"),
+                "mean_questions_in_prompt": self.questions_in_prompt / self.prompts if self.prompts else float("nan"),
                 "median_seconds_per_alert": s[len(s) // 2] if s else float("nan")}  # fmt: skip
 
     @classmethod
@@ -91,6 +100,8 @@ class PlannerStats:
                 setattr(out, k, getattr(out, k) + v)
             out.alerts += p.alerts
             out.usable += p.usable
+            for k in ("prompts", "rules_offered", "rules_in_prompt", "questions_offered", "questions_in_prompt"):
+                setattr(out, k, getattr(out, k) + getattr(p, k))
             out.seconds_per_alert += p.seconds_per_alert
         return out
 
@@ -154,7 +165,14 @@ class OursPolicy:
         o.trace.append(rec)
         o.pending = None
         try:
-            msgs, est = build_messages_with_estimate(self.mode, state, self.dsl, limits.max_tokens, o.token_scale)
+            fit: dict = {}
+            msgs, est = build_messages_with_estimate(self.mode, state, self.dsl, limits.max_tokens, o.token_scale, fit)
+            state.rules = state.rules[:fit["rules_kept"]]  # the schema may only cite rules the prompt shows
+            self.stats.prompts += 1
+            self.stats.rules_in_prompt += fit["rules_kept"]
+            self.stats.rules_offered += fit["rules_offered"]
+            self.stats.questions_in_prompt += fit["questions_kept"]
+            self.stats.questions_offered += fit["questions_offered"]
             resp = llm.chat(msgs, json_schema=planner_schema(self.mode, state),
                             max_tokens=self.max_output_tokens or output_token_budget(self.mode, state.wave_k), temperature=self.temperature,
                             seed=self.seed, extra=self.extra)  # fmt: skip

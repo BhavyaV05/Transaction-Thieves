@@ -9,6 +9,7 @@ Owner: T4. Pure function of the alert summary; no label, no id, no account name 
 from __future__ import annotations
 
 BASE = "sharing information with another financial institution about suspected money laundering"
+FIXED_RULES_QUERY = BASE  # the planner's original one query for every alert (audit finding 15); `--rules fixed`
 JURISDICTION_WORDS = {"US": "United States FinCEN 314(b)", "SG": "Singapore COSMIC MAS"}
 # the red-flag corpus' own vocabulary for the typologies (configs/compliance/red_flags.yaml)
 TYPOLOGY_WORDS = {"fan-in": "many senders to one account, funds passed on quickly", "fan-out": "one account sending to many recipients",

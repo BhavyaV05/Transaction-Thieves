@@ -31,6 +31,7 @@ from ftm import guards
 from ftm.data import alias, io
 from ftm.retrieval import explainers, pcst
 from ftm.retrieval import views as stub_views
+from ftm.types import NO_EVIDENCE_TEXT
 
 K = 40
 WINDOW_HOURS = 72
@@ -273,8 +274,10 @@ def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small"
     `alias_seed` (the run seed). Raises FileNotFoundError for the scorer views when the scorer has not been trained.
     `scorer`: "v1" (default) or "v2" (per-home-bank features, out-of-fold train scores; FTM_EDGE_SCORER=v2 sets it globally).
     """
+    if name == "none":  # the WITHOUT arm: the alert summary only, nothing is read
+        return EvidenceView("none", NO_EVIDENCE_TEXT, [], 0, 0)
     if name not in NAMES:
-        raise ValueError(f"unknown view {name!r}; choose one of {NAMES}")
+        raise ValueError(f"unknown view {name!r}; choose one of {NAMES}, or none")
     cfg = io.load_config(data)
     final = is_final_alert(alert)  # a test alert (week 14): its evidence may also come from test days up to its time
     tx_id, bank, as_of = resolve_alert(alert, data, final)

@@ -207,22 +207,35 @@ class Gate:
         jurisdiction, text, source. Only `kind == "rule"` ids are valid citations for ask_bank.
         """
         if self.retrieval in ("bm25", "hybrid"):
-            if self._retriever is None:
-                from ftm.compliance.rag import Retriever, docs_from_gate
-
-                emb = None
-                if self.retrieval == "hybrid":
-                    from ftm.compliance.dense import bge_embedder
-
-                    emb = self.embedder or bge_embedder()
-                self._retriever = Retriever(docs_from_gate(self), embedder=emb, alpha=self.retrieval_alpha)
             return [{k_: h[k_] for k_ in ("rule_id", "kind", "jurisdiction", "text", "source")}
-                    for h in self._retriever.search(query, jurisdiction=jurisdiction, k=k, rules_first=rules_first)]  # fmt: skip
+                    for h in self._get_retriever().search(query, jurisdiction=jurisdiction, k=k, rules_first=rules_first)]  # fmt: skip
         out = self._keyword_lookup(query, jurisdiction, 10_000)
         if rules_first:  # the citable rules head the list here too
             cit = {r.rule_id for r in self.rules.values() if "ask_bank" in r.permits}
             out = [h for h in out if h["rule_id"] in cit] + [h for h in out if h["rule_id"] not in cit]
         return out[:k]
+
+    def _get_retriever(self):
+        if self._retriever is None:
+            from ftm.compliance.rag import Retriever, docs_from_gate
+
+            emb = None
+            if self.retrieval == "hybrid":
+                from ftm.compliance.dense import bge_embedder
+
+                emb = self.embedder or bge_embedder()
+            self._retriever = Retriever(docs_from_gate(self), embedder=emb, alpha=self.retrieval_alpha)
+        return self._retriever
+
+    def whole_corpus(self, jurisdiction: str | None = None) -> list[dict]:
+        """Every legal-basis rule and red flag (of `jurisdiction` and ANY), citable rules first, no retrieval: the `--rules whole`
+        arm of the RAG bench (the whole corpus in the prompt). Same dict shape as `lookup_rules`."""
+        from ftm.compliance.rag import Retriever, docs_from_gate
+
+        r = self._retriever if self._retriever is not None else Retriever(docs_from_gate(self))  # no embedder needed: nothing is ranked
+        docs = r.whole_corpus(jurisdiction)
+        docs.sort(key=lambda d: (d["kind"] != "rule", d["rule_id"]))
+        return [{k: d[k] for k in ("rule_id", "kind", "jurisdiction", "text", "source")} for d in docs]
 
     def _keyword_lookup(self, query: str, jurisdiction: str | None = None, k: int = 5) -> list[dict]:
         """v0: count of query words (> 2 letters) found in the document."""

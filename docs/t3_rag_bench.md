@@ -22,14 +22,14 @@ Data that choose: val `fit` (191) + `cal` (109) askable alerts, 300 alerts, the 
 |---|---|---|---|---|---|
 | planner_default (default) | planner | default | - | 0.21 | ready |
 | planner_default_seed1 | planner | seed | - seed=1 | 0.21 | ready |
-| ev_none | planner | evidence | --evidence-view none | 0.13 | missing flag (evidence_none) in scripts/run_llm_agent.py |
+| ev_none | planner | evidence | --evidence-view none | 0.21 | ready |
 | ev_amount_1hop | planner | evidence | --evidence-view amount_1hop | 0.21 | ready |
 | ev_amount | planner | evidence | --evidence-view amount | 0.21 | ready |
 | ev_scorer_v2 | planner | evidence | --evidence-view scorer | 0.21 | ready |
 | ev_pcst_v1 | planner | evidence | --edge-scorer v1 | 0.21 | ready |
-| rules_none | planner | rules | --rules none | 0.19 | missing flag (rules) in scripts/run_llm_agent.py |
-| rules_fixed | planner | rules | --rules fixed | 0.21 | missing flag (rules) in scripts/run_llm_agent.py |
-| rules_whole | planner | rules | --rules whole | 0.32 | missing flag (rules) in scripts/run_llm_agent.py |
+| rules_none | planner | rules | --rules none | 0.21 | ready |
+| rules_fixed | planner | rules | --rules fixed | 0.21 | ready |
+| rules_whole | planner | rules | --rules whole | 0.21 | ready |
 | lib_none | planner | library | library=none - | 0.21 | ready |
 | lib_account | planner | library | library=account - | 0.21 | ready |
 | lib_shape_rebuilt | planner | library | library=shape_rebuilt - | 0.21 | library file missing (outputs/rag_bench/libs/shape_tuned_teacher.json); build it first |
@@ -49,13 +49,13 @@ Data that choose: val `fit` (191) + `cal` (109) askable alerts, 300 alerts, the 
 | finfre_rag_native_pool_bal (default) | finfre_rag_native | finfre_pool | - | 0.05 | ready |
 | finfre_rag_native_pool_nat | finfre_rag_native | finfre_pool | --pool-pos-frac -1 | 0.05 | ready |
 | finfre_rag_native_pool_033 | finfre_rag_native | finfre_pool | --pool-pos-frac 0.33 | 0.05 | ready |
-| finfre_rag_native_zero_shot | finfre_rag_native | finfre_pool | --no-exemplars | 0.05 | missing flag (no_exemplars) in scripts/run_llm_agent.py |
+| finfre_rag_native_zero_shot | finfre_rag_native | finfre_pool | --no-exemplars | 0.05 | ready |
 | finfre_rag_ported_pool_bal (default) | finfre_rag_ported | finfre_pool | - | 0.13 | ready |
 | finfre_rag_ported_pool_nat | finfre_rag_ported | finfre_pool | --pool-pos-frac -1 | 0.13 | ready |
 | finfre_rag_ported_pool_033 | finfre_rag_ported | finfre_pool | --pool-pos-frac 0.33 | 0.13 | ready |
-| finfre_rag_ported_zero_shot | finfre_rag_ported | finfre_pool | --no-exemplars | 0.13 | missing flag (no_exemplars) in scripts/run_llm_agent.py |
+| finfre_rag_ported_zero_shot | finfre_rag_ported | finfre_pool | --no-exemplars | 0.13 | ready |
 
-Total: 8.2 GPU-h for the arms runnable today, 9.5 GPU-h for all 34 arms once the blocked flags exist and the library is rebuilt (fit+cal, 300 alerts each; planning figure: old-stack seconds per alert / 2.5 for concurrency 4). Not included: the library teacher runs (1,983 train alerts, about 1.4 GPU-h), the combined arm with two seeds, the once-only eval.
+Total: 9.3 GPU-h for the 33 arms runnable today (all flags exist since the FLAGS commit), 9.5 GPU-h for all 34 once the library is rebuilt (fit+cal, 300 alerts each; planning figure: old-stack seconds per alert / 2.5 for concurrency 4). Not included: the library teacher runs (1,983 train alerts, about 1.4 GPU-h), the combined arm with two seeds, the once-only eval.
 
 Why one factor at a time and not the full cross product: the factors act on different parts of the prompt; a cross product of the planner factors alone (5 evidence x 4 rules x 4 libraries) is 80 arms (about 17 GPU-h at 0.21 h each), and a 300-alert paired comparison has no power for three-way interactions. The one-factor design answers "does this component help, and which option is best", and the single `planner_combined` arm checks that the winners do not interfere.
 
@@ -157,9 +157,35 @@ Raising the pool's positive share fixes the exemplar balance (the 20 retrieved e
 
 ## 4. GPU matrix: size and cost
 
-34 arms (+ the combined arm) in `scripts/t3_rag_bench.sh`; table above. Estimated GPU-hours: 8.2 h for the arms runnable today, 9.5 h for all 34 once the blocked flags exist and the libraries are rebuilt; plus 1.4 h for the library teacher runs (`library` stage), 0.4 h for the combined arm (2 seeds) and about 3 h for the once-only eval (160 alerts, default + winners of every group); total about 14 GPU-h plus one 12B model load (about 5 min). Planning basis: old-stack seconds per alert (`docs/t3_val_runs.md`) divided by 2.5 for `--concurrency 4`; the first measured arm replaces the factor.
+34 arms (+ the combined arm) in `scripts/t3_rag_bench.sh`; table above. Estimated GPU-hours: 9.3 h for the 33 arms runnable today, 9.5 h for all 34 once the library is rebuilt (the earlier 8.2 h excluded the three blocked groups and assumed prompt factors 0.6 / 0.9 / 1.5 for ev_none / rules_none / rules_whole; the measured factors in 4a are 1.01 / 0.99 / 1.01 because the prompt cap binds); plus 1.4 h for the library teacher runs (`library` stage), 0.4 h for the combined arm (2 seeds) and about 3 h for the once-only eval (160 alerts, default + winners of every group); total about 14 GPU-h plus one 12B model load (about 5 min). Planning basis: old-stack seconds per alert (`docs/t3_val_runs.md`) divided by 2.5 for `--concurrency 4`; the first measured arm replaces the factor.
 
-Missing flags in `scripts/run_llm_agent.py` (arms are marked BLOCKED, not dropped; the owner of the file adds them): `--evidence-view none` (alert summary only, no trail), `--rules {none,fixed,alert,whole}` (the pipeline always calls `lookup_rules(rules_query(alert))`), `--no-exemplars` (FinFRE zero-shot). The Group C case-memory switch `--no-memory` and the FinFRE `--pool-pos-frac`, the library `--library`, `--evidence-view` and `--edge-scorer` exist.
+### 4a. The three flags (added by worker FLAGS; the arms are no longer BLOCKED)
+
+| flag | what it does | where |
+|---|---|---|
+| `--evidence-view none` | the alert summary only: `evidence_views.view(.., "none")` reads nothing and returns the one line `(no evidence trail given)` (`ftm.types.NO_EVIDENCE_TEXT`); the line goes into `summary["evidence"]`, so the planner prompt (section "Evidence", header kept, body that line), the adapted arms, Group D and Group C all print the same thing. Torres skips the placeholder as an evidence row | `ftm/retrieval/evidence_views.py`, `ftm/external/torres.py` |
+| `--rules {none,fixed,alert,whole}` | none = no Rules section; fixed = `FIXED_RULES_QUERY` (the old RULES_QUERY) top 5 for every alert; alert = `rules_query(alert)` top 5 (default, unchanged); whole = every rule and red flag of the home jurisdiction (`Gate.whole_corpus`, citable rules first, harness `all_rules()`), then the SHARED trimmer cuts to the 6,000-token prompt cap. Planner and the adapted Group D arms: the pipeline's prepare node (`GraphInvestigator(rules_mode=)`); Group D loops, Torres, Co-Investigator call `lookup_rules(<own query>)` themselves, so `RulesModeToolBox` applies the same four modes to that call (fixed replaces their query by the fixed sentence) | `ftm/compliance/rules_mode.py`, `ftm/graph/pipeline.py`, `ftm/planners/llm.py`, `ftm/graph/agents/registry.py` |
+| `--no-exemplars` | FinFRE-RAG zero-shot: the same system prompt and the same current-case sentence (same features, same partner lines in ported mode), but no retrieval and no exemplar block; the instruction line becomes "Assess the following case." (our wording: the repo holds no zero-shot prompt text from the paper). Native and ported (graph and legacy class, parity tests unchanged) | `ftm/external/finfre_rag.py` (`use_exemplars`) |
+
+summary.json records `evidence_view`, `edge_scorer`, `rules_mode` and `exemplars` (`retrieved` / `none` / null for non-FinFRE systems); the planner block also records `mean_rules_offered`, `mean_rules_in_prompt`, `mean_questions_offered`, `mean_questions_in_prompt` (traces.jsonl is unchanged: the graph/legacy parity test compares traces byte for byte). `t3_rag_bench_report.py` checks the recorded settings against each arm's flags (`settings_mismatch`) and excludes an arm that disagrees.
+
+Trimmer: order unchanged (oldest evidence rows, strategies, menu questions); new last step = cut the rules beyond the default top 5 from the tail. So `--rules whole` pays for its extra documents with evidence rows and menu questions, not with other rules, and the default and `fixed`/`alert` (5 documents) never reach the new step.
+
+**Prompt sizes measured through the pipeline** (3 val fit alerts V000438, V000690, V000721, `--profile tuned`, mock LLM, harness world, `--no-cannot-cross`, first planner prompt, estimator tokens; cap 6,000):
+
+| arm | prompt tokens (3 alerts) | rules in prompt / offered | menu questions in prompt (of 51) | evidence rows kept |
+|---|---|---|---|---|
+| default (`--rules alert`) | 5,862 / 5,923 / 5,861 | 5 / 5 | 20 | 1 |
+| `--evidence-view none` | 5,971 / 5,880 / 5,969 | 5 / 5 | 20-21 | 0 (placeholder line) |
+| `--rules none` | 5,839 / 5,853 / 5,836 | 0 / 0 | 22 | 1 |
+| `--rules fixed` | 5,920 / 5,935 / 5,919 | 5 / 5 | 20 | 1 |
+| `--rules whole` | 5,937 / 5,939 / 5,929 | 31 / 31 (all 31 fit) | 12 | 1 |
+| default, cap lifted to 20,000 (untrimmed) | 10,327 / 9,745 / 10,420 | 5 / 5 | all 51 | 3,703 / 1,630 / 4,047 chars |
+| `--rules whole`, cap 20,000 | 11,583 / 10,954 / 11,676 | 31 / 31 | all 51 | same |
+
+**Reading, important for every arm of the evidence and rules groups:** the compose prompt (alert, 51-item back-tested menu, question-language section) is about 10,000 tokens before trimming and the cap is 6,000, so in production the trimmer keeps ONE evidence row (the alerted payment, "older evidence rows omitted") and 20 of 51 menu questions. The prompt sizes of all arms are therefore within 1% of each other (the cap binds), the evidence views differ only in that one row plus the omitted-rows notice, and `ev_none` removes the last row. Two consequences: (1) the evidence arms are expected to be close to each other by construction at cap 6,000, which is a property of the prompt budget, not of the views (the offline recall numbers in 3.2(a) concern the untrimmed trail); (2) `rules_whole` fits all 31 documents only by cutting the menu from 20 to 12 questions, so its effect is the net of "more rules" and "fewer menu questions". The GPU-hour planning factors are set from these ratios (1.01, 1.01, 0.99, i.e. none of the three changes the time per alert measurably).
+
+**Offline finding to carry into the `rules` group (unchanged, from 3.2(b)):** the alert-aware query LOWERS the red-flag share of the right typology in the top 5 (0.504 fixed -> 0.307 alert-aware under BM25; keyword 0.504 -> 0.588; hybrid 0.504 -> 0.060) and returns only 7 distinct top-5 sets. `alert` stays the default until the GPU arm `rules_fixed` decides (selection rule, section 1); `rules_fixed` is exactly the arm that tests whether the fixed sentence is better.
 
 ## 5. How to run
 

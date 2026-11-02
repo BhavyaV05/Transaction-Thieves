@@ -50,7 +50,7 @@ def ported_group_c(legacy: bool | None = None) -> dict:
 
 def adapted_system(system: str, llm, *, menu=None, question_filter=None, fusion=None, seed: int = 0, extra: dict | None = None,
                    use_library: bool = False, program_path=None, threshold: float | None = None,
-                   stop_cannot_cross: bool = False):  # fmt: skip
+                   stop_cannot_cross: bool = False, rules_mode: str = "alert"):  # fmt: skip
     """`react_adapted` ... -> GraphInvestigator(policy). The menu is the accepted back-tested questions (as for `ours`); no composing.
     `threshold` (the decision config's) is shown to the policy and, with `stop_cannot_cross`, ends the alert once the remaining eps cannot cross it."""
     from ftm.graph.pipeline import GraphInvestigator
@@ -58,7 +58,7 @@ def adapted_system(system: str, llm, *, menu=None, question_filter=None, fusion=
     kw = {"program_path": program_path} if system == "dspy_react_adapted" else {}
     policy = make_policy(system, seed=seed, extra=extra, **kw)
     return GraphInvestigator(policy, fusion, llm, questions=menu, question_filter=question_filter, use_library=use_library, allow_compose=False,
-                             threshold=threshold, stop_cannot_cross=stop_cannot_cross)
+                             threshold=threshold, stop_cannot_cross=stop_cannot_cross, rules_mode=rules_mode)
 
 
 def adapted_dev_responder(messages: list[dict], kw: dict) -> str:

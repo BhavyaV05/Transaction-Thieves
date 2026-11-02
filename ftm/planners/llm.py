@@ -63,6 +63,7 @@ class LLMPlanner:
         question_filter: QuestionFilter | None = None,
         evidence_fn: EvidenceFn = summary_evidence,
         use_rules: bool = True,
+        rules_mode: str = "alert",
         use_library: bool = False,
         batch_writer: QuestionBatchWriter | None = None,
         temperature: float = 0.0,
@@ -104,7 +105,7 @@ class LLMPlanner:
                                  keep_prompts=keep_prompts, max_output_tokens=max_output_tokens,
                                  batch_schedule=self.batch_schedule, stats=self.stats)  # fmt: skip
         self.graph = GraphInvestigator(self.policy, self.fusion, llm, dsl=self.dsl, questions=list(self.questions.values()),
-                                       question_filter=question_filter, evidence_fn=evidence_fn, use_rules=use_rules,
+                                       question_filter=question_filter, evidence_fn=evidence_fn, use_rules=use_rules, rules_mode=rules_mode,
                                        use_library=use_library, threshold=threshold, max_failures_in_row=max_failures_in_row,
                                        allow_compose=self.mode.can_compose, stop_cannot_cross=stop_cannot_cross)  # fmt: skip
 

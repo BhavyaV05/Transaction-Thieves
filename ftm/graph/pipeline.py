@@ -26,7 +26,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from ftm.compliance.query import rules_query
+from ftm.compliance.rules_mode import check_mode, fetch_rules
 from ftm.decision.threshold import max_log_odds_shift
 from ftm.dsl.parser import family as dsl_family
 from ftm.dsl.parser import parse as dsl_parse
@@ -110,7 +110,7 @@ class GraphInvestigator:
 
     def __init__(self, policy: PlannerPolicy, fusion: Fusion | None = None, llm: ChatClient | None = None, *,
                  dsl: DslAdapter | None = None, questions: list[dict] | None = None, question_filter: QuestionFilter | None = None,
-                 evidence_fn: EvidenceFn = summary_evidence, use_rules: bool = True, use_library: bool = False,
+                 evidence_fn: EvidenceFn = summary_evidence, use_rules: bool = True, use_library: bool = False, rules_mode: str = "alert",
                  threshold: float | None = None, max_failures_in_row: int = 3, allow_compose: bool = False,
                  stop_cannot_cross: bool = False):  # fmt: skip
         self.policy, self.llm = policy, llm
@@ -120,6 +120,7 @@ class GraphInvestigator:
         self.question_filter = question_filter
         self.evidence_fn = evidence_fn
         self.use_rules, self.use_library = use_rules, use_library
+        self.rules_mode = check_mode(rules_mode)  # none | fixed | alert (default) | whole; use_rules=False is none
         self.threshold = threshold
         self.max_failures_in_row = max_failures_in_row
         self.allow_compose = allow_compose
@@ -180,7 +181,7 @@ class GraphInvestigator:
         evidence = self.evidence_fn(alert, tools)
         rules = []
         if self.use_rules:
-            for r in tools.lookup_rules(rules_query(alert, _gate_of(tools)))[:5]:
+            for r in fetch_rules(tools, self.rules_mode, alert, _gate_of(tools)):
                 rules.append({"rule_id": str(r.get("rule_id")), "text": str(r.get("text") or r.get("snippet", ""))[:300]})
         hint = None
         if self.system1 is not None and self.system1.enabled("typology"):

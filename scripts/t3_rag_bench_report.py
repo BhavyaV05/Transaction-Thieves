@@ -54,7 +54,7 @@ LIB_PATHS = {"none": None, "shape": SHAPE_LIB, "account": ACCOUNT_LIB,
 # s per alert, one by one, from docs/t3_val_runs.md (old stack, val eval): the planning figure behind the GPU-hour estimates
 SERIAL_S = {"planner": 6.3, "sharma_native": 4.2, "sharma_ported": 6.2, "torres_native": 13.9, "torres_ported": 17.6,
             "co_investigator_native": 21.6, "co_investigator_ported": 23.3, "finfre_rag_native": 1.5, "finfre_rag_ported": 4.0}  # fmt: skip
-PROMPT_FACTOR = {"ev_none": 0.6, "rules_whole": 1.5, "rules_none": 0.9}  # prompt-size effect on seconds per alert (planning only)
+PROMPT_FACTOR = {"ev_none": 1.01, "rules_whole": 1.01, "rules_none": 0.99}  # prompt tokens vs the default, 3 val fit alerts, mock LLM, tuned profile (docs/t3_rag_bench.md 4a): the 6000-token cap binds in every arm, so the prompts are within 1% of each other; planning only
 
 # capability = a regex over scripts/run_llm_agent.py (its argparse help); an arm whose flag is missing is BLOCKED, not silently dropped
 CAPS = {"evidence_none": r"--evidence-view[\s\S]{0,700}?\bnone\b", "rules": r"--rules\b", "no_exemplars": r"--no-exemplars\b"}
@@ -136,15 +136,41 @@ class Loaded:
     extras: dict = field(default_factory=dict)
 
 
+def expected_settings(arm: ArmSpec) -> dict:
+    """What summary.json must record for this arm's flags (the arm is verified, not trusted by name): evidence view, edge scorer, rules mode, exemplars."""
+    from ftm.llm.profile import load_profile
+
+    prof = load_profile("tuned")
+    f = list(arm.flags)
+
+    def flag(name: str, default):
+        return f[f.index(name) + 1] if name in f else default
+
+    return {"evidence_view": flag("--evidence-view", prof["evidence_view"]), "edge_scorer": flag("--edge-scorer", prof["edge_scorer"]),
+            "rules_mode": flag("--rules", "alert"),
+            "exemplars": ("none" if "--no-exemplars" in f else "retrieved") if arm.system.startswith("finfre_rag") else None}
+
+
+def settings_mismatch(arm: ArmSpec, loaded: Loaded) -> list[str]:
+    """The settings the finished chunks recorded against what the arm's flags demand; [] = verified."""
+    seen = loaded.extras.get("settings", {})
+    return [f"{k}: expected {v!r}, chunks recorded {sorted(map(str, seen.get(k, [])))}" for k, v in expected_settings(arm).items()
+            if set(seen.get(k, [])) != {v}]  # fmt: skip
+
+
 def load_arm(root: Path, name: str, parts=("fit", "cal")) -> Loaded | None:
     """Pool the finished chunks of fit and cal (or eval): labels from per_alert.jsonl (val alerts only), no verdict = p0."""
     rows, steps, n_chunks = [], [], 0
+    settings: dict[str, set] = {k: set() for k in ("evidence_view", "edge_scorer", "rules_mode", "exemplars")}
     import polars as pl
 
     for part in parts:
         for c in sorted((root / name / part).glob("c[0-9][0-9][0-9]")):
             if (c / "summary.json").exists():
                 rows += e18.read_per_alert(c)
+                summ = json.loads((c / "summary.json").read_text(encoding="utf-8"))
+                for k in settings:
+                    settings[k].add(summ.get(k))
                 n_chunks += 1
                 steps.append(pl.read_parquet(c / "runlog.parquet").filter(pl.col("event") == "step"))  # time-guard: not transactions
     if not rows:
@@ -163,7 +189,8 @@ def load_arm(root: Path, name: str, parts=("fit", "cal")) -> Loaded | None:
           "tokens_in": float(np.mean([r["tokens_in"] for r in rows])), "tokens_out": float(np.mean([r["tokens_out"] for r in rows])),
           "prompt_tokens_per_call": float(sum(r["tokens_in"] for r in rows) / max(sum(r["llm_calls"] for r in rows), 1)),
           "median_s": float(np.median(secs)), "p90_s": float(np.quantile(secs, 0.9)),
-          "gpu_hours": float(sum(r["gpu_seconds"] for r in rows) / 3600), "chunks": n_chunks}  # fmt: skip
+          "gpu_hours": float(sum(r["gpu_seconds"] for r in rows) / 3600), "chunks": n_chunks,
+          "settings": {k: sorted(v, key=str) for k, v in settings.items()}}  # fmt: skip
     return Loaded(name, tuple(r["alert_id"] for r in rows), np.array([r["label"] for r in rows], "f8"), p, p0, ex)
 
 
@@ -274,14 +301,19 @@ def build_report(root: Path, n_boot: int, parts=("fit", "cal"), select: bool = T
     names = [a.name for a in arms] + (["planner_combined"] if comb.exists() else [])
     comps["planner_combined"] = "combined"
     group_of = {a.name: a.group for a in arms} | {"planner_combined": "planner"}
+    spec_of, out_bad = {a.name: a for a in arms}, {}
     defaults = {a.group: a.name for a in arms if a.is_default}
     for n in names:
         la = load_arm(root, n, parts)
+        if la is not None and n in spec_of and (bad := settings_mismatch(spec_of[n], la)):
+            out_bad[n] = bad  # an arm whose recorded settings differ from its flags is never compared
+            continue
         if la is not None:
             by_group.setdefault(group_of[n], {})[n] = la
     mapping = e18.load_clusters(clusters_path) if clusters_path.exists() else None
     thr = decision_threshold(str(DECISION))
-    out: dict = {"parts": list(parts), "root": str(root), "n_boot": n_boot, "groups": {}, "selection": {}, "incomplete": {}}
+    out: dict = {"parts": list(parts), "root": str(root), "n_boot": n_boot, "groups": {}, "selection": {}, "incomplete": {},
+           "settings_mismatch": out_bad}  # fmt: skip
     for g, arms_g in by_group.items():
         d = defaults[g]
         if d not in arms_g:
@@ -326,6 +358,9 @@ def markdown(rep: dict) -> str:
         for k, s in rep["selection"].items():
             L.append(f"| {k} | {s['default']} | **{s['winner']}** | {s['reason']} |")
         L.append("")
+    if rep.get("settings_mismatch"):
+        L += ["Arms excluded because summary.json does not record the settings their flags demand:", "", "```json",
+              json.dumps(rep["settings_mismatch"], indent=1), "```", ""]
     if rep["incomplete"]:
         L += ["Incomplete / not comparable:", "", "```json", json.dumps(rep["incomplete"], indent=1), "```"]
     return "\n".join(L)
@@ -350,7 +385,7 @@ def plan_table(src: str | None = None) -> str:
         if a.seed:
             ch += f" seed={a.seed}"
         t += f"| {a.name}{' (default)' if a.is_default else ''} | {a.group} | {a.component} | {ch} | {h:.2f} | {b or 'ready'} |\n"
-    return t + (f"\nTotal: {tot:.1f} GPU-h for the arms runnable today, {every:.1f} GPU-h for all {len(arms)} arms once the blocked flags exist and the library is rebuilt "
+    return t + (f"\nTotal: {tot:.1f} GPU-h for the arms runnable today, {every:.1f} GPU-h for all {len(arms)} arms once the library is rebuilt "
                 f"(fit+cal, 300 alerts each; planning figure: old-stack seconds per alert / {CONCURRENCY_SPEEDUP} for concurrency 4). Not included: the library teacher runs "
                 f"(1,983 train alerts, about {SERIAL_S['planner'] * 1983 / CONCURRENCY_SPEEDUP / 3600:.1f} GPU-h), the combined arm with two seeds, the once-only eval.\n")
 

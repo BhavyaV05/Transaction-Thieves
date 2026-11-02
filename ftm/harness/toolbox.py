@@ -165,6 +165,12 @@ class HarnessToolBox:
         self._allow("lookup_rules", alert)
         return self._h.gate.lookup_rules(query, self._h.gate.jurisdiction(alert.home_bank))
 
+    def all_rules(self) -> list[dict]:
+        """The whole rule + red-flag corpus of the home bank's jurisdiction (the `--rules whole` arm); gated like `lookup_rules`."""
+        alert, _ = self._need()
+        self._allow("lookup_rules", alert)
+        return self._h.gate.whole_corpus(self._h.gate.jurisdiction(alert.home_bank))
+
     def search_library(self, shape: dict) -> list[dict]:
         alert, _ = self._need()
         self._allow("search_library", alert)

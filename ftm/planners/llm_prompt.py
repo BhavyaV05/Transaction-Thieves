@@ -336,6 +336,9 @@ def _output_spec(mode: Mode, state: PlannerState, dsl: DslAdapter) -> str:
     return "\n".join(lines)
 
 
+RULES_KEEP = 5  # the trimmer never cuts the rules below the default top 5 (it raises PlannerParseError instead)
+
+
 def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int,
                    token_scale: float = 1.0) -> list[dict]:
     """The chat messages for one step, trimmed to fit `max_prompt_tokens` (Limits.max_tokens).
@@ -346,11 +349,16 @@ def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_
 
 
 def build_messages_with_estimate(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int,
-                                 token_scale: float = 1.0) -> tuple[list[dict], int]:
+                                 token_scale: float = 1.0, report: dict | None = None) -> tuple[list[dict], int]:
     """`build_messages` plus the unscaled token estimate of what it returns. `token_scale` multiplies the estimate in
     the trim loop: the planner sets it to (server count / estimate) after the server counts a prompt over the cap, since
-    the estimate is fitted on Qwen tokenizers and Gemma 4 counts about 5% more (docs/t3_e8.md)."""
+    the estimate is fitted on Qwen tokenizers and Gemma 4 counts about 5% more (docs/t3_e8.md).
+    Rules beyond the first RULES_KEEP (the `--rules whole` arm offers the whole corpus) are cut from the tail (the citable rules
+    head the list) only when nothing else is left to cut, so the whole corpus displaces evidence rows and menu questions
+    first. `report`, if given, receives what the prompt kept: rules_offered/kept, questions_offered/kept, evidence_rows (the
+    caller must then cite only the kept rules)."""
     evidence = state.evidence_text.splitlines()
+    rules = list(state.rules)
     strategies = list(state.strategies)
     questions = list(state.questions)
 
@@ -374,8 +382,8 @@ def build_messages_with_estimate(mode: Mode, state: PlannerState, dsl: DslAdapte
         if strategies:
             parts.append(_section("Strategies that worked on similar cases",
                                   "\n".join(f"- {s['text']}" for s in strategies)))  # fmt: skip
-        if state.rules:
-            parts.append(_section("Rules", "\n".join(f"{r['rule_id']}: {r['text']}" for r in state.rules)))
+        if rules:
+            parts.append(_section("Rules", "\n".join(f"{r['rule_id']}: {r['text']}" for r in rules)))
         if mode.can_compose:
             parts.append(_section("Question language", dsl.reference_text()))
         parts.append(_section("Answers so far", _answers_text(state.answers, mode)))
@@ -396,9 +404,14 @@ def build_messages_with_estimate(mode: Mode, state: PlannerState, dsl: DslAdapte
             strategies.pop()
         elif len(questions) > 1:
             questions.pop()
+        elif len(rules) > RULES_KEEP:
+            rules.pop()  # only the surplus beyond the default top 5 (the `--rules whole` arm), and only after everything else is cut
         else:
             raise PlannerParseError(f"prompt cannot fit {max_prompt_tokens} tokens even after trimming")
         msgs = render()
+    if report is not None:
+        report.update(rules_offered=len(state.rules), rules_kept=len(rules), questions_offered=len(state.questions),
+                      questions_kept=len(questions), evidence_rows=len(evidence))
     return msgs, tokens()
 
 
