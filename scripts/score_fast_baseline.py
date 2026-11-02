@@ -188,6 +188,8 @@ def cmd_report(a) -> int:
                            "rows": {p: sum(q == p for q in parts) for p in PARTS}}  # fmt: skip
     out = {"temperatures": temps, **report}
     a.out.parent.mkdir(parents=True, exist_ok=True)
+    rows_out = out.pop("eval_rows")  # per-row cascade outcomes on eval (the System 1 report groups injection rows by family)
+    (a.out.with_suffix(".eval_rows.jsonl")).write_text("".join(json.dumps(x) + "\n" for x in rows_out), encoding="utf-8")
     a.out.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(json.dumps(out, indent=2))
     return 0

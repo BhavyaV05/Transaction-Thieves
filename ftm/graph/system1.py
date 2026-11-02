@@ -140,6 +140,10 @@ class System1:
         d = self.decide("typology", ctxt.alert_text(summary, p0), alert_id=alert_id)
         return d.label if d.settled and d.label not in (None, "none") else None
 
+    def as_screen(self):
+        """`screen(note) -> bool flagged`, for the E15 `gate+screen` arm of scripts/run_injection_tests.py (ftm.safety.camel_compare)."""
+        return lambda note: self.screen_note("?", note)[0]
+
     def alert_records(self, alert_id: str) -> list[dict]:
         with self._lock:
             return [r for r in self.records if r["alert_id"] == alert_id]

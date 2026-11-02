@@ -170,9 +170,9 @@ def cmd_fast_data(a) -> int:
     """T2's small-decision TRAIN rows -> chat examples (`to_sft_example`: the assistant turn is one label token)."""
     from collections import Counter
 
-    from ftm.fastmodel.decisions import DecisionExample, to_sft_example
+    from ftm.fastmodel.decisions import DECISIONS, DecisionExample, to_sft_example
 
-    n, by = 0, Counter()
+    n, by, dropped = 0, Counter(), Counter()
     a.out.parent.mkdir(parents=True, exist_ok=True)
     with a.decisions.open(encoding="utf-8") as f, a.out.open("w", encoding="utf-8") as g:
         for line in f:
@@ -181,9 +181,12 @@ def cmd_fast_data(a) -> int:
             r = json.loads(line)
             if r.get("split") != "train":
                 raise SystemExit(f"{a.decisions}: row with split {r.get('split')!r}; the fast model trains on train rows only")
+            if r["decision"] not in DECISIONS:  # exact decisions (`stop`) of an older set are computed by the pipeline, not learned
+                dropped[r["decision"]] += 1
+                continue
             g.write(json.dumps(to_sft_example(DecisionExample(r["decision"], r["context"], r["label"], r.get("alert_id"), "train"))) + "\n")
             n, by[r["decision"]] = n + 1, by[r["decision"]] + 1
-    summary = {"out": str(a.out), "decisions": str(a.decisions), "examples": n, "by_decision": dict(by)}
+    summary = {"out": str(a.out), "decisions": str(a.decisions), "examples": n, "by_decision": dict(by), "dropped_not_learned": dict(dropped)}
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -249,8 +252,8 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--teacher-revision", required=True, help="weights revision (commit hash) of the served teacher")
     d.add_argument("--out", type=Path, required=True)
     fd = sub.add_parser("fast-data")
-    fd.add_argument("--decisions", type=Path, default=ROOT / "data" / "decisions" / "hi_medium" / "decisions_train.jsonl")
-    fd.add_argument("--out", type=Path, default=ROOT / "outputs" / "sft" / "fast_train.jsonl")
+    fd.add_argument("--decisions", type=Path, default=ROOT / "data" / "decisions" / "hi_medium_s1v1" / "decisions_train.jsonl")
+    fd.add_argument("--out", type=Path, default=ROOT / "outputs" / "sft" / "fast_train_s1v1.jsonl")
     c = sub.add_parser("calibrate")
     c.add_argument("--dataset", type=Path, required=True, help="JSONL rows: decision, context, label, val_part (fit/cal/eval)")
     c.add_argument("--fast-url", required=True)

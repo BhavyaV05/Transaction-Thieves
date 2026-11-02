@@ -162,11 +162,11 @@ def fastmodel_screen(client, *, max_tokens: int = 3) -> Callable[[str], bool]:
     """The plan's screen: the fast model answers the `injection_present` decision (yes = injection) for a note.
     `client` is any ChatClient (the 4B served by Akshat, or the mock). An answer that is not a clean "no" counts as
     an injection (the safe default in ftm.fastmodel.decisions)."""
+    from ftm.fastmodel.context import note_text
     from ftm.fastmodel.decisions import DecisionExample, messages
-    from ftm.llm.untrusted import wrap_untrusted
 
     def screen(note: str) -> bool:
-        ex = DecisionExample("injection_present", f"Partner-bank note: {wrap_untrusted(note)}")
+        ex = DecisionExample("injection_present", note_text("?", note))  # the wave-4 training format (ftm.fastmodel.context)
         text = client.chat(messages(ex), max_tokens=max_tokens, temperature=0.0).text.strip().lower()
         return not text.startswith("no")
 

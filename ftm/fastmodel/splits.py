@@ -118,6 +118,8 @@ def calibrate_cascade(examples: Sequence[DecisionExample], parts: Sequence[str],
             row["top_label_ece_eval_T1"] = top_label_ece(np.stack([softmax_t(raw["eval"][i][None, :], 1.0)[0] for i in i_ev]), y)
             row.update(by[d])
         report[d] = row
-    return temps, cascade, {"alpha": alpha, "decisions": report, "temperatures_large": temps_l,
+    eval_rows = [{"decision": ex.decision, "label": ex.label, "answer": r.answer, "source": r.source,
+                  **({"context": ex.context} if ex.decision == "injection_present" else {})} for ex, r in zip(ev, results, strict=True)]
+    return temps, cascade, {"alpha": alpha, "decisions": report, "temperatures_large": temps_l, "eval_rows": eval_rows,
                             "fast_retired": sorted(fast_off), "large_retired": sorted(large_off),
                             "flagged": sorted(d for d, r in report.items() if r["fast_full_set"] or r["large_full_set"] or r["no_fit_rows"])}  # fmt: skip

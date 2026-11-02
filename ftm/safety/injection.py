@@ -320,8 +320,25 @@ def generate_diverse(n_attack: int = 400, n_benign: int = 400, seed: int = 0, sp
     if split == "train":
         texts = [("base", k, t) for k, pool in ATTACKS.items() for t in pool]
         return _diverse_items(texts, [("lookalike", t) for t in LOOKALIKE_TRAIN], n_attack, n_benign, rng, BENIGN)
+    texts = _val_texts()
+    rng.shuffle(texts)
+    return _diverse_items(texts, [("lookalike", t) for t in LOOKALIKE_VAL], n_attack, n_benign, rng, BENIGN_VAL)
+
+
+def _val_texts() -> list[tuple[str, str, str]]:
     texts = [("paraphrase", k, t) for k, pool in VAL_PARAPHRASE.items() for t in pool]
     texts += [("multilingual", k, t) for k, pool in _MULTI.items() for t in pool]
     texts += [(f"encoded_{h}", k, _encode(k, h)) for k in TYPES for h in ENCODINGS]
-    rng.shuffle(texts)
-    return _diverse_items(texts, [("lookalike", t) for t in LOOKALIKE_VAL], n_attack, n_benign, rng, BENIGN_VAL)
+    return texts
+
+
+def family_of_note(note: str, split: str = "val") -> str:
+    """Template family of a note produced by `generate_diverse(split=...)` (the attack or look-alike text it contains)."""
+    if split == "train":
+        cands = [("base", t) for pool in ATTACKS.values() for t in pool] + [("lookalike", t) for t in LOOKALIKE_TRAIN]
+    else:
+        cands = [(f, t) for f, _, t in _val_texts()] + [("lookalike", t) for t in LOOKALIKE_VAL]
+    for fam, text in cands:
+        if text in note or (len(note) >= NOTE_MAX and text[:NOTE_MAX] == note):
+            return fam
+    return "plain"
