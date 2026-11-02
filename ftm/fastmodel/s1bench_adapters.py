@@ -36,6 +36,16 @@ TEV_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWX"
 
 
 @dataclass(frozen=True)
+
+def _dtype():
+    """bf16 by default (the cards' dtype); S1BENCH_DTYPE=float16 on Turing GPUs (RTX 2080 Ti has no bf16): recorded as a deviation in the results."""
+    import os
+
+    import torch
+
+    return getattr(torch, os.environ.get("S1BENCH_DTYPE", "bfloat16"))
+
+
 class TypedQuestion:
     state: dict  # e.g. {"text": "<decision context>"}
     instruction: str
@@ -190,13 +200,12 @@ class JevK5Adapter(Adapter):
     """Runs the upstream `jevk5.runtime.JevK5` (source checkout on `source_dir`, pinned commit) on CUDA in bf16; probabilities are its own."""
 
     def __init__(self, repo: str, source_dir: str, device: str = "cuda", name: str = "jevk5", params_m: float = 4000):
-        import torch
 
         sys.path.insert(0, str(Path(source_dir)))
         from jevk5.runtime import JevK5
 
         self.name, self.params_m = name, params_m
-        self.engine = JevK5(repo, device=device, dtype=torch.bfloat16, graphs=False)
+        self.engine = JevK5(repo, device=device, dtype=_dtype(), graphs=False)
 
     def predict(self, q: TypedQuestion) -> list[float]:
         probs, _ = self.engine.probabilities(q.state, jevk5_question(q))
@@ -212,7 +221,7 @@ class Tev1Adapter(Adapter):
 
         self.name, self.params_m, self.device, self.torch = name, params_m, device, torch
         self.tok = transformers.AutoTokenizer.from_pretrained(repo, revision=revision)
-        self.model = transformers.Qwen3_5ForConditionalGeneration.from_pretrained(repo, revision=revision, dtype=torch.bfloat16,
+        self.model = transformers.Qwen3_5ForConditionalGeneration.from_pretrained(repo, revision=revision, dtype=_dtype(),
                                                                                   attn_implementation="sdpa").to(device).eval()  # fmt: skip
         ids = [self.tok.encode(s, add_special_tokens=False) for s in TEV_LETTERS]
         if any(len(x) != 1 for x in ids):

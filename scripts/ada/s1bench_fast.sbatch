@@ -14,7 +14,7 @@
 #   sbatch scripts/ada/s1bench_fast.sbatch            (from ~/tt/tt-s1bench)
 set -uo pipefail
 cd ~/tt/tt-s1bench
-export HF_HOME=/share1/garimella.abhishek/hf HF_HUB_OFFLINE=1 HF_HUB_DISABLE_PROGRESS_BARS=1
+export HF_HOME=/ssd_scratch/$USER/hf HF_HUB_OFFLINE=1 HF_HUB_DISABLE_PROGRESS_BARS=1
 export S1BENCH_PREPARED=$HOME/tt/s1bench_data/prepared
 export VLLM_API_KEY=$(python3 -c "import secrets;print(secrets.token_urlsafe(24))") FTM_LLM_API_KEY=$VLLM_API_KEY
 export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1 PYTHONPATH=$PWD
