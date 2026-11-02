@@ -95,6 +95,13 @@ def test_realised_gain_formula():
     assert g[("A2", "q", 2.0)] < 0 and ("A3", "q", 2.0) not in g
 
 
+def test_shape_typology_cue():
+    assert ob.shape_typology_cue({"in_deg": "8+", "out_deg": "1"}) == "fan-in"
+    assert ob.shape_typology_cue({"in_deg": "0", "out_deg": "4-7"}) == "fan-out"
+    assert ob.shape_typology_cue({"in_deg": "4-7", "out_deg": "8+"}) == "scatter-gather"
+    assert ob.shape_typology_cue({"in_deg": "1", "out_deg": "0"}) == ""
+
+
 def test_library_eval_hit_rate_by_cutoff_and_gain():
     from types import SimpleNamespace
 

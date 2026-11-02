@@ -338,18 +338,21 @@ def _default_of(group: str) -> str:
 def plan_table(src: str | None = None) -> str:
     arms = build_arms()
     t = "| arm | group | component | one-factor change vs the group default | est. GPU h (300 alerts) | status |\n|---|---|---|---|---|---|\n"
-    tot = 0.0
+    tot = every = 0.0
     for a in arms:
         b = blocked(a, src)
         h = a.est_hours()
         tot += 0 if b else h
+        every += h
         ch = " ".join(a.flags) or "-"
         if a.library != "shape" and a.group == "planner":
             ch = f"library={a.library} " + ch
         if a.seed:
             ch += f" seed={a.seed}"
         t += f"| {a.name}{' (default)' if a.is_default else ''} | {a.group} | {a.component} | {ch} | {h:.2f} | {b or 'ready'} |\n"
-    return t + f"\nTotal for the runnable arms (fit+cal, before the combined arm and the eval step): {tot:.1f} GPU-h.\n"
+    return t + (f"\nTotal: {tot:.1f} GPU-h for the arms runnable today, {every:.1f} GPU-h for all {len(arms)} arms once the blocked flags exist and the library is rebuilt "
+                f"(fit+cal, 300 alerts each; planning figure: old-stack seconds per alert / {CONCURRENCY_SPEEDUP} for concurrency 4). Not included: the library teacher runs "
+                f"(1,983 train alerts, about {SERIAL_S['planner'] * 1983 / CONCURRENCY_SPEEDUP / 3600:.1f} GPU-h), the combined arm with two seeds, the once-only eval.\n")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -214,6 +214,7 @@ def section_evidence(n_boot: int, limit: int | None = None) -> dict:
     from ftm.retrieval import evidence_views as ev
 
     out: dict = {"parts": ["fit", "cal"], "arms": {}}
+    out_frames: dict = {}
     for scorer in ("v1", "v2"):
         cache = OUT / f"evidence_{scorer}.parquet"
         meta = OUT / f"evidence_{scorer}.json"
@@ -236,13 +237,34 @@ def section_evidence(n_boot: int, limit: int | None = None) -> dict:
             arm = f"{name}[{scorer}]" if "scorer" in name or name == "ppr" else f"{name}"
             if arm in out["arms"]:
                 continue
+            out_frames[arm] = h.with_columns((pl.col("hits") / pl.col("n_relevant")).alias("recall")).select("alert_id", "attempt_id", "recall")
             out["arms"][arm] = {"recall_at_k": float(rec.mean()), "recall_ci": [float(ci[0]), float(ci[1])], "alerts_with_pattern_edges": h.height,
                                 "connected": float(d["connected"].mean()), "one_time_respecting_trail": float(d["trail"].mean()),
                                 "mean_selected": float(d["n_sel"].mean()), "tokens_est": float(d["chars"].mean() / ev.CHARS_PER_TOKEN),
                                 "scorer": scorer if ("scorer" in name or name == "ppr") else "none"}  # fmt: skip
+    out["paired_recall_vs_amount_1hop"] = paired_recall(out_frames, "amount_1hop", n_boot)
     out["arms"]["NO_EVIDENCE"] = {"recall_at_k": 0.0, "recall_ci": [0.0, 0.0], "connected": float("nan"), "one_time_respecting_trail": float("nan"),
                                   "mean_selected": 0.0, "tokens_est": 0.0, "scorer": "none",
                                   "note": "alert summary only: by construction no pattern edge reaches the prompt; the WITH/WITHOUT effect on Brier is the GPU arm"}  # fmt: skip
+    return out
+
+
+def paired_recall(frames: dict, base: str, n_boot: int) -> dict:
+    """Recall(view) - recall(base) over the alerts with pattern edges, paired, attempt-cluster bootstrap 95% CI."""
+    import polars as pl
+
+    out = {}
+    b = frames[base]
+    for name, f in frames.items():
+        if name == base:
+            continue
+        j = b.join(f, on="alert_id", suffix="_o")
+        att = [a if a is not None else f"alert:{i}" for i, a in enumerate(j["attempt_id"])]
+        d = (j["recall_o"] - j["recall"]).to_numpy()
+        cl = bs.cluster_ids(att, [])
+        lo, hi = bs.percentile_ci(bs.bootstrap_means(d, cl, n_boot, 0)[:, 0])
+        out[name] = {"diff": float(d.mean()), "ci": [float(lo), float(hi)], "n": int(len(d))}
+    del pl
     return out
 
 
@@ -253,71 +275,79 @@ def alert_query(row: dict, gate) -> str:
     return rules_query(row["ctx"], gate)
 
 
+def shape_typology_cue(shape: dict) -> str:
+    """Typology guess from the situation shape alone (no label): many payers in and few out = fan-in, the reverse = fan-out, both many =
+    scatter-gather. "" when the shape says nothing. A proposed extension of `rules_query` (its `typology_guess` is never set by the
+    pipeline, so the alert-aware query carries no typology word today); measured here as the arm `alert_aware+shape_cue`."""
+    high = ("4-7", "8+")
+    i, o = shape.get("in_deg") in high, shape.get("out_deg") in high
+    return "fan-in" if i and shape.get("out_deg") in ("0", "1") else "fan-out" if o and shape.get("in_deg") in ("0", "1") else "scatter-gather" if i and o else ""
+
+
+def cue_query(row: dict, gate) -> str:
+    from ftm.compliance.query import TYPOLOGY_WORDS
+
+    cue = shape_typology_cue(row["ctx"].summary["shape"])
+    return alert_query(row, gate) + (" " + TYPOLOGY_WORDS[cue] if cue else "")
+
+
 def section_regulatory(contexts: dict | None, k_list=(3, 5, 10)) -> dict:
     from ftm.compliance import rag_eval
     from ftm.compliance.gate import Gate
-    from ftm.compliance.rag import Retriever, docs_from_gate
-
-    gate = Gate.from_config()
-    docs = docs_from_gate(gate)
-    embedder = None
-    try:
-        from ftm.compliance.dense import bge_embedder
-
-        embedder = bge_embedder()
-    except Exception as e:  # noqa: BLE001 - no sentence-transformers / no weights: the hybrid arm is reported as unavailable
-        hybrid_note = f"hybrid not measured here ({type(e).__name__}: {str(e)[:80]})"
-    else:
-        hybrid_note = "measured"
-    retrievers = {"bm25": Retriever(docs), "keyword": Retriever(docs, alpha=0.0)}
-    if embedder is not None:
-        retrievers["hybrid"] = Retriever(docs, embedder=embedder)
-    cases = rag_eval.citation_cases()
-    res: dict = {"hybrid": hybrid_note, "n_docs": len(docs), "n_rules": len(gate.rules), "n_red_flags": len(gate.red_flags), "arms": {}}
-    # question-level retrieval recall (the expert questions cite their red flags)
-    for mode, r in retrievers.items():
-        for k in k_list:
-            m = rag_eval.retrieval_eval(lambda q, kk, r=r: r.search(q, k=kk, rules_first=False), k=k)
-            res["arms"][f"retrieval/{mode}/k={k}"] = m
-    # citation validity (LLM-free citer = top-ranked citable rule): fixed query vs alert-aware (jurisdiction words) x rules_first
-    qa = {"fixed": lambda c: FIXED_QUERY, "question": lambda c: c["question"], "fixed+question": lambda c: f"{FIXED_QUERY} {c['question']}"}
     from ftm.compliance.query import JURISDICTION_WORDS
 
-    qa["alert_aware"] = lambda c: f"{FIXED_QUERY} {JURISDICTION_WORDS.get(c['jurisdiction'], '')} {c['question']}"
-    for mode, r in retrievers.items():
+    gates = {"bm25": Gate.from_config(retrieval="bm25"), "keyword": Gate.from_config(retrieval="keyword")}
+    hybrid_note = "measured"
+    try:
+        gates["hybrid"] = Gate.from_config(retrieval="hybrid")
+        gates["hybrid"].lookup_rules("warm up", k=1)  # loads bge-small once (an error here = no sentence-transformers / weights)
+    except Exception as e:  # noqa: BLE001 - the hybrid arm is then reported as unavailable, never silently dropped
+        gates.pop("hybrid", None)
+        hybrid_note = f"hybrid not measured here ({type(e).__name__}: {str(e)[:80]})"
+    g0 = gates["bm25"]
+    cases = rag_eval.citation_cases()
+    whole_tokens = (sum(len(r.text) for r in g0.rules.values()) + sum(len(f.text) for f in g0.red_flags.values())) / 4
+    res: dict = {"hybrid": hybrid_note, "n_docs": len(g0.rules) + len(g0.red_flags), "n_rules": len(g0.rules), "n_red_flags": len(g0.red_flags), "arms": {}}
+    for mode, g in gates.items():  # question-level retrieval recall (each expert question cites its red flags), pure ranking
+        for k in k_list:
+            res["arms"][f"retrieval/{mode}/k={k}"] = rag_eval.retrieval_eval(lambda q, kk, g=g: g.lookup_rules(q, k=kk, rules_first=False), k=k)
+    qa = {"fixed": lambda c: FIXED_QUERY, "question": lambda c: c["question"], "fixed+question": lambda c: f"{FIXED_QUERY} {c['question']}",
+          "alert_aware": lambda c: f"{FIXED_QUERY} {JURISDICTION_WORDS.get(c['jurisdiction'], '')} {c['question']}"}  # fmt: skip
+    for mode, g in gates.items():  # citation of the LLM-free citer (top-ranked citable rule), partner jurisdiction filter vs none
         for qn, qf in qa.items():
-            for pin in (False, True):
-                res["arms"][f"citation/{mode}/{qn}/rules_first={pin}"] = rag_eval.citation_by_retrieval(
-                    lambda q, j, k, r=r, pin=pin: r.search(q, jurisdiction=j, k=k, rules_first=pin), cases, qf, "partner", gate=gate)
-    res["arms"]["citation/NO_RULES"] = {"n": len(cases), "valid": 0.0, "exact": 0.0, "missing": 1.0, "note": "no rule in the prompt: nothing to cite"}
-    res["arms"]["citation/whole_corpus"] = rag_eval.citation_whole_corpus(cases, gate)
-    # real alerts (val fit + cal): what the planner's lookup_rules(rules_query(alert)) returns vs the fixed sentence
-    if contexts is not None:
+            for jur in ("partner", "none"):
+                for pin in (False, True):
+                    res["arms"][f"citation/{mode}/{qn}/jur={jur}/rules_first={pin}"] = rag_eval.citation_by_retrieval(
+                        lambda q, j, k, g=g, pin=pin: g.lookup_rules(q, j, k, rules_first=pin), cases, qf, jur, gate=g0)
+    res["arms"]["citation/NO_RULES"] = {"n": len(cases), "valid": 0.0, "exact": 0.0, "missing": 1.0,
+                                        "note": "no rule in the prompt: nothing to cite"}  # fmt: skip
+    res["arms"]["citation/whole_corpus"] = rag_eval.citation_whole_corpus(cases, g0)
+    if contexts is not None:  # the real fit+cal alerts: what lookup_rules(rules_query(alert)) returns vs the fixed sentence
         rows = contexts["val"]
-        tmatch = {t: {f.flag_id for f in gate.red_flags.values() if t in f.typologies} for t in
-                  {r["typology"] for r in rows if r["typology"]}}  # fmt: skip
-        r = retrievers["bm25"]
+        tmatch = {t: {f.flag_id for f in g0.red_flags.values() if t in f.typologies} for t in {r["typology"] for r in rows if r["typology"]}}
         stats = {}
-        for qn in ("fixed", "alert_aware"):
-            for pin in (False, True):
-                sets, cit, th, size = [], 0, [], []
-                for row in rows:
-                    q = FIXED_QUERY if qn == "fixed" else alert_query(row, gate)
-                    hits = r.search(q, jurisdiction=None, k=5, rules_first=pin)
-                    ids = tuple(h["rule_id"] for h in hits)
-                    sets.append(ids)
-                    cit += any(h["kind"] == "rule" for h in hits)
-                    size.append(sum(len(h["text"]) for h in hits) / 4)
-                    if row["typology"]:
-                        th.append(bool(set(ids) & tmatch[row["typology"]]))
-                stats[f"alerts/bm25/{qn}/rules_first={pin}"] = {
-                    "n_alerts": len(rows), "distinct_top5_sets": len(set(sets)), "citable_rule_in_top5": cit / len(rows),
-                    "typology_flag_hit_at_5": float(np.mean(th)) if th else float("nan"), "n_typology_alerts": len(th),
-                    "mean_prompt_tokens_est": float(np.mean(size))}  # fmt: skip
+        for mode, g in gates.items():
+            for qn in ("fixed", "alert_aware", "alert_aware+shape_cue"):
+                for pin in (False, True):
+                    sets, cit, th, size = [], 0, [], []
+                    for row in rows:
+                        q = FIXED_QUERY if qn == "fixed" else alert_query(row, g0) if qn == "alert_aware" else cue_query(row, g0)
+                        hits = g.lookup_rules(q, k=5, rules_first=pin)
+                        ids = tuple(h["rule_id"] for h in hits)
+                        sets.append(ids)
+                        cit += any(h["kind"] == "rule" for h in hits)
+                        size.append(sum(len(h["text"]) for h in hits) / 4)
+                        if row["typology"]:
+                            th.append(bool(set(ids) & tmatch[row["typology"]]))
+                    stats[f"alerts/{mode}/{qn}/rules_first={pin}"] = {
+                        "n_alerts": len(rows), "distinct_top5_sets": len(set(sets)), "citable_rule_in_top5": cit / len(rows),
+                        "typology_flag_hit_at_5": float(np.mean(th)) if th else float("nan"), "n_typology_alerts": len(th),
+                        "mean_prompt_tokens_est": float(np.mean(size))}  # fmt: skip
+        cues = [(shape_typology_cue(r["ctx"].summary["shape"]), r["typology"]) for r in rows if r["typology"]]
+        stats["alerts/shape_cue_accuracy"] = {"n_typology_alerts": len(cues), "cue_given": float(np.mean([c != "" for c, _ in cues])),
+                                              "cue_correct_when_given": float(np.mean([c.replace("-", "_") == t for c, t in cues if c] or [float("nan")]))}  # fmt: skip
         stats["alerts/NO_RULES"] = {"n_alerts": len(rows), "distinct_top5_sets": 1, "citable_rule_in_top5": 0.0, "mean_prompt_tokens_est": 0.0}
-        whole = r.whole_corpus()
-        stats["alerts/whole_corpus"] = {"n_alerts": len(rows), "distinct_top5_sets": 1, "citable_rule_in_top5": 1.0,
-                                        "mean_prompt_tokens_est": sum(len(d["text"]) for d in whole) / 4}  # fmt: skip
+        stats["alerts/whole_corpus"] = {"n_alerts": len(rows), "distinct_top5_sets": 1, "citable_rule_in_top5": 1.0, "mean_prompt_tokens_est": whole_tokens}
         res["arms"].update(stats)
     return res
 
@@ -436,12 +466,14 @@ def section_memory(contexts: dict, n_boot: int, mem_n: int = 500) -> dict:
                  "train_pos_rate": float(y_tr.mean()), "val_pos_rate": float(y_va.mean()), "arms": {}}  # fmt: skip
     res["p0_only"] = {"train_later_auc": auc(y_tr[later], p0_tr[later]), "val_auc": auc(y_va, p0_va),
                       "val_auc_ci": auc_with_ci(y_va, p0_va, cl_va, n_boot)["ci"]}  # fmt: skip
+    everyone = np.arange(len(train))
     for label, frac in (("natural", None), ("balanced_0.5", 0.5)):
-        idx = past[balanced_sample(y_tr[past], mem_n, frac)]
-        Xm, ym = X_tr[idx], y_tr[idx]
-        s_later = knn_scores(Xm, ym, X_tr[later])
-        s_val = knn_scores(Xm, ym, X_va)
-        arm = {"memory_rows": int(len(idx)), "memory_pos_rate": float(ym.mean())}
+        idx = past[balanced_sample(y_tr[past], mem_n, frac)]  # blocked: memory = the first 60% of train in time, queries = the rest
+        idx_full = everyone[balanced_sample(y_tr, mem_n, frac)]  # production: the memory is the whole train sample, queries are val (later in time)
+        s_later = knn_scores(X_tr[idx], y_tr[idx], X_tr[later])
+        s_val = knn_scores(X_tr[idx_full], y_tr[idx_full], X_va)
+        arm = {"memory_rows_blocked": int(len(idx)), "memory_pos_rate_blocked": float(y_tr[idx].mean()), "memory_rows_val": int(len(idx_full)),
+               "memory_pos_rate_val": float(y_tr[idx_full].mean())}  # fmt: skip
         for sc in ("vote", "margin"):
             arm[f"train_blocked_{sc}_auc"] = auc(y_tr[later], s_later[sc])
             arm[f"val_{sc}_auc"] = auc_with_ci(y_va, s_val[sc], cl_va, n_boot)
@@ -467,25 +499,26 @@ def section_finfre(contexts: dict, n_boot: int, pool_n: int = 500) -> dict:
     qrows = [(r, tabular_row(r["ctx"])) for r in val]
     lrows = [(train[i], tabular_row(train[i]["ctx"])) for i in later]
     for label, frac in (("natural", None), ("pos_0.33", 0.33), ("pos_0.5", 0.5)):
-        idx = past[balanced_sample(y_tr[past], pool_n, frac)] if frac is not None else past[balanced_sample(y_tr[past], pool_n, None)]
-        if frac is None and len(idx) > pool_n:  # natural: a random pool_n of the past at the natural rate
-            idx = np.sort(np.random.default_rng(0).permutation(idx)[:pool_n])
-        pool = ExemplarPool.from_alerts([train[i]["ctx"] for i in idx], [int(y_tr[i]) for i in idx], seed=0)
+        def pool_of(src, label_src=label, frac_src=frac):
+            idx = src[balanced_sample(y_tr[src], pool_n, frac_src)]
+            if frac_src is None and len(idx) > pool_n:  # natural: a random pool_n of the source at its natural rate
+                idx = np.sort(np.random.default_rng(0).permutation(idx)[:pool_n])
+            return idx, ExemplarPool.from_alerts([train[i]["ctx"] for i in idx], [int(y_tr[i]) for i in idx], seed=0)
 
-        def vote(items, pool=pool):
-            v, bal = [], []
+        def vote(items, pool):
+            v = []
             for _r, (num, cat) in items:
-                ex = pool.retrieve(num, cat)
-                lab = np.array([e["label"] for e in ex])
+                lab = np.array([e["label"] for e in pool.retrieve(num, cat)])
                 v.append(lab.mean() if len(lab) else 0.0)
-                bal.append(lab.mean() if len(lab) else float("nan"))
             return np.array(v)
 
-        v_val, v_later = vote(qrows), vote(lrows)
-        arm = {"pool_rows": int(len(idx)), "pool_pos_rate": float(y_tr[idx].mean()), "mean_positive_share_in_20_exemplars_val": float(v_val.mean()),
-               "share_queries_with_any_positive_exemplar": float((v_val > 0).mean()), "val_vote_auc": auc_with_ci(y_va, v_val, cl_va, n_boot),
-               "val_vote_minus_p0_auc": auc_diff_with_ci(y_va, v_val, p0_va, cl_va, n_boot), "importance_method": pool.importance_method,
-               "selected_features": pool.selected,
+        idx_b, pool_b = pool_of(past)  # blocked (fits the combiner on the later train alerts)
+        idx, pool = pool_of(np.arange(len(train)))  # production: the pool is the whole train sample, queries are val
+        v_val, v_later = vote(qrows, pool), vote(lrows, pool_b)
+        arm = {"pool_rows": int(len(idx)), "pool_pos_rate": float(y_tr[idx].mean()), "pool_pos_rate_blocked": float(y_tr[idx_b].mean()),
+               "mean_positive_share_in_20_exemplars_val": float(v_val.mean()), "share_queries_with_any_positive_exemplar": float((v_val > 0).mean()),
+               "val_vote_auc": auc_with_ci(y_va, v_val, cl_va, n_boot), "val_vote_minus_p0_auc": auc_diff_with_ci(y_va, v_val, p0_va, cl_va, n_boot),
+               "train_blocked_vote_auc": auc(y_tr[later], v_later), "importance_method": pool.importance_method, "selected_features": pool.selected,
                "beyond_p0": beyond_p0(y_tr[later], p0_tr[later], v_later, y_va, p0_va, v_val, cl_va, n_boot)}  # fmt: skip
         res["arms"][f"pool_{label}"] = arm
     return res
