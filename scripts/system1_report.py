@@ -154,7 +154,9 @@ def tier_shares(s1: list[dict]) -> dict:
     for d in sorted({r["decision"] for r in s1}):
         rs = [r for r in s1 if r["decision"] == d]
         n = len(rs)
-        sec = lambda t: [r["seconds"] for r in rs if r["tier"] == t]  # noqa: E731
+        def sec(t, rs=rs):
+            return [r["seconds"] for r in rs if r["tier"] == t]
+
         out[d] = {"n": n, **{f"share_{t}": sum(r["tier"] == t for r in rs) / n for t in ("fast", "large", "default")},
                   **{f"median_s_{t}": float(np.median(sec(t))) if sec(t) else None for t in ("fast", "large", "default")}}
         if d == "worth_asking":
@@ -313,7 +315,9 @@ def render(o: dict) -> str:
         if "paired" not in r:
             continue
         p = r["paired"]
-        g = lambda k: ci(p[k]) if k in p else "n/a"  # noqa: E731
+        def g(k, p=p):
+            return ci(p[k]) if k in p else "n/a"
+
         L.append(f"| {n} | {ci(p['brier_diff'])} | {fmt(p['brier_diff']['p_noninferior'])} | {g('auc_diff')} | {g('log_loss_diff')} | "
                  f"{p['flips_vs_off']['right_to_wrong']} / {p['flips_vs_off']['wrong_to_right']} | {g('llm_calls_per_alert_diff')} | {g('tokens_in_per_alert_diff')} | "
                  f"{g('questions_per_alert_diff')} | {g('eps_spent_per_alert_diff')} | {fmt(p['seconds']['median'], 2)} (OFF {fmt(p['seconds']['median_off'], 2)}) | "

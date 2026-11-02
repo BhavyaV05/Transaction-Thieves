@@ -150,7 +150,7 @@ def test_sft_configs_and_dry_run(tmp_path, cfg, capsys):
     c = mod.load_config(ROOT / "configs" / "llm" / cfg)
     assert len(c["seeds"]) >= 3 and len(c["revision"]) == 40 and c["output_dir"].startswith("models/")
     data = tmp_path / "d.jsonl"
-    ex = to_sft_example(DecisionExample("stop", "ctx", "no", "A1"))
+    ex = to_sft_example(DecisionExample("worth_asking", "ctx", "no", "A1"))
     data.write_text(json.dumps(ex) + "\n")
     assert mod.main(["train", "--config", str(ROOT / "configs" / "llm" / cfg), "--dataset", str(data), "--dry-run"]) == 0
     assert '"examples": 1' in capsys.readouterr().out
@@ -168,7 +168,7 @@ def test_decisions_tokens_and_sft_example():
     assert ex["messages"][-1]["content"] == DECISIONS["typology"].tokens[DECISIONS["typology"].labels.index("cycle")]
     assert "C = cycle" in messages(DecisionExample("typology", "ctx"))[1]["content"]
     with pytest.raises(ValueError):
-        to_sft_example(DecisionExample("stop", "ctx", "maybe"))
+        to_sft_example(DecisionExample("worth_asking", "ctx", "maybe"))
 
 
 class LogprobClient:
@@ -184,19 +184,19 @@ class LogprobClient:
 def test_logprob_fast_model_reads_label_tokens_and_temperature():
     top = [{"token": "yes", "logprob": np.log(0.6)}, {"token": " Yes", "logprob": np.log(0.2)},
            {"token": "no", "logprob": np.log(0.1)}, {"token": "maybe", "logprob": np.log(0.1)}]  # fmt: skip
-    assert label_logps(top, "stop") == pytest.approx(np.log([0.8, 0.1]))  # " Yes" and "yes" add (logsumexp)
+    assert label_logps(top, "worth_asking") == pytest.approx(np.log([0.8, 0.1]))  # " Yes" and "yes" add (logsumexp)
     client = LogprobClient(top)
-    p = LogprobFastModel(client).predict_proba(DecisionExample("stop", "ctx"))
+    p = LogprobFastModel(client).predict_proba(DecisionExample("worth_asking", "ctx"))
     assert p["yes"] == pytest.approx(8 / 9) and client.requests[0]["max_tokens"] == 1
     assert client.requests[0]["extra"]["logprobs"] is True
-    hot = LogprobFastModel(client, temperature=5.0).predict_proba(DecisionExample("stop", "ctx"))
+    hot = LogprobFastModel(client, temperature=5.0).predict_proba(DecisionExample("worth_asking", "ctx"))
     assert 0.5 < hot["yes"] < p["yes"]
 
 
 def test_json_baseline_spreads_rest_and_falls_back_to_uniform():
     m = JsonDecisionModel(MockLLM(script=['{"label": "cycle", "confidence": 0.6}', "garbage"]))
     p = m.predict_proba(DecisionExample("typology", "ctx"))
-    assert p["cycle"] == pytest.approx(0.6) and p["fan_in"] == pytest.approx(0.05) and sum(p.values()) == pytest.approx(1)
+    assert p["cycle"] == pytest.approx(0.6) and p["fan"] == pytest.approx(0.08) and sum(p.values()) == pytest.approx(1)
     u = m.predict_proba(DecisionExample("typology", "ctx"))
     assert len(set(u.values())) == 1
 
@@ -214,7 +214,7 @@ def test_temperature_scaling_recovers_overconfidence():
 
 
 # -- cascade --------------------------------------------------------------------------------------------------
-def synthetic(n, sharp, rng, decision="stop"):
+def synthetic(n, sharp, rng, decision="worth_asking"):
     probs, labels = [], []
     for _ in range(n):
         y = "yes" if rng.random() < 0.5 else "no"
@@ -229,11 +229,11 @@ def synthetic(n, sharp, rng, decision="stop"):
 def test_conformal_sets_cover_at_1_minus_alpha():
     rng = np.random.default_rng(1)
     cal_p, cal_y = synthetic(2000, 0.7, rng)
-    cs = ConformalSet(alpha=0.1).fit(["stop"] * 2000, cal_p, cal_y)
+    cs = ConformalSet(alpha=0.1).fit(["worth_asking"] * 2000, cal_p, cal_y)
     test_p, test_y = synthetic(4000, 0.7, rng)
-    cover = np.mean([y in cs.predict_set("stop", p) for p, y in zip(test_p, test_y, strict=True)])
+    cover = np.mean([y in cs.predict_set("worth_asking", p) for p, y in zip(test_p, test_y, strict=True)])
     assert cover >= 0.88
-    assert ConformalSet(alpha=0.1).fit(["stop"] * 3, cal_p[:3], cal_y[:3]).q["stop"] == 1.0  # too few points
+    assert ConformalSet(alpha=0.1).fit(["worth_asking"] * 3, cal_p[:3], cal_y[:3]).q["worth_asking"] == 1.0  # too few points
 
 
 def test_cascade_routing_and_report():
@@ -241,16 +241,16 @@ def test_cascade_routing_and_report():
     fp, fy = synthetic(1500, 0.6, rng)
     lp, ly = synthetic(1500, 0.95, rng)
     alpha = 0.1
-    casc = ConformalCascade(ConformalSet(alpha).fit(["stop"] * 1500, fp, fy), ConformalSet(alpha).fit(["stop"] * 1500, lp, ly))
-    sure = casc.decide("stop", {"yes": 0.99, "no": 0.01}, lambda: pytest.fail("8B must not be called"))
+    casc = ConformalCascade(ConformalSet(alpha).fit(["worth_asking"] * 1500, fp, fy), ConformalSet(alpha).fit(["worth_asking"] * 1500, lp, ly))
+    sure = casc.decide("worth_asking", {"yes": 0.99, "no": 0.01}, lambda: pytest.fail("8B must not be called"))
     assert sure.source == "fast" and sure.answer == "yes"
     calls = []
-    unsure = casc.decide("stop", {"yes": 0.5, "no": 0.5}, lambda: calls.append(1) or {"yes": 0.01, "no": 0.99})
+    unsure = casc.decide("worth_asking", {"yes": 0.5, "no": 0.5}, lambda: calls.append(1) or {"yes": 0.01, "no": 0.99})
     assert unsure.source == "large" and unsure.answer == "no" and calls == [1]
-    dflt = casc.decide("stop", {"yes": 0.5, "no": 0.5}, lambda: {"yes": 0.5, "no": 0.5})
-    assert dflt.source == "default" and dflt.answer == DECISIONS["stop"].safe_default
+    dflt = casc.decide("worth_asking", {"yes": 0.5, "no": 0.5}, lambda: {"yes": 0.5, "no": 0.5})
+    assert dflt.source == "default" and dflt.answer == DECISIONS["worth_asking"].safe_default
     tp, ty = synthetic(2000, 0.6, rng)
-    big = [casc.decide("stop", p, lambda: {"yes": 0.5, "no": 0.5}) for p in tp]
-    rep = evaluate(big, ty, alpha)["stop"]
+    big = [casc.decide("worth_asking", p, lambda: {"yes": 0.5, "no": 0.5}) for p in tp]
+    rep = evaluate(big, ty, alpha)["worth_asking"]
     assert 0 < rep["kept_fast"] < 1 and rep["kept_fast"] + rep["to_large"] + rep["to_default"] == pytest.approx(1)
     assert rep["within_bound"]

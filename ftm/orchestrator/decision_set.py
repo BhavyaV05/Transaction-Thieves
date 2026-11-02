@@ -8,9 +8,11 @@ The labels now come from the components the pipeline runs with, not from the ale
 
   worth_asking      the state the planner is in (alert, p0, the fused posterior, the threshold, eps left, the answers so far, the
                     routed back-tested menu) -> yes iff the best AFFORDABLE, RIGHT-BANK-ROUTED, not-yet-asked question has an
-                    expected Brier reduction >= GAIN_MIN under the fitted ConditionalFusion (headroom_v1): with P(cell) from the
-                    back-test table's p_cell and the fused posterior p' after each cell,
-                    gain = p(1-p) - sum_cell P(cell) p'(1-p').  The old label ("the alert is a real attempt") leaked the answer
+                    expected Brier reduction >= GAIN_MIN under the fitted ConditionalFusion (headroom_v1): with the back-test table's
+                    p_cell = (P(cell | clean), P(cell | launder)) and the fused posterior p' after each cell, scored against
+                    the outcomes the table says occur in that cell,
+                    gain = p(1-p) - sum_cell [p P(cell|launder) (1-p')^2 + (1-p) P(cell|clean) p'^2]
+                    (a fusion that overshoots a weak answer gets a NEGATIVE gain).  The old label ("the alert is a real attempt") leaked the answer
                     and drifted 57% -> 32% yes across val parts.
   stop              NOT in the set: it is an exact function of the state (`ftm.fastmodel.decisions.exact_stop`), computed by the
                     pipeline.  `stop_label` below is that function, kept for the checks and the manifest.
@@ -90,8 +92,8 @@ def fused_logit(model: ConditionalFusion, p0: float, answered: Iterable[tuple[st
 
 
 def expected_gain(model: ConditionalFusion, z: float, cand: Candidate) -> float | None:
-    """Expected Brier reduction of asking `cand` at the fused log-odds z: p(1-p) - sum_cell P(cell) p'(1-p'), with P(cell) =
-    p P(cell | launder) + (1-p) P(cell | clean) from the back-test table and p' the fused posterior after that cell.
+    """Expected Brier reduction of asking `cand` at the fused log-odds z: p(1-p) - sum_cell [p P(cell|launder) (1-p')^2 +
+    (1-p) P(cell|clean) p'^2] with the cell probabilities from the back-test table and p' the fused posterior after that cell.
     None when the table has no cell probabilities for the question."""
     if not cand.p_cell:
         return None
@@ -102,7 +104,7 @@ def expected_gain(model: ConditionalFusion, z: float, cand: Candidate) -> float 
             continue
         pc, pl_ = cand.p_cell[cell]
         q = float(sigmoid(z + model.shrink * model.weight(cand.family) * math.log(lr)))
-        after += (p * pl_ + (1 - p) * pc) * q * (1 - q)
+        after += p * pl_ * (1 - q) ** 2 + (1 - p) * pc * q**2  # the fused forecast q scored against the table's outcome mix in this cell
     return p * (1 - p) - after
 
 

@@ -53,7 +53,7 @@ def test_e10_final_three_phases_on_the_synthetic_path_are_blind(tmp_path):
     for ph in ("fast", "large", "cascade"):
         assert e10f.main(["--phase", ph, "--alert-ids", str(ids), "--out", str(out)]) == 0
     dec = [json.loads(x) for x in (out / "decisions.jsonl").read_text().splitlines()]
-    assert len(dec) == 2 * 5 * 2 and all("label" not in d for d in dec)
+    assert len(dec) == 2 * 4 * 2  # 4 learned decisions (stop is exact, wave 4) and all("label" not in d for d in dec)
     import polars as pl
 
     df = pl.read_parquet(out / "runlog.parquet")
@@ -75,12 +75,12 @@ def test_e10_report_embeds_served_model_trivial_baseline_and_selection(tmp_path)
 def test_e10_select_rule_uses_cal_only_ties_to_lowest_seed_and_flags_bounds():
     sel = load("e10_select")
     assert sel.at_bound(20.0) and sel.at_bound(0.05) and not sel.at_bound(1.0)
-    cal = {a: {"stop": {"cal_error_marginal": e, "cal_kept_fast": k}} for a, e, k in
+    cal = {a: {"worth_asking": {"cal_error_marginal": e, "cal_kept_fast": k}} for a, e, k in
            [("tuned_s0", 0.02, 0.8), ("tuned_s1", 0.02, 0.8), ("tuned_s2", 0.2, 0.99)]}  # fmt: skip
     c = sel.choose(cal, ["tuned_s0", "tuned_s1", "tuned_s2"], 0.05)
     assert c["chosen"] == "tuned_s0" and not c["scores"]["tuned_s2"]["within_2alpha_on_cal"]  # s2 is over the bound, s0/s1 tie
-    cal["tuned_s2"]["stop"]["cal_error_marginal"] = 0.1
+    cal["tuned_s2"]["worth_asking"]["cal_error_marginal"] = 0.1
     assert sel.choose(cal, ["tuned_s0", "tuned_s1", "tuned_s2"], 0.05)["chosen"] == "tuned_s2"
-    rows = [{"decision": "stop", "val_part": p, "label": y} for p, y in [("fit", "yes"), ("fit", "yes"), ("fit", "no"), ("cal", "no"), ("eval", "yes"), ("eval", "no")]]
-    b = sel.balance(rows)["stop"]
+    rows = [{"decision": "worth_asking", "val_part": p, "label": y} for p, y in [("fit", "yes"), ("fit", "yes"), ("fit", "no"), ("cal", "no"), ("eval", "yes"), ("eval", "no")]]
+    b = sel.balance(rows)["worth_asking"]
     assert b["majority_label_fit"] == "yes" and b["trivial_majority_eval_acc"] == 0.5
