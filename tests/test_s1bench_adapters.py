@@ -60,3 +60,24 @@ def test_tev_messages_follow_the_card():
 
 def test_normalise_handles_degenerate_vectors():
     assert normalise([2, 2]) == [0.5, 0.5] and normalise([0, 0, 0]) == pytest.approx([1 / 3] * 3) and normalise([-1, 1]) == [0.0, 1.0]
+
+
+def test_finetune_example_matches_zero_shot_input(tmp_path):
+    import importlib.util
+    import json as _json
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("ft", Path(__file__).resolve().parents[1] / "scripts" / "s1bench_finetune.py")
+    ft = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ft)
+    rec = ft.example_for({"decision": "worth_asking", "context": "CTX", "label": "no"})
+    c = rec["output"]["classifications"][0]
+    assert c["labels"] == ["false", "true"] and c["true_label"] == ["false"] and rec["input"].startswith("Question:") and "CTX" in rec["input"]
+    ty = ft.example_for({"decision": "typology", "context": "CTX", "label": "cycle"})["output"]["classifications"][0]
+    assert ty["true_label"] == ["option_2"] and len(ty["labels"]) == 6
+    f = tmp_path / "t.jsonl"
+    f.write_text("".join(_json.dumps({"decision": "worth_asking", "split": "train", "context": "c", "label": "yes"}) + "\n" for _ in range(10)))
+    assert len(ft.train_rows(f, 4, 0)) == 4
+    f.write_text(_json.dumps({"decision": "worth_asking", "split": "val", "context": "c", "label": "yes"}) + "\n")
+    with pytest.raises(SystemExit):
+        ft.train_rows(f, None, 0)

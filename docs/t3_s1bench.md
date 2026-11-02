@@ -143,3 +143,46 @@ yes/no decisions swap their two options.  The reported numbers are accuracy rang
 hold the pins; the report script (`scripts/s1bench_report.py`) regenerates the tables of section 8 from the outputs.
 
 SECTIONS 7 ONWARD (scorer validation, results, GPU commands) FOLLOW BELOW; the text above is frozen.
+
+---
+# Results and status (appended after the runs; sections 1-6 above are unchanged in substance)
+
+Two clarifications written before the first Part B run (no result existed): section 4.1 drops a decision on which every candidate is collapsed; the SST-2 / ToxicChat / banking77
+calibration split is a 500-item train subsample (sst2's validation is its eval split).
+
+## 7. Scorer validation (done, CPU)
+
+`scripts/s1bench_validate_scorer.py` recomputes every stored metric of a published result file from its stored predictions with our numpy scorer
+(`ftm/fastmodel/s1bench_s1mb.py`) and compares to the metrics the official evaluator wrote.  Data: `hotchpotch/S1MB-english-v1` @ `10bcb8c6916b` (prepared:
+137 benchmarks, 26,269 judgments, exactly the official active membership of `training-manifest.json`), results @ `426b8308eded`.
+
+| published row (hotchpotch/s1mb-result) | benchmarks compared | match to 1e-9 on every stored numeric metric |
+|---|---|---|
+| typesafe/jev_1_13 | 125 (it has no result file for 12 of the 137 active benchmarks) | 125 / 125 |
+| bekko-system-one-v0-400m, laya, laya-typed-decisions, GLiNER2.5-Decide, JevK5, Tev1-4B-experimental, Open-Jev-9B | 137 each | 137 / 137 each |
+
+So the scorer reproduces 1,122 published benchmark results (8 models) exactly, including baselines, adjusted skills and balanced accuracy with soft targets.
+It is trusted for our own runs.  Abstentions (the official max-error penalty) are not implemented; no model of ours abstains (a server failure is an unscored judgment and
+makes the benchmark incomplete, as in the official rules).
+
+## 8. Faithfulness table: published numbers re-aggregated by our scorer (S1MB English v1, Task Avg 0-1)
+
+Task score = mean baseline-adjusted score (clipped to [0, 1]) over the eligible benchmarks of the task; Task Avg = mean of Choice, Noul, Score.  "Full" uses every complete benchmark
+of the row (Jev 1.13 has 125 of 137, so its Task Avg is over those 125 and is not a full-roster number); "covered" restricts all rows to the 125 benchmarks Jev 1.13 completed.
+Published rows were measured by their authors with the official evaluator; Jev is TypeSafe's hosted model, measured by the S1MB maintainer.
+
+| model | Choice | Noul | Score | Task Avg (covered 125) | Task Avg (full) |
+|---|---|---|---|---|---|
+| Jev 1.13 (TypeSafe) | 0.682 | 0.661 | 0.501 | 0.615 | 0.615 (125 benchmarks) |
+| Open-Jev-9B | 0.572 | 0.580 | 0.490 | 0.547 | 0.521 |
+| bekko-system-one-v0-400m | 0.615 | 0.525 | 0.417 | 0.519 | 0.506 |
+| Tev1-4B-experimental | 0.550 | 0.521 | 0.385 | 0.485 | 0.471 |
+| JevK5 (4B) | 0.545 | 0.502 | 0.226 | 0.424 | 0.411 |
+| laya-typed-decisions | 0.204 | 0.205 | 0.070 | 0.159 | 0.150 |
+| laya | 0.175 | 0.202 | 0.036 | 0.138 | 0.134 |
+| GLiNER2.5-Decide | 0.196 | 0.059 | 0.045 | 0.100 | 0.092 |
+| **our System 1 / base Qwen3-4B / Gemma 4 12B** | GPU pending (section 10) | | | | |
+
+Caveats that matter: the bekko card states its training data includes dataset families in the evaluation (so its Choice number is not an unseen-task result); laya and GLiNER2.5 are
+reported by their cards to be weak zero-shot on typed-decisions style questions, and the table agrees.  Our System 1 was fine-tuned only on AML decisions; its S1MB numbers will measure how much of
+the typed-decision format transfers, not a trained-for-S1MB score.
