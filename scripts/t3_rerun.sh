@@ -37,7 +37,9 @@ PY=${PY:-.venv/bin/python}
 TRAIN_PY=${TRAIN_PY:-$HOME/projects/train-venv/bin/python}
 export PYTHONPATH=${PYTHONPATH:-$PWD}
 TOOLS="$PY scripts/t3_rerun_tools.py"
-MODEL=${MODEL:-gemma4-12b}
+# backbone: MODEL if set, else the E18-refresh pick (docs/t3_e18.md "E18 refresh (2 Nov)", selection fixed before the runs), else Gemma 4 12B
+# (also when the refresh picked no LLM: the LLM systems still run on the incumbent so they can be compared with the EIG policy)
+MODEL=${MODEL:-$($PY -c 'import json,sys; p=json.load(open("outputs/e18_refresh/report.json")).get("pick"); print(p or "gemma4-12b")' 2>/dev/null || echo gemma4-12b)}
 CHUNK=${CHUNK:-80}
 V=${V:-outputs/t3_val_v3}
 TEACHER=outputs/t3_teacher_v2
