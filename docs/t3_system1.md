@@ -38,7 +38,22 @@ summary: transfer + compact shape; p0; fused posterior; threshold; eps left; ans
 * `injection_present`: the planted-note label of the generator.
 * `stop`: exact, not in the set (section 1).
 
-DATASET_STATS_PLACEHOLDER
+**Dataset built (CPU, `data/decisions/hi_medium_s1v1`, not committed; `scripts/make_system1_set.py`, p0 v2, headroom_v1 table + fusion, threshold 0.322699, seed 0).**
+1,983 askable train alerts and 460 askable val alerts (T1/T2 world; the rest have no modelled partner).  54,896 rows (train 44,318 for SFT; val 10,578 = fit 4,392 / cal 2,507 / eval 3,679 by the alert's `val_part`).
+
+| split / decision | rows | labels |
+|---|---|---|
+| train worth_asking | 15,864 | yes 10,450 (65.9%), no 5,414 |
+| val worth_asking | 3,680 | yes 2,584 (70.2%); by part fit 69.8%, cal 71.2%, eval 70.0% (E10 label drifted 57 -> 43 -> 32%) |
+| train typology (merged, none thinned to 20%) | 692 | none 332, chain 112, cycle 56, bipartite 65, fan 65, hub 62 |
+| val typology (natural) | 458 | none 252 (55%), chain 57, hub 47, fan 51, cycle 27, bipartite 24; cal has only 97 rows (no bipartite) |
+| train / val rule_applies | 15,864 / 3,680 | balanced; val in paraphrased wording |
+| train / val injection_present | 11,898 / 2,760 | balanced; disjoint template families |
+
+`worth_asking` best-gain quantiles (absolute Brier, train): p10 0, p25 0.0005, median 0.0024, p75 0.0056, p90 0.0147; val: median 0.0039, p90 0.0193.  `GAIN_MIN = 1e-3`
+makes about a third of the states "no" (the posterior is far enough from 0.5 that no affordable answer is expected to pay).  `typology` is thin (cal 97 rows): expect the cal
+conformal set to fall back to the full set or the tier to be retired; the report flags both.
+
 
 ## 3. Cascade, retirement, typed API
 
@@ -137,7 +152,7 @@ exact decisions computed instead of learned; an ablation protocol (off / each fu
 
 ## 8. GPU commands and time (for the lead; the GPU is shared, so each block says what it needs)
 
-Estimates: the E10 fast fine-tune measured 9,230 s for 59,450 examples (2.56 h per seed); the new train set is DATASET_TRAIN_ROWS rows, so about TRAIN_HOURS h per seed.  Scoring runs are 1-token requests at
+Estimates: the E10 fast fine-tune measured 9,230 s for 59,450 examples (2.56 h per seed); the new train set is 44,318 rows, so about 1.9 h per seed.  Scoring runs are 1-token requests at
 ~170 rows/s (4B, 32 workers) and ~30 rows/s (Gemma, 8 workers).  Integration runs: about 23 s per alert at concurrency 1 (Gemma, STATUS), about 8-10 s of wall time per alert at concurrency 4.
 
 ```
@@ -147,7 +162,7 @@ cd /home/akshat/projects/tt-sys1   # or the integration checkout after merge; PY
 scripts/t3_qwen_session.sh large3 gemma4-12b
 .venv/bin/python scripts/score_fast_baseline.py --decisions data/decisions/hi_medium_s1v1/decisions_train.jsonl score --tier large-logprob --train-rows \
     --model gemma4-12b --workers 8 --out outputs/s1v1/large/large_lp_train.jsonl
-# 2. fast fine-tune, SFT arm, 1 seed first (QLoRA takes the whole GPU)                                                              ~TRAIN_HOURS h per seed
+# 2. fast fine-tune, SFT arm, 1 seed first (QLoRA takes the whole GPU)                                                              ~1.9 h per seed
 .venv/bin/python scripts/train_planner.py fast-data --out outputs/sft/fast_train_s1v1.jsonl
 .venv/bin/python scripts/train_planner.py train --config configs/llm/sft_fast.yaml --dataset outputs/sft/fast_train_s1v1.jsonl --seed 0
 #    then seeds 1 and 2 (same command); soft-target arm (needs step 1):
@@ -193,7 +208,7 @@ done      # FROZEN=outputs/s1v1/system1_frozen_s0.json; the "off" arm runs on th
     --screen fastmodel --screen-endpoint $FTM_FAST_ENDPOINT --screen-model fast3-s0 --arms nogate,gate,gate+screen --set <val-family set from ftm.safety.injection.generate_diverse(...,'val')>
 ```
 
-Total GPU time, planning figures: step 1 ~1.5 h; step 2 SFT 3 seeds ~3 x TRAIN_HOURS h, soft arm another 3 x TRAIN_HOURS h (run the soft arm on 1 seed first, 2 more only if it wins on cal); step 3 ~0.5 h;
+Total GPU time, planning figures: step 1 ~1.5 h; step 2 SFT 3 seeds ~3 x 1.9 h, soft arm another 3 x 1.9 h (run the soft arm on 1 seed first, 2 more only if it wins on cal); step 3 ~0.5 h;
 step 5 0.2 h; step 6 about 6 arms x 300 alerts x ~9 s = ~4.5 h for fit+cal, plus 160 alerts x 6 arms = ~2.4 h for eval; step 8 ~1 h.
 
 ## 9. Not done / caveats

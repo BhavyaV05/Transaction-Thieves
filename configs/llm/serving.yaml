@@ -99,6 +99,7 @@ models:
     repo: Qwen/Qwen3-4B-AWQ
     revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
     licence: apache-2.0
+    role: decision                         # one-token decisions: a short context is enough (tests/test_serving.py)
     max_model_len: 2048
     gpu_memory_utilization: 0.21
     reasoning_parser: qwen3
