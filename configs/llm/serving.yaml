@@ -126,7 +126,7 @@ models:
       fast3soft-s0: models/fast_4b_s1v1_soft/seed=0/adapter   # calibration-as-objective arm (configs/llm/sft_fast_soft.yaml)
       fast3soft-s1: models/fast_4b_s1v1_soft/seed=1/adapter
       fast3soft-s2: models/fast_4b_s1v1_soft/seed=2/adapter
-    extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8"]
+    extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8", --attention-backend, TRITON_ATTN]   # fp8 KV picks FlashInfer, whose arch check fails on sm_120 (2 Nov); Gemma 4 already runs TRITON_ATTN
   qwen3-1.7b:                              # E10 small general-LLM baseline (untuned, bf16: small enough not to need a quantised build)
     repo: Qwen/Qwen3-1.7B
     revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
