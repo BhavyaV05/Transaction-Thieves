@@ -99,7 +99,7 @@ def test_run_script_concurrency_4_equals_1(tmp_path):
     for c in (1, 4):
         d = tmp_path / f"c{c}"
         assert mod.main(["--system", "planner", "--alerts", "synthetic", "--n", "6", "--llm", "mock", "--toolbox", "harness",
-                         "--concurrency", str(c), "--timing-sample", "2", "--run-dir", str(d), "--run-id", "t", "--blind"]) == 0
+                         "--concurrency", str(c), "--timing-sample", "2", "--profile", "none", "--run-dir", str(d), "--run-id", "t", "--blind"]) == 0
         outs[c] = d
     a, b = (pl.read_parquet(outs[c] / "runlog.parquet").drop("commit") for c in (1, 4))
     assert a.equals(b) and a.height > 6

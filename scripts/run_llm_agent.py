@@ -342,7 +342,26 @@ def verdict_rows(v: Verdict, base: dict, label: int | None, *, ctx: AlertContext
     return rows
 
 
+ENV_SWITCHES = ("FTM_EDGE_SCORER", "FTM_P0_VARIANT")  # set by --edge-scorer / --p0-variant (the tuned profile)
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Run one investigation run; the profile's process-wide switches (FTM_EDGE_SCORER, FTM_P0_VARIANT) are restored afterwards, so an
+    in-process caller (tests, demo) is not left on the tuned profile."""
+    import os
+
+    saved = {k: os.environ.get(k) for k in ENV_SWITCHES}
+    try:
+        return _main(argv)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", choices=PROFILES, default=None,
                     help="tuned: the production components of configs/llm/tuned.yaml fill every argument you leave out (p0 v2, edge scorer v2, "
