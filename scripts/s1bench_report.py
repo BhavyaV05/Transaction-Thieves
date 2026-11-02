@@ -135,7 +135,7 @@ def load_published(model: str) -> tuple[dict, dict]:
     return per, tasks
 
 
-def s1mb_report(tags: list[str], published: list[str], out_root: Path) -> dict:
+def s1mb_report(tags: list[str], published: list[str], out_root: Path, cover: list[str] | None = None) -> dict:
     models: dict = {}
     for t in tags:
         per, tasks, _ = score_ours(t, out_root)
@@ -144,7 +144,8 @@ def s1mb_report(tags: list[str], published: list[str], out_root: Path) -> dict:
         per, tasks = load_published(m)
         models[m] = {"per": per, "tasks": tasks, "all": per}
     all_tasks = {b: lines[0]["task"] for b in (p.stem for p in (PREP / "s1mb").glob("*.jsonl")) for lines in [load_lines(b)]}
-    covered = sorted(set.intersection(*[set(v["per"]) for v in models.values()])) if models else []
+    define = [models[m] for m in (cover or models) if m in models]  # models whose complete benchmarks define the covered set
+    covered = sorted(set.intersection(*[set(v["per"]) for v in define])) if define else []
     rep: dict = {"n_active": len(all_tasks), "covered": covered, "models": {}}
     for name, v in models.items():
         full = aggregate(v["per"], all_tasks)
@@ -171,8 +172,9 @@ def s1mb_markdown(rep: dict) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["ext", "s1mb"])
-    ap.add_argument("--tags", nargs="+", default=[])
+    ap.add_argument("--tags", nargs="*", default=[])
     ap.add_argument("--published", nargs="*", default=[])
+    ap.add_argument("--cover", nargs="*", default=None, help="models whose complete benchmarks define the covered set (default: all compared)")
     ap.add_argument("--root", type=Path, default=ROOT / "outputs" / "s1bench")
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
@@ -181,7 +183,7 @@ def main() -> None:
         rep = ext_reports(a.tags, a.root)
         md = ext_markdown(rep)
     else:
-        rep = s1mb_report(a.tags, a.published, a.root)
+        rep = s1mb_report(a.tags, a.published, a.root, a.cover)
         md = s1mb_markdown(rep)
     (a.out / "report.json").write_text(json.dumps(rep, indent=1))
     (a.out / "report.md").write_text(md + "\n")

@@ -49,14 +49,14 @@ def question_for(row: dict) -> TypedQuestion:
     return TypedQuestion({DEFS["state_key"]: row["context"]}, d["instruction"], tuple((o["id"], o["description"]) for o in d["options"]))
 
 
-def make_adapter(name: str):
+def make_adapter(name: str, adapter_dir: str | None = None):
     m = MODELS["open_models"][name]
     from ftm.fastmodel import s1bench_adapters as ad
 
     if name == "bekko-400m":
         return ad.BekkoAdapter(m["repo"], m["revision"], "cpu", name, m["params_m"])
     if name == "gliner25-decide":
-        return ad.GlinerAdapter(m["repo"], m["revision"], "cpu", name, m["params_m"])
+        return ad.GlinerAdapter(m["repo"], m["revision"], "cpu", name, m["params_m"], adapter_dir)
     if name in ("laya", "laya-typed-decisions"):
         sub = "typed-decisions" if name == "laya-typed-decisions" else None
         return ad.LayaAdapter("convaiinnovations/laya", m["revision"] if name == "laya" else MODELS["open_models"]["laya"]["revision"], sub, name, m["params_m"])
@@ -76,7 +76,7 @@ def cmd_open(a) -> None:
     if a.out.exists():
         done = {json.loads(x)["i"] for x in a.out.read_text().splitlines() if x.strip()}
     todo = [r for r in rows if r["i"] not in done]
-    ad = make_adapter(a.model)
+    ad = make_adapter(a.model, str(a.adapter) if a.adapter else None)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     t0 = time.perf_counter()
     with a.out.open("a") as f:
@@ -137,6 +137,7 @@ def main() -> None:
     ap.add_argument("--cap", type=int, default=None)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--model")
+    ap.add_argument("--adapter", type=Path, default=None, help="LoRA adapter directory of a fine-tuned open model")
     ap.add_argument("--parts", nargs="+", default=["fit", "cal", "eval"])
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--cand", nargs=2, action="append", default=[], metavar=("NAME", "PATH"))

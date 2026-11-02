@@ -144,11 +144,14 @@ class BekkoAdapter(Adapter):
 
 
 class GlinerAdapter(Adapter):
-    def __init__(self, repo: str, revision: str, device: str = "cpu", name: str = "gliner25-decide", params_m: float = 340):
-        from gliner2 import AutoExtractor
+    def __init__(self, repo: str, revision: str, device: str = "cpu", name: str = "gliner25-decide", params_m: float = 340, adapter_dir: str | None = None):
+        from gliner2 import AutoExtractor, load_lora_adapter
 
         self.name, self.params_m = name, params_m
-        self.engine = AutoExtractor.from_pretrained(repo, revision=revision).to(device).eval()
+        self.engine = AutoExtractor.from_pretrained(repo, revision=revision).to(device)
+        if adapter_dir:  # our fine-tune (scripts/s1bench_finetune.py): a LoRA adapter on the pinned base
+            load_lora_adapter(self.engine, adapter_dir)
+        self.engine = self.engine.eval()
 
     def predict(self, q: TypedQuestion) -> list[float]:
         import torch
@@ -168,20 +171,19 @@ class LayaAdapter(Adapter):
     """laya package (pinned 0.3.20): `laya.load(repo, subfolder=...)` returns an agent whose `.predict(state, questions)` gives per-question probabilities."""
 
     def __init__(self, repo: str, revision: str, subfolder: str | None = None, name: str = "laya", params_m: float = 421):
+        import huggingface_hub
         import laya
 
         self.name, self.params_m = name, params_m
+        path = huggingface_hub.snapshot_download(repo, revision=revision, allow_patterns=["*.json", "model.safetensors", "tokenizer/*", "encoder/*", "typed-decisions/*"])
         kw = {"subfolder": subfolder} if subfolder else {}
-        self.agent = laya.load(repo, revision=revision, **kw)
+        self.agent = laya.load(path, device="cpu", **kw)
 
     def predict(self, q: TypedQuestion) -> list[float]:
-        res = self.agent.predict(q.state, laya_questions(q))
-        r = res["decision"] if "decision" in res else res
-        probs = r["probabilities"] if "probabilities" in r else r["probs"]
-        keys = [i for i, _ in q.ordered()] if q.is_yes_no else [f"option_{i}" for i in range(len(q.options))]
-        if q.is_yes_no:
-            return normalise([probs["true"], probs["false"]])
-        return normalise([probs[k] for k in keys])
+        r = self.agent.predict(q.state, laya_questions(q))["answers"]["decision"]
+        if q.is_yes_no:  # noul: the returned value is P(true) = P(yes) (rounded to 4 decimals by the package)
+            return normalise([r["noul"], 1 - r["noul"]])
+        return normalise([r["probabilities"][f"option_{i}"] for i in range(len(q.options))])
 
 
 class JevK5Adapter(Adapter):
