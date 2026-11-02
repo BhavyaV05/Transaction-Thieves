@@ -87,3 +87,37 @@ models:
     max_model_len: 8192
     gpu_memory_utilization: 0.45
     reasoning_parser: qwen3
+
+  # ---- E18 refresh candidates (2 Nov, docs/t3_e18.md "E18 refresh (2 Nov)"). Revisions checked on Hugging Face 2026-11-02; all load in vLLM 0.31.0
+  # by architecture (checked against its model registry); none has been downloaded or load-tested yet (download -> load -> run -> delete per candidate).
+  qwen35-9b:                               # Qwen3.5 9B (hybrid Gated-DeltaNet, multimodal wrapper); community AWQ 4-bit in compressed-tensors format
+    repo: cyankiwi/Qwen3.5-9B-AWQ-4bit     # fallback: RedHatAI/Qwen3.5-9B-quantized.w4a16 (a398088c4228b0ae0c8c78df88fd1e4bf445f068, 11.4 GB)
+    revision: e4d2d39cede8c5d1716d824cd843e2889c648083
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85           # 9.1 GB of weights incl. the (unquantised) vision tower; only 8 of 32 layers keep a KV cache
+    reasoning_parser: qwen3                # thinking OFF via chat_template_kwargs enable_thinking=false (the template honours it)
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "video": 0}']
+  qwen35-4b:                               # Qwen3.5 4B, same family at half the size
+    repo: cyankiwi/Qwen3.5-4B-AWQ-4bit     # fallback: RedHatAI/Qwen3.5-4B-quantized.w4a16 (7a613872f394578b0b52b683ff4ac47516b4bcaf, 5.5 GB)
+    revision: d3e78b50c727b1f34802f440ca84b25781625352
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.60           # 4.0 GB of weights
+    reasoning_parser: qwen3
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "video": 0}']
+  gemma4-e4b:                              # Gemma 4 "E4B" (4B effective parameters, ~8B with the per-layer embeddings); Google's own QAT W4A16 build
+    repo: google/gemma-4-E4B-it-qat-w4a16-ct
+    revision: 6cd26aaa2357fb2bad8c51699a7558a4d1a965bb
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.84           # 11.5 GB of weights (embeddings are most of it)
+    reasoning_parser: gemma4
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']
+  phi4-14b:                                # optional (CANDIDATES env of scripts/t3_e18_refresh.sh): Phi-4 14B (Dec 2024), no thinking mode, 16k context
+    repo: stelterlab/phi-4-AWQ
+    revision: 075b93fe5ab0d2e86004a5d68c7575ec3bb5a88b
+    licence: mit
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85           # 9.1 GB of AWQ weights
+    reasoning_parser: null
