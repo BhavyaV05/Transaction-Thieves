@@ -68,6 +68,18 @@ models:
       planner-sft-s0: models/planner_sft/seed=0/adapter
       planner-sft-s1: models/planner_sft/seed=1/adapter
       planner-sft-s2: models/planner_sft/seed=2/adapter
+  qwen3-8b-lora-v3:                        # E16 rerun (scripts/t3_rerun.sh student-e16): the same AWQ Qwen3-8B, adapters of the v3 distilled set (teacher_v2)
+    repo: Qwen/Qwen3-8B-AWQ
+    revision: 4da05a8edb55c6046cce958586c33b61da07bb79
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85
+    reasoning_parser: qwen3
+    max_lora_rank: 16
+    lora_modules:                          # trained by scripts/train_planner.py with configs/llm/sft_planner_v3.yaml (gitignored, models/)
+      planner-sft-v3-s0: models/planner_sft_v3/seed=0/adapter
+      planner-sft-v3-s1: models/planner_sft_v3/seed=1/adapter
+      planner-sft-v3-s2: models/planner_sft_v3/seed=2/adapter
   qwen3-4b-lora:                           # E10 (fast model): AWQ Qwen3-4B with LoRA enabled: the untuned base and the tuned adapters
     repo: Qwen/Qwen3-4B-AWQ
     revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
