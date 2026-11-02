@@ -50,19 +50,28 @@ def build_rows(a, ids: set[str] | None) -> list[dict]:
         return [{"alert_id": i, "decision": d, "context": f"synthetic row {k} for {i}", "label": DECISIONS[d].labels[0], "k": k, "p0": 0.1}
                 for i in sorted(ids) for d in DECISIONS for k in range(2)]
     if a.synthetic:
-        sys.path.insert(0, str(ROOT / "scripts"))
-        from make_decision_set import synthetic_parts
-
-        ledgers, banks, alerts, pool = synthetic_parts(a.synthetic, a.seed)
+        ledgers, banks, alerts, pool, fusion, contexts = synthetic_parts(a.synthetic, a.seed)
     else:
+        import importlib.util
+
+        import yaml
+
         from ftm.backtest.world import (
             load_world,  # raises unless FTM_FINAL_RUN=1 (scripts/run_final.py)
         )
+        from ftm.fusion.conditional import ConditionalFusion
 
         w = load_world(a.data, "test", a.seed)
         ledgers, banks, alerts = w.ledgers, w.banks, w.alerts
         pool = QuestionPool.from_jsonl(a.table)
-    builder = DecisionSetBuilder(ledgers, banks, pool, 0.3, seed=a.seed)
+        fusion = ConditionalFusion.from_json(ROOT / "configs/fusion/headroom_v1.json")
+        spec = importlib.util.spec_from_file_location("run_llm_agent", ROOT / "scripts" / "run_llm_agent.py")
+        rla = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rla)
+        got = rla.data_alerts(a.data, "test", 10**9, a.seed, 1, None, {x.alert_id for x in alerts}, 0, None, p0_variant="v2")
+        contexts = {c.alert_id: c for c, _ in got}
+        a.threshold = float(yaml.safe_load((ROOT / "configs/decision/headroom_v1.yaml").read_text())["threshold"])
+    builder = DecisionSetBuilder(ledgers, banks, pool, fusion, contexts, getattr(a, "threshold", 0.3227), seed=a.seed)
     rows, seen = [], {}
     for al in alerts:
         if ids is not None and al.alert_id not in ids:
@@ -71,6 +80,33 @@ def build_rows(a, ids: set[str] | None) -> list[dict]:
             k = seen[(al.alert_id, r["decision"])] = seen.get((al.alert_id, r["decision"]), -1) + 1
             rows.append({**r, "k": k, "p0": al.p0})
     return rows
+
+
+def synthetic_parts(n: int, seed: int):
+    """Offline pieces for the dry run (synthetic world, toy fusion and contexts): never a result."""
+    from dataclasses import replace
+
+    from ftm.backtest.engine import BacktestConfig
+    from ftm.backtest.synth import make_world
+    from ftm.fusion.conditional import ConditionalFusion
+    from ftm.orchestrator.runner import pool_from_backtest
+    from ftm.types import AlertContext
+
+    w = make_world(n, seed)
+    alerts = sorted(w.alerts, key=lambda x: x.binding.t0)
+    cut = int(len(alerts) * 0.6)
+    alerts = [replace(x, split="test") for x in alerts]
+    pool, _ = pool_from_backtest(w.banks, alerts[:cut], ["n_counterparties(ALERT.receiver, dir=in, window=before(72))"], (1.0, 2.0),
+                                 BacktestConfig(min_answers=40, min_per_class=6, min_per_bin=10))  # fmt: skip
+    fams = sorted({c.family for c in pool})
+    fusion = ConditionalFusion(fams, 0.0, 1.0, np.ones(len(fams)), shrink=0.5, fitted=True)
+    ctx = {}
+    for x in alerts:
+        b = x.binding
+        ctx[x.alert_id] = AlertContext(x.alert_id, str(b.home_bank), b.t0.isoformat(), "test", x.p0, {
+            "sender_bank": b.sender_bank, "receiver_bank": b.receiver_bank, "counterparty_bank": b.partner_bank, "amount": b.amount,
+            "currency": b.currency, "format": "ACH", "direction": "out" if b.sender_bank == b.home_bank else "in", "shape": {}})  # fmt: skip
+    return w.ledgers, w.banks, alerts, pool, fusion, ctx
 
 
 def key(r: dict) -> str:
@@ -92,6 +128,9 @@ def client(a, default_model: str):
 
 
 def cascade_of(frozen: dict) -> tuple[ConformalCascade, dict[str, float]]:
+    if frozen.get("version") == 3:  # System 1 v3 (docs/t3_system1.md): both tiers by token logprobs, retired tiers recorded
+        return (ConformalCascade(ConformalSet.from_dict(frozen["fast"]), ConformalSet.from_dict(frozen["large"]), frozen["fast_off"],
+                                 frozen["large_off"]), frozen["temperatures"])
     alpha = frozen["alpha"]
     sets = []
     for tier in ("fast", "large"):
@@ -114,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--alert-ids", type=Path, default=None)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--data", default="hi_medium")
-    ap.add_argument("--table", default="data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl")
+    ap.add_argument("--table", default="configs/fusion/headroom_v1_table.jsonl")
     ap.add_argument("--frozen", type=Path, default=ROOT / "outputs" / "e10" / "fast_v2.json")
     ap.add_argument("--fast-dir", type=Path, default=None, help="job directory of the fast_tier phase (default: --out)")
     ap.add_argument("--large-dir", type=Path, default=None, help="job directory of the large_tier phase (default: --out)")
@@ -135,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     a.out.mkdir(parents=True, exist_ok=True)
     if not a.frozen.exists() and not a.synthetic:
         raise SystemExit(f"{a.frozen} not found: the frozen cascade of docs/t3_e10.md is required")
-    frozen = json.loads(a.frozen.read_text()) if a.frozen.exists() else {"alpha": 0.05, "conformal_q": {"fast": {}, "large": {}}, "temperatures": {}}
+    frozen = json.loads(a.frozen.read_text()) if a.frozen.exists() else {"alpha": 0.05, "conformal_q": {"fast": {}, "large": {}}, "temperatures": {}}  # synthetic dry run only
     casc, temps = cascade_of(frozen)
     fast, large = read_jsonl((a.fast_dir or a.out) / "fast.jsonl"), read_jsonl((a.large_dir or a.out) / "large.jsonl")
     if a.phase == "fast":
@@ -149,17 +188,30 @@ def main(argv: list[str] | None = None) -> int:
     elif a.phase == "large":
         from concurrent.futures import ThreadPoolExecutor
 
-        m = JsonDecisionModel(client(a, "gemma4-12b"))
+        v3 = frozen.get("version") == 3
+        m = LogprobFastModel(client(a, "gemma4-12b")) if v3 else JsonDecisionModel(client(a, "gemma4-12b"))
         need = [r for r in rows if key(r) in fast and key(r) not in large
-                and len(casc.fast_sets.predict_set(r["decision"], fast_probs(fast[key(r)]["logps"], r["decision"], temps))) != 1]
+                and (r["decision"] in casc.fast_off
+                     or len(casc.fast_sets.predict_set(r["decision"], fast_probs(fast[key(r)]["logps"], r["decision"], temps))) != 1)]
         with (a.out / "large.jsonl").open("a") as f, ThreadPoolExecutor(a.workers) as pool:
-            for r, pr in zip(need, pool.map(lambda r: m.predict_proba(example(r)), need), strict=True):
-                f.write(json.dumps({"key": key(r), "probs": pr}) + "\n")
+            if v3:
+                for r, lp in zip(need, pool.map(lambda r: m.raw_logps(example(r)).tolist(), need), strict=True):
+                    f.write(json.dumps({"key": key(r), "logps": lp}) + "\n")
+            else:
+                for r, pr in zip(need, pool.map(lambda r: m.predict_proba(example(r)), need), strict=True):
+                    f.write(json.dumps({"key": key(r), "probs": pr}) + "\n")
     else:
         out = []
+
+        def large_probs(r):
+            rec = large[key(r)]
+            if "probs" in rec:
+                return rec["probs"]
+            return fast_probs(rec["logps"], r["decision"], frozen.get("temperatures_large", {}))
+
         for r in rows:
             fp = fast_probs(fast[key(r)]["logps"], r["decision"], temps)
-            d = casc.decide(r["decision"], fp, lambda r=r: large[key(r)]["probs"])
+            d = casc.decide(r["decision"], fp, lambda r=r: large_probs(r))
             out.append({"key": key(r), "alert_id": r["alert_id"], "decision": r["decision"], "answer": d.answer, "source": d.source})
         (a.out / "decisions.jsonl").write_text("".join(json.dumps(x) + "\n" for x in out))
     by_alert = {r["alert_id"]: r["p0"] for r in rows}

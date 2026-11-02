@@ -21,4 +21,4 @@ train:
   optim: adamw_8bit
   responses_only: true
 seeds: [0, 1, 2]
-output_dir: models/fast_4b
+output_dir: models/fast_4b_s1v1  # wave-4 labels (data/decisions/hi_medium_s1v1); the E10 adapters stay in models/fast_4b

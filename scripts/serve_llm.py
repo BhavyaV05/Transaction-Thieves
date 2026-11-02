@@ -117,6 +117,16 @@ def vllm_args(cfg: dict, name: str, port: int, host: str | None = None) -> list[
     return args
 
 
+def dual_members(cfg: dict, name: str) -> list[str]:
+    if name not in (cfg.get("dual") or {}):
+        raise SystemExit(f"unknown dual set {name!r}; choose from {sorted(cfg.get('dual') or {})}")
+    return list(cfg["dual"][name])
+
+
+def profile_port(cfg: dict, name: str, default: int) -> int:
+    return int(cfg["models"][name].get("port", default))
+
+
 def docker_command(cfg: dict, name: str, host: str, port: int, hf_home: str) -> list[str]:
     """Docker Desktop (Windows) or Docker on Linux. `-e VLLM_API_KEY` copies the key from our environment."""
     return [
@@ -200,6 +210,54 @@ def llamacpp_command(prof: dict, name: str, model_path: str, host: str, port: in
     return [llama_server_bin(), *llamacpp_args(prof, name, model_path, port, host, seed)]
 
 
+def serve_dual(cfg: dict, name: str, host: str, backend: str, dry_run: bool) -> int:
+    """Two (or more) vLLM servers on one GPU. vLLM budgets its share from the memory free at start-up, so the members start one at a
+    time; the next starts when the previous serves /models. Prints every command first; --dry-run stops there."""
+    import time
+    import urllib.request
+
+    hf_home = str(Path(os.path.expanduser(cfg["hf_home"])))
+    members = dual_members(cfg, name)
+    cmds = []
+    for m in members:
+        port = profile_port(cfg, m, cfg["port"])
+        cmds.append((m, port, docker_command(cfg, m, host, port, hf_home) if backend == "docker" else native_command(cfg, m, host, port)))
+    total = sum(float(cfg["models"][m]["gpu_memory_utilization"]) for m in members)
+    print(f"# dual set {name}: {', '.join(f'{m}:{p}' for m, p, _ in cmds)}; summed gpu-memory-utilization {total:.2f} of the card")
+    for m, port, cmd in cmds:
+        print(f"# {m} -> http://{host}:{port}/v1\n{shlex.join(cmd)}")
+    if dry_run:
+        return 0
+    env = dict(os.environ, VLLM_API_KEY=api_key())
+    if backend == "native":
+        env["HF_HOME"] = hf_home
+    procs = []
+    try:
+        for m, port, cmd in cmds:
+            procs.append(subprocess.Popen(cmd, env=env, start_new_session=True))
+            t0 = time.time()
+            while True:
+                if procs[-1].poll() is not None:
+                    raise SystemExit(f"{m} exited with {procs[-1].returncode} (out of memory? see docs/t3_system1.md, Memory)")
+                try:
+                    req = urllib.request.Request(f"http://{host}:{port}/v1/models", headers={"Authorization": f"Bearer {env['VLLM_API_KEY']}"})
+                    if urllib.request.urlopen(req, timeout=5).status == 200:  # noqa: S310 - loopback / tailnet only (check_host)
+                        break
+                except OSError:
+                    pass
+                if time.time() - t0 > 1800:
+                    raise SystemExit(f"{m} did not come up in 30 min")
+                time.sleep(5)
+            print(f"# {m} up after {time.time() - t0:.0f}s", flush=True)
+        for p in procs:
+            p.wait()
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.terminate()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--model", default="qwen3-8b", help="profile in configs/llm/serving.yaml")
@@ -209,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--config", type=Path, default=CONFIG)
     ap.add_argument("--sweep-config", type=Path, default=SWEEP_CONFIG, help="E18 sweep config holding GGUF profiles")
+    ap.add_argument("--dual", default=None, metavar="NAME",
+                    help="serve a set of profiles as separate vLLM processes on one card (serving.yaml `dual:`), started in order, each "
+                         "once the previous answers /models; each profile has its own port")
     ap.add_argument("--dry-run", action="store_true", help="print the command and exit")
     ap.add_argument("--gen-key", action="store_true", help=f"write a new {KEY_VAR} to .env if absent, then exit")
     a = ap.parse_args(argv)
@@ -219,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(a.config)
     host = check_host(a.host or cfg["host"])
+    if a.dual:
+        return serve_dual(cfg, a.dual, host, a.backend or ("docker" if platform.system() == "Windows" else "native"), a.dry_run)
     port = a.port or cfg["port"]
     prof = llama_profile(a.sweep_config, a.model)  # an E18 llama.cpp candidate wins over a same-named vLLM profile
     if prof is not None and prof.get("stack") != LLAMA_STACK:

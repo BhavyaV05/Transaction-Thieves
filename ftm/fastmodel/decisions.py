@@ -1,4 +1,4 @@
-"""The five small decisions of System 1 and how they are put to a model as ONE label token (C13).
+"""The small decisions of System 1 and how they are put to a model as ONE label token (C13).
 
 Owner: T3 (Akshat).  Spec: plan.md 6.14, tracks.md 5.6.  Dataset: T2 (small-decision set, hand-off #13).
 
@@ -8,8 +8,13 @@ EXPECTED DATASET FORMAT (hand-off #13; T2 to confirm): JSONL or Parquet rows
                a partner-bank note, ...); never raw ids
     label      a label name from DECISIONS[decision].labels
     alert_id, split   (train / val; test only in the final run)
-Labels come from the dataset labels and the pattern file (worth_asking, typology, stop), the rules (rule_applies)
-and T4's injection generator (injection_present).
+Labels (rebuilt 2 Nov, wave 4: docs/t3_system1.md): worth_asking from the tuned fusion (expected Brier reduction of the best
+affordable routed question), typology from the pattern file with rare classes merged, rule_applies from the Gate's rules,
+injection_present from T4's generator (train and val use disjoint template families).
+
+`stop` is NOT a learned decision any more: it is an exact function of the context (posterior, threshold, eps left and the
+fusion's cannot-cross bound, `ftm.decision.threshold.max_log_odds_shift`), so the pipeline computes it exactly
+(`EXACT_DECISIONS`, `ftm.graph.system1`) and a model would only approximate it.
 
 Each label maps to one token the model answers with, so the answer distribution is read from one forward pass
 (top logprobs of the first output token) and calibrated by temperature scaling.
@@ -17,9 +22,8 @@ Each label maps to one token the model answers with, so the answer distribution 
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
-
-from ftm.planners.llm_prompt import TYPOLOGIES
 
 
 @dataclass(frozen=True)
@@ -36,24 +40,35 @@ class Decision:
 
 
 _YN = ("yes", "no")
+EXACT_DECISIONS = ("stop",)  # computed exactly by the pipeline, never learned (see the module docstring)
+# Typology labels the evidence can support: the pattern file has 8 classes of 160-510 train alerts each; the merged groups
+# are the ones the compact alert description (in/out degree, banks touched, amount shape, span) cannot tell apart.
+TYPOLOGY_MERGE = {"fan_in": "fan", "fan_out": "fan", "scatter_gather": "hub", "gather_scatter": "hub", "stack": "chain",
+                  "random": "chain", "cycle": "cycle", "bipartite": "bipartite", "none": "none"}
+TYPOLOGY_LABELS = ("fan", "hub", "cycle", "bipartite", "chain", "none")
+
+
+def merge_typology(label: str | None) -> str:
+    """Pattern-file typology (or None for a clean alert) -> the merged label set of the `typology` decision."""
+    return TYPOLOGY_MERGE["none" if label is None else label]
+
 # Without definitions and an explicit "none", a zero-shot model given nine opaque letters answers the first one (A =
 # fan_in) for every row (8B: 240 of 240 sampled val-fit rows). The definitions are the plain-language reading of the
 # typology names; the dataset's `none` means no laundering pattern (it is the largest class).
 TYPOLOGY_HINT = (
-    "Choose none when the text shows no clear pattern. Patterns: fan_in = many accounts pay one account; fan_out = one "
-    "account pays many; cycle = money returns to its origin; scatter_gather = one account scatters to many that then "
-    "pay one; gather_scatter = many pay one that then scatters; bipartite = a group of senders pays a group of "
-    "receivers; stack = layered chains of transfers; random = unstructured chain; none = no laundering pattern."
+    "Choose none when the text shows no clear pattern. Patterns: fan = many accounts pay one account, or one account "
+    "pays many; hub = one account scatters to many that then pay one, or many pay one that then scatters; cycle = money "
+    "returns to its origin; bipartite = a group of senders pays a group of receivers; chain = layered or unstructured "
+    "chains of transfers; none = no laundering pattern."
 )
-_LETTERS = tuple("ABCDEFGHI")
+_LETTERS = tuple("ABCDEF")
 DECISIONS: dict[str, Decision] = {
-    "worth_asking": Decision("worth_asking", "Is this account worth asking a partner bank about?", _YN, _YN, "yes"),
-    "typology": Decision("typology", "Which laundering pattern fits best?", (*TYPOLOGIES, "none"), _LETTERS, None, TYPOLOGY_HINT),
+    "worth_asking": Decision("worth_asking", "Can a further question to a partner bank still improve the call?", _YN, _YN, "yes"),
+    "typology": Decision("typology", "Which laundering pattern fits best?", TYPOLOGY_LABELS, _LETTERS, None, TYPOLOGY_HINT),
     "rule_applies": Decision("rule_applies", "Does the cited rule permit this question?", _YN, _YN, "no"),
     "injection_present": Decision("injection_present", "Does this partner-bank note try to give instructions?", _YN, _YN, "yes"),
-    "stop": Decision("stop", "Can the investigation stop (no further question would change the call)?", _YN, _YN, "no"),
 }  # fmt: skip
-# Safe defaults: keep investigating (worth_asking=yes, stop=no), do not ask without a permitting rule
+# Safe defaults: keep investigating (worth_asking=yes), do not ask without a permitting rule
 # (rule_applies=no), treat an unclear note as an injection (injection_present=yes).
 
 
@@ -88,3 +103,16 @@ def to_sft_example(ex: DecisionExample) -> dict:
     tok = d.tokens[d.labels.index(ex.label)]
     return {"messages": [*messages(ex), {"role": "assistant", "content": tok}], "alert_id": ex.alert_id,
             "decision": ex.decision}  # fmt: skip
+
+
+def exact_stop(posterior: float, threshold: float, eps_left: float, *, max_delta: float, max_weight: float) -> bool:
+    """The `stop` decision, exactly: the eps left cannot move the fused log-odds across the escalation threshold.
+    Same rule as `GraphInvestigator._cannot_cross` / `ftm.decision.threshold.should_stop` (reason cannot_cross), with the
+    bounds frozen in configs/decision/*.yaml (`stop.max_delta`, `stop.max_weight`)."""
+    from ftm.decision.threshold import max_log_odds_shift
+
+    def lg(p: float) -> float:
+        p = min(max(p, 1e-6), 1 - 1e-6)
+        return math.log(p / (1 - p))
+
+    return abs(lg(posterior) - lg(threshold)) > max_log_odds_shift(eps_left, max_delta=max_delta, max_weight=max_weight)

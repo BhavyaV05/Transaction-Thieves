@@ -35,4 +35,5 @@ class AlertState(TypedDict, total=False):
     strategies: list[dict]
     menu_raw: list[dict]  # routed menu items as dicts ({id, program, family, eps, ..., bank}), the prompt of our planner shows these
     menu: list
+    typology_hint: str | None  # System 1's settled pattern guess (ftm.graph.system1), shown to the planner as a hint
     refused: dict  # (canonical, bank) the gate / accountant refused -> why

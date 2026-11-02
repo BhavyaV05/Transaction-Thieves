@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from ftm.fastmodel.decisions import DECISIONS
@@ -43,6 +44,15 @@ class ConformalSet:
             self.fallback[d] = k > n
         return self
 
+    def to_dict(self) -> dict:
+        return {"alpha": self.alpha, "q": dict(self.q), "n": dict(self.n), "fallback": dict(self.fallback)}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ConformalSet:
+        c = cls(d["alpha"])
+        c.q, c.n, c.fallback = dict(d["q"]), dict(d.get("n", {})), dict(d.get("fallback", {}))
+        return c
+
     def fell_back(self, decision: str) -> bool:
         """True when this decision type has no usable calibration (unseen or too few rows): its set is the full set."""
         return self.fallback.get(decision, True)
@@ -62,17 +72,26 @@ class CascadeDecision:
 
 
 class ConformalCascade:
-    def __init__(self, fast_sets: ConformalSet, large_sets: ConformalSet):
-        self.fast_sets, self.large_sets = fast_sets, large_sets
+    """`fast_off` / `large_off`: decision types whose tier is retired (it did not beat the majority label on cal, see
+    `ftm.fastmodel.splits.calibrate_cascade`): that tier is skipped and the decision goes to the next tier."""
 
-    def decide(self, decision: str, fast_probs: dict[str, float], large_probs_fn) -> CascadeDecision:
-        """`large_probs_fn()` is only called when the fast tier defers (that is where the savings come from)."""
-        fs = self.fast_sets.predict_set(decision, fast_probs)
-        if len(fs) == 1:
-            return CascadeDecision(decision, fs[0], "fast", fs)
-        ls = self.large_sets.predict_set(decision, large_probs_fn())
-        if len(ls) == 1:
-            return CascadeDecision(decision, ls[0], "large", fs, ls)
+    def __init__(self, fast_sets: ConformalSet, large_sets: ConformalSet, fast_off: Iterable[str] = (), large_off: Iterable[str] = ()):
+        self.fast_sets, self.large_sets = fast_sets, large_sets
+        self.fast_off, self.large_off = set(fast_off), set(large_off)
+
+    def decide(self, decision: str, fast_probs: dict[str, float] | None, large_probs_fn) -> CascadeDecision:
+        """`large_probs_fn()` is only called when the fast tier defers (that is where the savings come from). `fast_probs` may be
+        None for a decision whose fast tier is retired (no need to run the fast model)."""
+        fs: list[str] = list(DECISIONS[decision].labels)
+        if decision not in self.fast_off and fast_probs is not None:
+            fs = self.fast_sets.predict_set(decision, fast_probs)
+            if len(fs) == 1:
+                return CascadeDecision(decision, fs[0], "fast", fs)
+        ls: list[str] = list(DECISIONS[decision].labels)
+        if decision not in self.large_off:
+            ls = self.large_sets.predict_set(decision, large_probs_fn())
+            if len(ls) == 1:
+                return CascadeDecision(decision, ls[0], "large", fs, ls)
         return CascadeDecision(decision, DECISIONS[decision].safe_default, "default", fs, ls)
 
 

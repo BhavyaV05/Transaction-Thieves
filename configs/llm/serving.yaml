@@ -80,6 +80,39 @@ models:
       fast-s0: models/fast_4b/seed=0/adapter
       fast-s1: models/fast_4b/seed=1/adapter
       fast-s2: models/fast_4b/seed=2/adapter
+  # --- System 1 dual serving (wave 4): Gemma 4 12B (planner + large tier) and the fast model on ONE 16 GB card, two vLLM processes ------
+  # Budget (docs/t3_system1.md section "Memory"): card 16.3 GB, desktop ~0.9-1.3 GB -> 15.0-15.4 GB usable.
+  #   gemma4-12b-dual   weights 9.6 GB + ~1.2 GB activations/context + KV 1.5 GB (fp8 KV, hybrid sliding-window cache, 2 seqs of 7k) = 12.3 GB -> 0.76
+  #   qwen3-4b-fast     weights 2.5 GB + ~0.3 GB (eager: no CUDA graphs) + KV 0.5 GB (fp8, 2048 tokens x 8 seqs) = 3.3 GB  -> 0.21
+  # Sum 0.97 of the card = 15.8 GB > 15.0-15.4 GB: it does NOT fit with a safe margin; the smoke test decides (OOM -> see the fallback).
+  # Start order matters (vLLM sizes itself from the free memory at start-up): scripts/serve_llm.py --dual system1.
+  gemma4-12b-dual:
+    repo: google/gemma-4-12B-it-qat-w4a16-ct
+    revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
+    licence: apache-2.0
+    max_model_len: 7680                    # prompt cap 6000 + evidence trim headroom + the answer; below the 8192 of the solo profile
+    gpu_memory_utilization: 0.76
+    reasoning_parser: gemma4
+    port: 8000
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}', --kv-cache-dtype, fp8, --max-num-seqs, "4"]
+  qwen3-4b-fast:                           # System 1 fast tier: AWQ Qwen3-4B + the wave-4 LoRA adapters (decisions are short: 2048 tokens)
+    repo: Qwen/Qwen3-4B-AWQ
+    revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
+    licence: apache-2.0
+    role: decision                         # one-token decisions: a short context is enough (tests/test_serving.py)
+    max_model_len: 2048
+    gpu_memory_utilization: 0.21
+    reasoning_parser: qwen3
+    port: 8001
+    max_lora_rank: 16
+    lora_modules:
+      fast3-s0: models/fast_4b_s1v1/seed=0/adapter
+      fast3-s1: models/fast_4b_s1v1/seed=1/adapter
+      fast3-s2: models/fast_4b_s1v1/seed=2/adapter
+      fast3soft-s0: models/fast_4b_s1v1_soft/seed=0/adapter   # calibration-as-objective arm (configs/llm/sft_fast_soft.yaml)
+      fast3soft-s1: models/fast_4b_s1v1_soft/seed=1/adapter
+      fast3soft-s2: models/fast_4b_s1v1_soft/seed=2/adapter
+    extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8"]
   qwen3-1.7b:                              # E10 small general-LLM baseline (untuned, bf16: small enough not to need a quantised build)
     repo: Qwen/Qwen3-1.7B
     revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
@@ -121,3 +154,7 @@ models:
     max_model_len: 8192
     gpu_memory_utilization: 0.85           # 9.1 GB of AWQ weights
     reasoning_parser: null
+
+# Profiles served together as two processes (scripts/serve_llm.py --dual NAME); order = start order.
+dual:
+  system1: [gemma4-12b-dual, qwen3-4b-fast]
