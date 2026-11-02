@@ -91,7 +91,13 @@ def train_soft(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> P
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     import torch
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Trainer, TrainingArguments
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+        Trainer,
+        TrainingArguments,
+    )
 
     from ftm.fastmodel.decisions import DECISIONS
     from ftm.fastmodel.softloss import label_distribution_loss
@@ -246,11 +252,10 @@ def cmd_fast_data(a) -> int:
     """T2's small-decision TRAIN rows -> chat examples (`to_sft_example`: the assistant turn is one label token)."""
     from collections import Counter
 
-    from ftm.fastmodel.decisions import DECISIONS, DecisionExample, to_sft_example
-
     import numpy as np
 
     from ftm.fastmodel.calibration import softmax_t
+    from ftm.fastmodel.decisions import DECISIONS, DecisionExample, to_sft_example
     from ftm.fastmodel.softloss import soft_target
 
     n, by, dropped, row_i = 0, Counter(), Counter(), 0

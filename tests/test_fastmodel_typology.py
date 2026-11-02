@@ -2,9 +2,14 @@
 
 import numpy as np
 
-from ftm.fastmodel.decisions import DECISIONS, DecisionExample, messages, to_sft_example
+from ftm.fastmodel.decisions import (
+    DECISIONS,
+    TYPOLOGY_LABELS,
+    DecisionExample,
+    messages,
+    to_sft_example,
+)
 from ftm.fastmodel.model import label_logps
-from ftm.fastmodel.decisions import TYPOLOGY_LABELS
 
 
 def test_typology_prompt_defines_every_label_and_offers_none():

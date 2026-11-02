@@ -153,7 +153,7 @@ def test_note_screen_quarantines_a_flagged_note_and_keeps_a_clean_one():
 
 
 def test_typology_hint_reaches_the_planner_view_only_when_settled_and_not_none():
-    letters = {l: t for l, t in zip("ABCDEF", DECISIONS["typology"].labels, strict=True)}
+    letters = {k: t for k, t in zip("ABCDEF", DECISIONS["typology"].labels, strict=True)}
     assert letters["A"] == "fan"
     g, pol = investigator(System1(frozen(), FakeTier(answer("yes")), FakeTier(answer("yes")), functions=("typology",)))
     run(g)
