@@ -69,10 +69,10 @@ accuracy / F1 as the task defines; multiclass Brier (sum over classes of squared
 bins, 15 bins, `ftm/fastmodel/calibration.top_label_ece` style but equal-mass); **option-order bias**: the label order shown to the model is permuted
 with 3 fixed random permutations (seeds 11, 12, 13; the canonical order is permutation 0); reported = accuracy under each permutation, the range
 (max - min) and the mean total-variation distance between the canonical distribution and the permuted one realigned to the canonical labels; for
-tasks with more than 26 options the permutation arms use a fixed 1,000-item subsample (seed 0) to bound the cost; **latency** per decision
+tasks with more than 26 options the permutation arms use a fixed 1,000-item subsample (seed 0) to bound the cost, and unfair_tos (8 decisions per clause) a fixed 400-clause subsample; a yes/no task is produced in the production word format ("yes or no") and its order arms use the lettered format (A = yes, B = no, and the swap), so the reference for its order bias is the lettered identity arm; **latency** per decision
 (median and p90 wall seconds of the decision, including all passes of a two-stage decision, one request at a time).
-Calibration: raw (T = 1) and temperature-scaled with ONE scalar T per task fitted on the benchmark's own validation split (banking77: a
-500-item subsample of train; toxic-chat: 500 train items; unfair_tos / hwu64 / clinc / sst2: their validation split, capped at 500).  The
+Calibration: raw (T = 1) and temperature-scaled with ONE scalar T per task fitted on the benchmark's own validation split (banking77, toxic-chat, sst2: a
+500-item subsample of the train split, seed 0; unfair_tos / hwu64 / clinc: their validation split, capped at 500 items per decision).  The
 test split never enters the fit.
 
 ### 2.4 Models for Part A
@@ -118,17 +118,16 @@ plays no part in the choice).
    single label for every row (constant prediction), or (ii) its argmax accuracy does not exceed the accuracy of always predicting the pooled-fit majority label by more than
    0.01 AND its multiclass Brier is not below the Brier of the fit label prior (majority-only / no skill), or (iii) the share of rows on which the
    predicted label is the majority label is >= 0.99 when the majority share of the truth is < 0.9.  A candidate collapsed on any decision is *ineligible* as the System 1 and is reported as such;
-   (this is the same idea as the cascade's retirement rule of `docs/t3_system1.md` section 3).  Where System 1 itself is collapsed on a decision, the cascade retires the fast tier for that decision; the candidate stays eligible only
-   if the retirement is reported (the rule is applied per decision for the cascade, per candidate for this selection).
+   (the same idea as the cascade's retirement rule of `docs/t3_system1.md` section 3).  A decision on which EVERY candidate is collapsed has no candidate to
+   select: it is excluded from eligibility and from the macro criterion below, listed as "no candidate has skill", and the cascade retires the fast tier for it.
 2. **Primary criterion: macro Brier.**  For each eligible candidate: the multiclass Brier of its calibrated probabilities (the candidate's own output for
-   the open models; its own output after its frozen temperature for System 1), averaged with equal weight over the four decisions.  Candidates are ordered by it.  Let S be the lowest.
+   the open models; its own output after its frozen temperature for System 1), averaged with equal weight over the decisions that survive step 1.  Candidates are ordered by it.  Let S be the lowest.
    Paired cluster bootstrap (`ftm/eval/bootstrap.py`-style, clusters = alert_id, 2,000 resamples, seed 0, 95% percentile CI) of
    `Brier(c) - Brier(S)`: candidate c is *tied with S on Brier* iff the CI contains 0.  The tied set T always contains S.
 3. **Within T: lowest macro ECE** (equal-mass, 10 bins).  Candidates whose ECE is within 0.005 of the lowest are tied again.
-4. **Then lowest latency per decision** (median seconds, same hardware; CPU-only candidates are compared to the others on their own hardware
-   and the hardware is stated, but a candidate that cannot meet the 17 ms - 100 ms operating point of the cascade is not preferred over one that can).
+4. **Then lowest latency per decision** (median seconds, one request at a time; the hardware behind each number is stated in the table, and exact ties only).
 5. **Ties -> the smaller model** (fewer parameters).
-The selected candidate is written to `outputs/s1bench/selection.json` by `scripts/s1bench_select.py` from fit+cal files only, and the eval report is built from that file.
+The selected candidate is written to `outputs/s1bench/selection.json` by `scripts/s1bench_partb.py select` from fit+cal files only, and the eval report is built from that file.
 Headline contrast on eval (reported once, per decision, Holm within the family of {chosen vs each other candidate} x {4 decisions}): paired cluster-bootstrap CIs
 of the Brier difference, plus accuracy vs the fit majority, ECE, log loss, latency and (for System 1) the cascade kept-fast share.
 The fine-tuned open model competes in the same rule; it is created only after the zero-shot fit+cal table exists and its training data is the train split only.
