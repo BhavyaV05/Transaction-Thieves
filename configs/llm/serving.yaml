@@ -53,9 +53,11 @@ models:
     revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
     licence: apache-2.0
     max_model_len: 8192
-    gpu_memory_utilization: 0.84           # was 0.88: OOM in a thinking-arm prefill (26 Oct, 15.8 GB peak beside the desktop); KV cache only
+    gpu_memory_utilization: 0.86           # was 0.88 (OOM in a thinking-arm prefill, 26 Oct), then 0.84; 0.86 = vLLM 0.31's own advice to keep the pre-0.21 KV size
     reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
-    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory
+    # text only: no vision/audio encoder memory. fp8 KV (2 Nov): at bf16 KV the cache held 13,974 tokens = 1.7 requests of 8,192, so concurrency 4
+    # ran ~2 at a time; fp8 roughly doubles it (planner prompts share a ~3k-token cached prefix). Same setting as the dual-serve profile.
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}', --kv-cache-dtype, fp8, --max-num-seqs, "8"]
   qwen3-8b-lora:                           # E16 (planner QLoRA): the AWQ Qwen3-8B above with LoRA enabled. Served alone it is the "same model
     repo: Qwen/Qwen3-8B-AWQ                #  prompted" arm; the adapters (trained as QLoRA on the bf16 base) are addressed by name in `model`.
     revision: 4da05a8edb55c6046cce958586c33b61da07bb79   # vLLM 0.31.0 has no bitsandbytes quantisation, so the bf16 base cannot be served 4-bit

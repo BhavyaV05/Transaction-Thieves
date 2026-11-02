@@ -41,7 +41,7 @@ def test_decision_threshold_and_profiles():
     with pytest.raises(ValueError):
         load_profile("bogus")
     t = load_profile("tuned")
-    assert t["p0_variant"] == "v2" and t["edge_scorer"] == "v2" and t["backtest_mode"] == "realistic" and t["concurrency"] == 4
+    assert t["p0_variant"] == "v2" and t["edge_scorer"] == "v2" and t["backtest_mode"] == "realistic" and t["concurrency"] == 8
     for k in ("backtest", "fusion_params", "decision"):
         assert (ROOT / t[k]).exists()
 
@@ -59,7 +59,7 @@ def test_run_llm_agent_defaults_to_the_production_profile(tmp_path, monkeypatch)
     mod.main(["--system", "planner", "--n", "3", "--toolbox", "harness", "--out", str(out), "--run-id", "r", "--synthetic-labels"])
     s = json.loads((out / "r/summary.json").read_text())
     assert s["profile"] == "tuned" and s["fusion"] == "ConditionalLR" and s["threshold"] == pytest.approx(0.322699)
-    assert s["stop_cannot_cross"] and s["evidence_view"] == "scorer_pcst" and s["edge_scorer"] == "v2" and s["concurrency"]["concurrency"] == 4
+    assert s["stop_cannot_cross"] and s["evidence_view"] == "scorer_pcst" and s["edge_scorer"] == "v2" and s["concurrency"]["concurrency"] == 8
     # the naive fusion is reached only by naming it
     mod.main(["--system", "planner", "--n", "2", "--toolbox", "harness", "--out", str(out), "--run-id", "n", "--fusion", "naive", "--synthetic-labels"])
     assert json.loads((out / "n/summary.json").read_text())["fusion"] == "NaiveLRFusion"
