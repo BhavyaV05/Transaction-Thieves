@@ -20,7 +20,7 @@ import numpy as np
 from ftm.fastmodel.calibration import fit_temperature, softmax_t, top_label_ece
 from ftm.fastmodel.cascade import ConformalCascade, ConformalSet, evaluate
 from ftm.fastmodel.decisions import DECISIONS, DecisionExample
-from ftm.fastmodel.model import FastModel, LogprobFastModel
+from ftm.fastmodel.model import LogprobFastModel
 
 PARTS = ("fit", "cal", "eval")
 

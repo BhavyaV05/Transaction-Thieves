@@ -432,6 +432,14 @@ def _main(argv: list[str] | None = None) -> int:
                     help="decision config (configs/decision/*.yaml): its `threshold` goes to the planner (prompt hint) and the cannot_cross "
                          "stop. Default: the profile's")
     ap.add_argument("--no-cannot-cross", action="store_true", help="do not stop an alert whose posterior the remaining eps cannot move across the threshold")
+    ap.add_argument("--system1", type=Path, default=None,
+                    help="frozen System 1 file (scripts/score_fast_baseline.py report --freeze): the fast model + conformal cascade answers worth_asking "
+                         "before each planner step, screens partner-bank notes and hints the typology (docs/t3_system1.md). Off by default; needs --llm endpoint")
+    ap.add_argument("--system1-endpoint", default=None, help="OpenAI-compatible URL of the FAST server (Qwen3-4B + LoRA); default: FTM_FAST_ENDPOINT")
+    ap.add_argument("--system1-model", default=None, help="served name of the fast model (default: served_model of the frozen file)")
+    ap.add_argument("--system1-functions", default="worth,inject,typology", help="subset of worth,inject,typology (ablation arms: one each)")
+    ap.add_argument("--system1-tiers", choices=["cascade", "fast"], default="cascade",
+                    help="cascade: fast, then the backbone server as the large tier, then the safe default; fast: no large tier (ablation)")
     ap.add_argument("--p0-variant", choices=["v1", "v2"], default=None,
                     help="p0 column of the alert table: v1 or v2 (recalibrated, data/alerts/<data>_v2). Default: FTM_P0_VARIANT, else v1")
     ap.add_argument("--concurrency", type=int, default=None,
@@ -579,6 +587,24 @@ def _main(argv: list[str] | None = None) -> int:
         return {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
                                                 **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
 
+    s1 = None
+    if a.system1 is not None:
+        from ftm.graph.system1 import System1, attach
+
+        if a.llm != "endpoint":
+            ap.error("--system1 needs --llm endpoint: both tiers are real served models (no mock System 1)")
+        frozen = json.loads(a.system1.read_text(encoding="utf-8"))
+        fast_client = HttpChatClient.from_env(endpoint=a.system1_endpoint or os.environ.get("FTM_FAST_ENDPOINT"),
+                                              model=a.system1_model or frozen["served_model"])
+        s1 = System1(frozen, fast_client, llm, functions=tuple(x for x in a.system1_functions.split(",") if x), tiers=a.system1_tiers,
+                     threshold=threshold if threshold is not None else 0.3227)
+        _build_plain = build_system
+
+        def build_system():  # noqa: F811 - every worker's investigator gets the same (thread-safe) System 1
+            sys_ = _build_plain()
+            attach(sys_, s1)
+            return sys_
+
     system = build_system()
     system_name = system.system_name if a.system == "planner" or a.system in ADAPTED_SYSTEMS else a.system
     tools, variant = make_toolbox(a.toolbox, a.seed, a.data, a.alerts, a.eps_per_alert, a.no_noise)
@@ -660,6 +686,13 @@ def _main(argv: list[str] | None = None) -> int:
         merged = PlannerStats.merged([w.system.stats for w in workers])
         merged.seconds_per_alert = seconds
         system.stats = merged
+    if s1 is not None:  # per-alert System 1 counters + every decision (H5: tier shares, realised error, savings)
+        for r in per_alert:
+            recs = s1.alert_records(r["alert_id"])
+            r.update(s1_decisions=len(recs), s1_seconds=sum(x["seconds"] for x in recs),
+                     s1_not_worth=sum(x["decision"] == "worth_asking" and x["label"] == "no" and x["tier"] != "default" for x in recs),
+                     s1_quarantined=sum(bool(x.get("quarantined")) for x in recs))
+        (out / "system1.jsonl").write_text("".join(json.dumps(x) + "\n" for x in s1.records), encoding="utf-8")
     (out / "per_alert.jsonl").write_text("".join(json.dumps(r) + "\n" for r in per_alert))  # E18 reads this
     df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
@@ -692,6 +725,9 @@ def _main(argv: list[str] | None = None) -> int:
 
         summary["harness_version"] = HARNESS_VERSION
     summary["fusion"] = type(fusion).__name__
+    summary["system1"] = None if s1 is None else {"frozen": str(a.system1), "frozen_sha256": hashlib.sha256(a.system1.read_bytes()).hexdigest(),
+                                                  "functions": list(s1.functions), "tiers": s1.tiers, "decisions": len(s1.records),
+                                                  "fast_model": a.system1_model or frozen["served_model"], "large_model": model}
     summary["backtest"] = bt.summary() if bt else None
     if only_ids is not None:
         summary["askable_alerts_in_world"] = len(only_ids)

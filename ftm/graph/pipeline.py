@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -40,7 +40,7 @@ from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, Naiv
 from ftm.llm.routing import NO_BANK, asked_bank, expected_bank
 from ftm.planners.llm_dsl import DslAdapter, DslCheck, V0Dsl
 from ftm.planners.llm_prompt import EPS_LEVELS
-from ftm.types import AlertContext, Limits, QuestionLogEntry, Verdict
+from ftm.types import AlertContext, Limits, QuestionLogEntry, Reply, Verdict
 
 EvidenceFn = Callable[[AlertContext, ToolBox], str]
 QuestionFilter = Callable[[dict, AlertContext], bool]  # does this listed question apply to this alert (slot binding)?
@@ -126,6 +126,13 @@ class GraphInvestigator:
         self.stop_cannot_cross = stop_cannot_cross
         self.last_trace: list[dict] = []
         self.last_state: AlertState | None = None
+        self.system1 = None  # ftm.graph.system1.System1, off by default (set_system1)
+        self.graph = self._build()
+
+    def set_system1(self, s1) -> None:
+        """Wire System 1 into the graph (node `system1` between `check` and `plan`, note screening in `act`, the typology hint in
+        `prepare`). The graph is rebuilt; with System 1 off it is byte-for-byte the old topology."""
+        self.system1 = s1
         self.graph = self._build()
 
     @property
@@ -140,7 +147,12 @@ class GraphInvestigator:
             g.add_node(name, fn)
         g.add_edge(START, "prepare")
         g.add_edge("prepare", "check")
-        g.add_conditional_edges("check", lambda s: "decide" if s.get("stop_reason") else "plan", {"decide": "decide", "plan": "plan"})
+        if self.system1 is not None and self.system1.enabled("worth"):  # worth_asking gate before every planner step
+            g.add_node("system1", self._system1)
+            g.add_conditional_edges("check", lambda s: "decide" if s.get("stop_reason") else "system1", {"decide": "decide", "system1": "system1"})
+            g.add_conditional_edges("system1", lambda s: "decide" if s.get("stop_reason") else "plan", {"decide": "decide", "plan": "plan"})
+        else:
+            g.add_conditional_edges("check", lambda s: "decide" if s.get("stop_reason") else "plan", {"decide": "decide", "plan": "plan"})
         g.add_conditional_edges("plan", self._after_plan, {"decide": "decide", "act": "act", "check": "check"})
         g.add_edge("act", "fuse")
         g.add_edge("fuse", "check")
@@ -155,7 +167,9 @@ class GraphInvestigator:
         out = self.graph.invoke({"alert": alert, "tools": tools, "limits": limits, "scratch": {}},
                                 {"recursion_limit": RECURSION_LIMIT})
         self.last_state = out
-        self.last_trace = out["scratch"].get("trace", [])
+        self.last_trace = list(out["scratch"].get("trace", []))
+        if self.system1 is not None:  # every System 1 decision of this alert goes into the trace (H5)
+            self.last_trace += [{"event": "system1", **r} for r in self.system1.alert_records(alert.alert_id)]
         return out["verdict"]
 
     # -- nodes ----------------------------------------------------------------------------------------------------
@@ -168,7 +182,10 @@ class GraphInvestigator:
         if self.use_rules:
             for r in tools.lookup_rules(rules_query(alert, _gate_of(tools)))[:5]:
                 rules.append({"rule_id": str(r.get("rule_id")), "text": str(r.get("text") or r.get("snippet", ""))[:300]})
-        strategies = library_strategies(alert, tools, None) if self.use_library else []
+        hint = None
+        if self.system1 is not None and self.system1.enabled("typology"):
+            hint = self.system1.typology_hint(alert.summary, alert.p0, alert_id=alert.alert_id)
+        strategies = library_strategies(alert, tools, hint) if self.use_library else []
         menu_raw = []
         for q in self.questions:
             if self.question_filter is not None and not self.question_filter(q, alert):
@@ -178,7 +195,8 @@ class GraphInvestigator:
                 menu_raw.append({**q, "bank": bank} if bank is not None else q)
         return {"session": session, "budget": budget, "evidence": evidence, "rules": rules, "strategies": strategies,
                 "menu_raw": menu_raw, "menu": self._menu(menu_raw), "refused": {}, "step": 0, "failures": 0,
-                "stop_reason": None, "pending": [], "results": [], "log": session.log, "posterior": session.posterior}  # fmt: skip
+                "stop_reason": None, "pending": [], "results": [], "log": session.log, "posterior": session.posterior,
+                "typology_hint": hint}  # fmt: skip
 
     def _menu(self, menu_raw: list[dict]) -> list[MenuItem]:
         table = getattr(self.fusion, "table", None)
@@ -200,6 +218,8 @@ class GraphInvestigator:
             answers.append({"program": e.program, "bank": e.bank, "eps": e.eps, "outcome": outcome(e), "step": e.step,
                             "value": getattr(r, "value", None), "lr": lr})  # fmt: skip
         summary = {"home_bank": alert.home_bank, **{k: v for k, v in alert.summary.items() if k not in SUMMARY_HIDDEN}}
+        if s.get("typology_hint"):  # System 1, settled by its cascade; a hint, not a fact (the planner may disagree)
+            summary["system1_typology_hint"] = s["typology_hint"]
         return PlannerView(alert_summary=summary, p0=alert.p0, posterior=session.posterior, threshold=self.threshold,
                            evidence=s["evidence"], rules=s["rules"], strategies=s["strategies"], menu=s["menu"], answers=answers,
                            eps_left=session.eps_left, calls_left=budget.calls_left, step=s["step"],
@@ -235,6 +255,30 @@ class GraphInvestigator:
         elif self.stop_cannot_cross and self._cannot_cross(s):
             reason = "cannot_cross"
         return {"stop_reason": reason}
+
+    def _system1(self, s: AlertState) -> dict:
+        """worth_asking before the planner step: settled "no" stops the investigation without an LLM call. Unsure -> the
+        large tier -> the safe default "yes" (go on and plan)."""
+        s1, alert, session = self.system1, s["alert"], s["session"]
+        fam = {m.canonical: m.family for m in s["menu"]}
+        lr_of = getattr(self.fusion, "_lr", lambda _e: None)
+        answers = [{"program": e.program, "family": fam.get(e.program) or family_of(e.program), "value": e.response.value, "lr": lr_of(e)}
+                   for e in session.log if isinstance(e.response, Reply)]  # fmt: skip
+        thr = self.threshold if self.threshold is not None else s1.threshold
+        d = s1.worth_asking(alert.summary, alert.p0, session.posterior, session.eps_left, answers, s["menu"], threshold=thr,
+                            alert_id=alert.alert_id, step=s["step"] + 1)
+        return {"stop_reason": "system1_not_worth_asking"} if d.label == "no" and d.settled else {}
+
+    def _screen(self, s: AlertState, results: list) -> None:
+        """injection_present on every new reply note: quarantine (drop the note from the log) unless settled "no"."""
+        s1 = self.system1
+        for r in results:
+            e = r.entry
+            if e is None or not isinstance(e.response, Reply) or not e.response.note:
+                continue
+            quarantine, _ = s1.screen_note(e.bank, e.response.note, alert_id=s["alert"].alert_id, step=s["step"])
+            if quarantine:
+                e.response = replace(e.response, note=None)
 
     def _plan(self, s: AlertState) -> dict:
         step = s["step"] + 1
@@ -322,6 +366,8 @@ class GraphInvestigator:
                 r.entry = session.ask(r.bank, r.check, r.eps, step)
             except DuplicateQuestion as e:
                 r.duplicate = e
+        if self.system1 is not None and self.system1.enabled("inject"):
+            self._screen(s, results)
         any_allowed, why_last = False, None
         for r in results:
             if r.entry is None:
