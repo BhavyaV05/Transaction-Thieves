@@ -255,6 +255,8 @@ def h5(res: dict, s1: list[dict], offline: dict | None) -> list[dict]:
 
 
 def cmd_report(a) -> int:
+    if a.part == "eval" and a.selection is None:
+        raise SystemExit("--part eval needs --selection (the file written by the fitcal report): eval is read once, with the rule fixed")
     parse = lambda spec: (spec.split("=", 1)[0], [Path(x) for x in spec.split("=", 1)[1].split(",")])  # noqa: E731
     name, dirs = parse(a.off)
     arms = {"off": load_arm(dirs)}
