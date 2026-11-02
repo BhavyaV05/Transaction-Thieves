@@ -252,6 +252,8 @@ def _section(title: str, body: str) -> str:
 
 
 def _question_line(q: dict, show_lr: bool) -> str:
+    if q.get("compact") and show_lr:  # ranked top-K under the prompt budget: one line per question, its (eps: bin -> LR) maps
+        return f"{q['id']} [{q.get('family', '')}]: {q['program']}  | bank {q['bank']}  | {q['lr_text']}"
     line = f"{q['id']} [{q.get('family', '')}]: {q['program']}"
     if q.get("bank") is not None:
         line += f"  | ask bank {q['bank']}"
@@ -268,6 +270,9 @@ def _question_menu(mode: Mode, questions: list[dict]) -> tuple[str, str]:
     if not backtested:
         return "Listed questions (select by id)", "\n".join(_question_line(q, False) for q in questions)
     show_lr = mode.shows_posterior
+    if show_lr and any(q.get("compact") for q in questions):
+        return "Back-tested questions (select by id, or compose a new one)", COMPACT_MENU_INTRO + "\n" + "\n".join(
+            _question_line(q, True) for q in questions)
     title = "Back-tested questions (select by id, or compose a new one)"
     intro = ("These passed back-testing: their answers move the probability of laundering. Ask each of the bank shown and at "
              "one of the eps levels shown (its LR was measured for that bank and level; the bank is filled in for you). The eps "
@@ -275,6 +280,15 @@ def _question_menu(mode: Mode, questions: list[dict]) -> tuple[str, str]:
              + (" LR = factor on the odds of laundering for that answer, for the whole table of answers shown; LRs are marginal "
                 "(measured for the question alone, not given your other answers)." if show_lr else ""))
     return title, intro + "\n" + "\n".join(_question_line(q, show_lr) for q in questions)
+
+
+COMPACT_MENU_INTRO = (
+    "The questions whose answers are expected to improve the call most now, best first (the others were dropped: asked already, "
+    "unaffordable, or expected not to help). Ask each of the bank shown and at one of the eps levels shown (its LR was measured for "
+    "that bank and level; the bank is filled in for you); the eps left is shared by all your questions. After 'eps e:' come the "
+    "answers with their LR, the factor on the odds of laundering (LR > 1 raises them, marginal LRs): yes/no, or for a number the "
+    "LOWER edge of each bin up to the next edge ('<1' = below 1), or the category. Answers to other questions are logged but do "
+    "not move the probability.")
 
 
 def _answers_text(answers: list[AnswerSoFar], mode: Mode = Mode.COMPOSE) -> str:
@@ -340,23 +354,27 @@ RULES_KEEP = 5  # the trimmer never cuts the rules below the default top 5 (it r
 
 
 def build_messages(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int,
-                   token_scale: float = 1.0) -> list[dict]:
+                   token_scale: float = 1.0, min_evidence_rows: int = 0) -> list[dict]:
     """The chat messages for one step, trimmed to fit `max_prompt_tokens` (Limits.max_tokens).
 
     Trimming order when over the cap: oldest evidence rows first, then strategies, then the question list tail.
     """
-    return build_messages_with_estimate(mode, state, dsl, max_prompt_tokens, token_scale)[0]
+    return build_messages_with_estimate(mode, state, dsl, max_prompt_tokens, token_scale, None, min_evidence_rows)[0]
 
 
 def build_messages_with_estimate(mode: Mode, state: PlannerState, dsl: DslAdapter, max_prompt_tokens: int,
-                                 token_scale: float = 1.0, report: dict | None = None) -> tuple[list[dict], int]:
+                                 token_scale: float = 1.0, report: dict | None = None, min_evidence_rows: int = 0
+                                 ) -> tuple[list[dict], int]:
     """`build_messages` plus the unscaled token estimate of what it returns. `token_scale` multiplies the estimate in
     the trim loop: the planner sets it to (server count / estimate) after the server counts a prompt over the cap, since
     the estimate is fitted on Qwen tokenizers and Gemma 4 counts about 5% more (docs/t3_e8.md).
     Rules beyond the first RULES_KEEP (the `--rules whole` arm offers the whole corpus) are cut from the tail (the citable rules
     head the list) only when nothing else is left to cut, so the whole corpus displaces evidence rows and menu questions
     first. `report`, if given, receives what the prompt kept: rules_offered/kept, questions_offered/kept, evidence_rows (the
-    caller must then cite only the kept rules)."""
+    caller must then cite only the kept rules).
+    `min_evidence_rows` (profile tuned): the newest this-many evidence rows are protected; strategies, menu questions and surplus
+    rules are cut first, and only when nothing else is left to cut does the trail go below that floor (`report["evidence_floor_broken"]`).
+    0 = the legacy order (oldest evidence rows first, down to one)."""
     evidence = state.evidence_text.splitlines()
     rules = list(state.rules)
     strategies = list(state.strategies)
@@ -395,23 +413,32 @@ def build_messages_with_estimate(mode: Mode, state: PlannerState, dsl: DslAdapte
     def tokens() -> int:
         return estimate_messages(msgs) + math.ceil(sum(len(r) + 1 for r in evidence) * EVIDENCE_EXTRA_TOKENS_PER_CHAR)
 
+    def drop_oldest_evidence(floor: int) -> list[str]:
+        out = evidence[max(1, len(evidence) // 8):]  # drop the oldest ~1/8, keep the newest
+        out = out if len(out) >= floor else evidence[-floor:]
+        out[0] = "(older evidence rows omitted to fit the prompt cap)\n" + out[0]
+        return out
+
+    protect = max(1, min_evidence_rows)
     msgs = render()
     while math.ceil(token_scale * tokens()) > max_prompt_tokens:
-        if len(evidence) > 1:
-            evidence = evidence[max(1, len(evidence) // 8):]  # drop the oldest ~1/8, keep the newest
-            evidence[0] = "(older evidence rows omitted to fit the prompt cap)\n" + evidence[0]
+        if len(evidence) > protect:
+            evidence = drop_oldest_evidence(protect)
         elif strategies:
             strategies.pop()
         elif len(questions) > 1:
             questions.pop()
         elif len(rules) > RULES_KEEP:
             rules.pop()  # only the surplus beyond the default top 5 (the `--rules whole` arm), and only after everything else is cut
+        elif len(evidence) > 1:
+            evidence = drop_oldest_evidence(1)  # last resort: below the protected floor
         else:
             raise PlannerParseError(f"prompt cannot fit {max_prompt_tokens} tokens even after trimming")
         msgs = render()
     if report is not None:
         report.update(rules_offered=len(state.rules), rules_kept=len(rules), questions_offered=len(state.questions),
-                      questions_kept=len(questions), evidence_rows=len(evidence))
+                      questions_kept=len(questions), evidence_rows=len(evidence), evidence_offered=len(state.evidence_text.splitlines()),
+                      evidence_floor_broken=len(evidence) < min(min_evidence_rows, len(state.evidence_text.splitlines())))
     return msgs, tokens()
 
 
