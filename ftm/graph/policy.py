@@ -30,6 +30,8 @@ class MenuItem:  # one routed, back-tested question
     bank: str
     family: str
     lr_bins: list[tuple[str, float]]  # (answer bin label, LR)
+    p_cell: dict | None = None  # cell -> (P(cell | clean), P(cell | launder)) from the back-test table (the menu ranking needs it)
+    edges: tuple = ()  # the numeric answer's bin edges (cells b0..bn), () for yes/no and categorical answers
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,8 @@ class PlannerView:
     calls_left: int
     step: int
     allow_compose: bool  # adapted arms: False (menu only) unless the policy is ours/compose
+    menu_shown: list[MenuItem] | None = None  # the ranked top-K the prompt budget allows (ftm.graph.menu_rank), best first; None = the whole `menu`
+    menu_stats: dict | None = None  # what was offered / kept / dropped at this step (None without a budget)
 
 
 class PlannerPolicy(Protocol):

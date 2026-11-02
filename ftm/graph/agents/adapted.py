@@ -45,7 +45,8 @@ LR_EPS = 0.1  # |log LR| below this is an uninformative answer
 def options(view: PlannerView) -> list[MenuItem]:
     """Menu items still askable: not asked yet (any eps), affordable now."""
     asked = {a["program"] for a in view.answers}
-    return [m for m in view.menu if m.canonical not in asked and m.eps <= view.eps_left + 1e-9][:MAX_OPTIONS]
+    shown = view.menu if view.menu_shown is None else view.menu_shown  # ranked top-K under the prompt budget (profile tuned), else all
+    return [m for m in shown if m.canonical not in asked and m.eps <= view.eps_left + 1e-9][:MAX_OPTIONS]
 
 
 def option_text(opts: list[MenuItem]) -> str:

@@ -75,6 +75,8 @@ class LLMPlanner:
         batch_schedule: tuple[int, ...] | None = None,
         threshold: float | None = None,
         stop_cannot_cross: bool = False,
+        menu_top_k: int | None = None,
+        min_evidence_rows: int = 0,
     ):
         self.llm = llm
         self.mode = Mode(mode)
@@ -103,11 +105,13 @@ class LLMPlanner:
         self.policy = OursPolicy(mode=self.mode, dsl=self.dsl, questions=self.questions, use_library=use_library,
                                  batch_writer=batch_writer, temperature=temperature, seed=seed, extra=extra,
                                  keep_prompts=keep_prompts, max_output_tokens=max_output_tokens,
-                                 batch_schedule=self.batch_schedule, stats=self.stats)  # fmt: skip
+                                 batch_schedule=self.batch_schedule, stats=self.stats,
+                                 min_evidence_rows=min_evidence_rows)  # fmt: skip
         self.graph = GraphInvestigator(self.policy, self.fusion, llm, dsl=self.dsl, questions=list(self.questions.values()),
                                        question_filter=question_filter, evidence_fn=evidence_fn, use_rules=use_rules, rules_mode=rules_mode,
                                        use_library=use_library, threshold=threshold, max_failures_in_row=max_failures_in_row,
-                                       allow_compose=self.mode.can_compose, stop_cannot_cross=stop_cannot_cross)  # fmt: skip
+                                       allow_compose=self.mode.can_compose, stop_cannot_cross=stop_cannot_cross,
+                                       menu_top_k=menu_top_k)  # fmt: skip
 
     @property
     def system_name(self) -> str:

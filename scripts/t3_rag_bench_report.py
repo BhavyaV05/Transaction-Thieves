@@ -57,7 +57,7 @@ SERIAL_S = {"planner": 6.3, "sharma_native": 4.2, "sharma_ported": 6.2, "torres_
 PROMPT_FACTOR = {"ev_none": 1.01, "rules_whole": 1.01, "rules_none": 0.99}  # prompt tokens vs the default, 3 val fit alerts, mock LLM, tuned profile (docs/t3_rag_bench.md 4a): the 6000-token cap binds in every arm, so the prompts are within 1% of each other; planning only
 
 # capability = a regex over scripts/run_llm_agent.py (its argparse help); an arm whose flag is missing is BLOCKED, not silently dropped
-CAPS = {"evidence_none": r"--evidence-view[\s\S]{0,700}?\bnone\b", "rules": r"--rules\b", "no_exemplars": r"--no-exemplars\b"}
+CAPS = {"menu_top_k": r"--menu-top-k\b", "evidence_min": r"--evidence-min\b", "evidence_none": r"--evidence-view[\s\S]{0,700}?\bnone\b", "rules": r"--rules\b", "no_exemplars": r"--no-exemplars\b"}
 GROUP_C = ("sharma", "torres", "co_investigator")
 
 
@@ -93,6 +93,13 @@ def build_arms() -> list[ArmSpec]:
     for name, mode, note in (("rules_none", "none", "WITHOUT: no rules in the prompt"), ("rules_fixed", "fixed", "retrieved with the one fixed sentence (audit finding 15)"),
                              ("rules_whole", "whole", "the whole corpus in the prompt")):
         arms.append(ArmSpec(name, P, "rules", P, ("--rules", mode), "shape", requires="rules", prompt_factor=PROMPT_FACTOR.get(name, 1.0), note=note))
+    # prompt budget (docs/t3_prompt_budget.md): the tuned default is K=8, N=40 at cap 6,750; menu_topk_8 repeats the default's flags (a determinism check)
+    for k in ("8", "16", "all"):
+        arms.append(ArmSpec(f"menu_topk_{k}", P, "menu", P, ("--menu-top-k", k), "shape", requires="menu_top_k",
+                            note="top-%s questions by expected Brier reduction%s" % (k, " (= the profile default)" if k == "8" else "")))
+    for n in ("0", "10", "25"):
+        arms.append(ArmSpec(f"evidence_min_{n}", P, "evidence_floor", P, ("--evidence-min", n), "shape", requires="evidence_min",
+                            note="newest %s trail rows protected from the trimmer%s" % (n, " (WITHOUT: legacy order, the oldest rows go first)" if n == "0" else "")))
     arms.append(ArmSpec("lib_none", P, "library", P, library="none", note="WITHOUT: no strategy library"))
     arms.append(ArmSpec("lib_account", P, "library", P, library="account", note="account-keyed (E11 memorisation ablation) from the teacher-only account library"))
     arms.append(ArmSpec("lib_shape_rebuilt", P, "library", P, library="shape_rebuilt", note="shape library rebuilt from TRAIN teacher runs of the tuned stack (stage `library`)"))
@@ -146,9 +153,14 @@ def expected_settings(arm: ArmSpec) -> dict:
     def flag(name: str, default):
         return f[f.index(name) + 1] if name in f else default
 
-    return {"evidence_view": flag("--evidence-view", prof["evidence_view"]), "edge_scorer": flag("--edge-scorer", prof["edge_scorer"]),
-            "rules_mode": flag("--rules", "alert"),
-            "exemplars": ("none" if "--no-exemplars" in f else "retrieved") if arm.system.startswith("finfre_rag") else None}
+    out = {"evidence_view": flag("--evidence-view", prof["evidence_view"]), "edge_scorer": flag("--edge-scorer", prof["edge_scorer"]),
+           "rules_mode": flag("--rules", "alert"),
+           "exemplars": ("none" if "--no-exemplars" in f else "retrieved") if arm.system.startswith("finfre_rag") else None}
+    if "--menu-top-k" in f:  # the prompt-budget arms are verified on what the run recorded (run_llm_agent summary: menu_top_k, evidence_min)
+        out["menu_top_k"] = flag("--menu-top-k", str(prof["menu_top_k"]))
+    if "--evidence-min" in f:
+        out["evidence_min"] = int(flag("--evidence-min", prof["min_evidence_rows"]))
+    return out
 
 
 def settings_mismatch(arm: ArmSpec, loaded: Loaded) -> list[str]:
@@ -161,7 +173,7 @@ def settings_mismatch(arm: ArmSpec, loaded: Loaded) -> list[str]:
 def load_arm(root: Path, name: str, parts=("fit", "cal")) -> Loaded | None:
     """Pool the finished chunks of fit and cal (or eval): labels from per_alert.jsonl (val alerts only), no verdict = p0."""
     rows, steps, n_chunks = [], [], 0
-    settings: dict[str, set] = {k: set() for k in ("evidence_view", "edge_scorer", "rules_mode", "exemplars")}
+    settings: dict[str, set] = {k: set() for k in ("evidence_view", "edge_scorer", "rules_mode", "exemplars", "menu_top_k", "evidence_min")}
     import polars as pl
 
     for part in parts:
@@ -338,7 +350,7 @@ def winner_flags(selection: dict, arms: list[ArmSpec] | None = None) -> tuple[tu
     arms = {a.name: a for a in (arms or build_arms())}
     flags: list[str] = []
     lib = "shape"
-    for comp in ("evidence", "rules", "library"):
+    for comp in ("evidence", "rules", "library", "menu", "evidence_floor"):
         s = selection.get(f"planner/{comp}")
         if s and s["winner"] != s["default"]:
             a = arms[s["winner"]]
