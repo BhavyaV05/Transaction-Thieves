@@ -86,6 +86,21 @@ def gen_key(env_file: Path = ENV_FILE) -> bool:
     return True
 
 
+def turing_args(args: list[str], tp: int = 1) -> list[str]:
+    """Flags for a Turing GPU (sm_75, RTX 2080 Ti on the college cluster `ada`): no bf16 and no fp8 KV cache, so fp16 weights/activations and the
+    default KV dtype; optional tensor parallelism.  Repo, revision, served names, context and memory fraction stay the profile's."""
+    out, skip = [], False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+        elif a == "--kv-cache-dtype" and args[i + 1] == "fp8":
+            skip = True
+        else:
+            out.append(a)
+    out += ["--dtype", "float16"]
+    return out + (["--tensor-parallel-size", str(tp)] if tp > 1 else [])
+
+
 def vllm_args(cfg: dict, name: str, port: int, host: str | None = None) -> list[str]:
     """Arguments after `vllm serve` / the image entrypoint. Identical on every machine for a given profile."""
     if name not in cfg["models"]:
@@ -270,6 +285,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dual", default=None, metavar="NAME",
                     help="serve a set of profiles as separate vLLM processes on one card (serving.yaml `dual:`), started in order, each "
                          "once the previous answers /models; each profile has its own port")
+    ap.add_argument("--turing", action="store_true", help="sm_75 GPU (2080 Ti): fp16, default KV dtype (see turing_args)")
+    ap.add_argument("--tp", type=int, default=1, help="tensor parallel size (with --turing)")
+    ap.add_argument("--lora-only", default=None, help="comma list of adapter names to serve (the others of the profile are dropped: their directories may not exist on this machine)")
+    ap.add_argument("--gpu-util", type=float, default=None, help="override the profile's --gpu-memory-utilization (a dedicated 11 GB card, not the shared 16 GB one)")
     ap.add_argument("--dry-run", action="store_true", help="print the command and exit")
     ap.add_argument("--gen-key", action="store_true", help=f"write a new {KEY_VAR} to .env if absent, then exit")
     a = ap.parse_args(argv)
@@ -299,6 +318,17 @@ def main(argv: list[str] | None = None) -> int:
         cmd = docker_command(cfg, a.model, host, port, hf_home)
     else:
         cmd = native_command(cfg, a.model, host, port)
+    if a.turing and backend == "native":
+        cmd = ["vllm", "serve", *turing_args(vllm_args(cfg, a.model, port, host=host), a.tp)]
+    if a.lora_only and "--lora-modules" in cmd:
+        keep = set(a.lora_only.split(","))
+        i = cmd.index("--lora-modules") + 1
+        j = i
+        while j < len(cmd) and not cmd[j].startswith("--"):
+            j += 1
+        cmd[i:j] = [m for m in cmd[i:j] if m.split("=")[0] in keep]
+    if a.gpu_util and "--gpu-memory-utilization" in cmd:
+        cmd[cmd.index("--gpu-memory-utilization") + 1] = str(a.gpu_util)
 
     if platform.system() == "Windows" and Path(hf_home).drive.upper() == "C:":
         print(f"WARNING: the HF cache {hf_home} is on C:. Weights are 5-13 GB each; set FTM_HF_HOME (e.g. E:\\hf_cache)")

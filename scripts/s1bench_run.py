@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import time
@@ -35,7 +36,7 @@ from ftm.fastmodel.typed import TypedDecider  # noqa: E402
 from ftm.llm.client import HttpChatClient  # noqa: E402
 
 CFG = yaml.safe_load((ROOT / "configs" / "s1bench" / "datasets.yaml").read_text())
-PREP = Path(CFG["prepared_root"])
+PREP = Path(os.environ.get("S1BENCH_PREPARED", CFG["prepared_root"]))  # ada: the prepared data lives elsewhere
 ALL_TASKS = list(CFG["tasks"])
 
 

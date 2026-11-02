@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -61,7 +62,7 @@ def make_adapter(name: str, adapter_dir: str | None = None):
         sub = "typed-decisions" if name == "laya-typed-decisions" else None
         return ad.LayaAdapter("convaiinnovations/laya", m["revision"] if name == "laya" else MODELS["open_models"]["laya"]["revision"], sub, name, m["params_m"])
     if name == "jevk5":
-        return ad.JevK5Adapter(m["repo"], str(Path(MODELS["cache_root"]) / "ext" / "jevk5"), "cuda", name, m["params_m"])
+        return ad.JevK5Adapter(m["repo"], str(Path(os.environ.get("S1BENCH_CACHE", MODELS["cache_root"])) / "ext" / "jevk5"), "cuda", name, m["params_m"])
     if name == "tev1-4b":
         return ad.Tev1Adapter(m["repo"], m["revision"], "cuda", name, m["params_m"])
     raise SystemExit(f"{name}: no adapter ({MODELS['open_models'].get(name, {}).get('status', 'unknown model')})")

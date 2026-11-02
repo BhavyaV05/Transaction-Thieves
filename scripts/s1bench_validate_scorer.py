@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -22,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 from ftm.fastmodel.s1bench_s1mb import aggregate, score_benchmark  # noqa: E402
 
 CFG = yaml.safe_load((ROOT / "configs" / "s1bench" / "datasets.yaml").read_text())
-PREP = Path(CFG["prepared_root"])
+PREP = Path(os.environ.get("S1BENCH_PREPARED", CFG["prepared_root"]))  # ada: the prepared data lives elsewhere
 
 
 def load_lines(bid: str) -> list[dict]:
