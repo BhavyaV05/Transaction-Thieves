@@ -411,7 +411,16 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reasoning-effort", default=None, help="gpt-oss: low | medium | high (sent instead of enable_thinking)")
     ap.add_argument("--max-output-tokens", type=int, default=None,
                     help="per-step output budget (E18 thinking arm: 1024, counted in tokens_out and latency)")
-    ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens, help="Limits.max_tokens, the prompt cap")
+    ap.add_argument("--max-prompt-tokens", type=int, default=None,
+                    help=f"Limits.max_tokens, the prompt cap (default: the profile's, else {Limits.max_tokens}; tuned: what the server allows, "
+                         "docs/t3_prompt_budget.md)")
+    ap.add_argument("--menu-top-k", default=None,
+                    help="planner and adapted arms: show the K questions with the largest expected Brier reduction at the current posterior "
+                         "(drop those with gain <= 0), compact bin -> LR maps; 'all' = every positive-gain question; 'off' = the whole "
+                         "routed menu, table order (legacy). Default: the profile's")
+    ap.add_argument("--evidence-min", type=int, default=None,
+                    help="planner: the newest N evidence rows are cut last (after strategies, menu questions and surplus rules); "
+                         "0 = the legacy trimming order. Default: the profile's")
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
     ap.add_argument("--eps-per-alert", type=float, default=None,
                     help="E2 (privacy-detection curve): per-alert eps budget in Limits AND in the harness accountant "
@@ -491,8 +500,15 @@ def _main(argv: list[str] | None = None) -> int:
     conc_explicit = a.concurrency is not None
     for attr, key, fb in (("p0_variant", "p0_variant", None), ("evidence_view", "evidence_view", "amount_1hop"),
                           ("edge_scorer", "edge_scorer", None), ("k", "k", 40), ("backtest_mode", "backtest_mode", None),
-                          ("concurrency", "concurrency", 1), ("timing_sample", "timing_sample", 0)):
+                          ("concurrency", "concurrency", 1), ("timing_sample", "timing_sample", 0),
+                          ("max_prompt_tokens", "max_prompt_tokens", Limits.max_tokens), ("menu_top_k", "menu_top_k", "off"),
+                          ("evidence_min", "min_evidence_rows", 0)):
         _default(attr, key, fb)
+    if str(a.menu_top_k) not in ("off", "all") and not str(a.menu_top_k).isdigit():
+        ap.error("--menu-top-k: an integer, 'all' or 'off'")
+    menu_top_k = None if str(a.menu_top_k) == "off" else (math.inf if str(a.menu_top_k) == "all" else int(a.menu_top_k))
+    if menu_top_k == math.inf:
+        menu_top_k = 10**6
     if a.toolbox == "dev" and not conc_explicit:  # the dev toolbox draws from one shared random stream
         a.concurrency, a.timing_sample = 1, 0
     explicit_table = a.backtest is not None
@@ -591,10 +607,11 @@ def _main(argv: list[str] | None = None) -> int:
             return LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
                               question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
                               use_library=a.library is not None, rules_mode=a.rules, keep_prompts=a.keep_prompts,
-                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule, threshold=threshold, stop_cannot_cross=cannot_cross)
+                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule, threshold=threshold, stop_cannot_cross=cannot_cross,
+                              menu_top_k=menu_top_k, min_evidence_rows=a.evidence_min)
         if a.system in ADAPTED_SYSTEMS:  # the agent's control strategy as a PlannerPolicy in the system graph; verdict = fused posterior
             return adapted_system(a.system, llm, menu=menu, fusion=fusion, seed=a.seed, extra=extra, use_library=a.library is not None,
-                                  rules_mode=a.rules, program_path=a.dspy_program, threshold=threshold, stop_cannot_cross=cannot_cross,
+                                  rules_mode=a.rules, program_path=a.dspy_program, threshold=threshold, stop_cannot_cross=cannot_cross, menu_top_k=menu_top_k,
                                   question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c))  # fmt: skip
         return {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
                                                 **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
@@ -714,7 +731,7 @@ def _main(argv: list[str] | None = None) -> int:
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
                "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view, "edge_scorer": a.edge_scorer,
-               "rules_mode": a.rules, "exemplars": ("none" if a.no_exemplars else "retrieved") if a.system.startswith("finfre_rag") else None,
+               "rules_mode": a.rules, "prompt_cap": a.max_prompt_tokens, "menu_top_k": str(a.menu_top_k), "evidence_min": a.evidence_min, "exemplars": ("none" if a.no_exemplars else "retrieved") if a.system.startswith("finfre_rag") else None,
                "profile": a.profile, "decision": str(a.decision) if a.decision else None, "threshold": threshold, "stop_cannot_cross": cannot_cross,
                "p0_variant": a.p0_variant, "fusion_params": str(a.fusion_params) if a.fusion_params else None,
                "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,

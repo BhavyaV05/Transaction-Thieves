@@ -70,6 +70,7 @@ class LREntry:
     lr: dict[str, float]  # answer_key -> clipped LR
     family: str | None = None
     bins: tuple[float, ...] | None = None
+    p_cell: dict | None = field(default=None, compare=False)  # cell -> (P(cell | clean), P(cell | launder)), when the table has it
 
     def lr_for(self, value) -> float | None:
         return self.lr.get(answer_key(value, list(self.bins) if self.bins else None))
@@ -87,7 +88,8 @@ class LRTable:
     @classmethod
     def from_rows(cls, rows: Iterable[dict]) -> LRTable:
         return cls(LREntry(r["program_canonical"], float(r["eps"]), bool(r["accepted"]), dict(r["lr"]),
-                           r.get("family"), tuple(r["bins"]) if r.get("bins") else None) for r in rows)  # fmt: skip
+                           r.get("family"), tuple(r["bins"]) if r.get("bins") else None,
+                           {k: (v[0], v[1]) for k, v in r["p_cell"].items()} if r.get("p_cell") else None) for r in rows)  # fmt: skip
 
     def entries(self) -> list[LREntry]:
         return list(self._d.values())
