@@ -83,6 +83,82 @@ def render_prompt_completion(tok, messages: list[dict], enable_thinking: bool) -
     return prompt, messages[-1]["content"] + "<|im_end|>"
 
 
+def train_soft(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> Path:  # pragma: no cover - needs a GPU
+    """Fast model, calibration as the objective (ftm.fastmodel.softloss): the same QLoRA, but the loss is a proper scoring rule on the
+    FULL label distribution at the answer position (the logits of the label tokens only), against the row's soft target
+    (`soft`, written by `fast-data --soft`). cfg train.loss: soft_ce | brier. No SFTTrainer: prompts are left-padded, only the last
+    position's label-token logits are read."""
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    import torch
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, Trainer, TrainingArguments
+
+    from ftm.fastmodel.decisions import DECISIONS
+    from ftm.fastmodel.softloss import label_distribution_loss
+
+    tok = AutoTokenizer.from_pretrained(cfg["base_model"], revision=cfg["revision"], padding_side="left")
+    bnb = BitsAndBytesConfig(load_in_4bit=cfg.get("load_in_4bit", True), bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
+                             bnb_4bit_compute_dtype=torch.bfloat16)  # fmt: skip
+    model = AutoModelForCausalLM.from_pretrained(cfg["base_model"], revision=cfg["revision"], quantization_config=bnb,
+                                                 dtype=torch.bfloat16, device_map={"": 0})  # fmt: skip
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    lo = cfg["lora"]
+    model = get_peft_model(model, LoraConfig(r=lo["r"], lora_alpha=lo["alpha"], lora_dropout=lo["dropout"], bias="none",
+                                             target_modules=lo["target_modules"], task_type="CAUSAL_LM"))  # fmt: skip
+    kmax = max(len(d.labels) for d in DECISIONS.values())
+    tok_ids = {}
+    for name, d in DECISIONS.items():
+        ids = [tok.encode(t, add_special_tokens=False) for t in d.tokens]
+        if any(len(i) != 1 for i in ids):
+            raise SystemExit(f"{name}: a label token is not a single token for this tokenizer: {d.tokens}")
+        tok_ids[name] = [i[0] for i in ids]
+    feats = []
+    for r in rows:
+        prompt, _ = render_prompt_completion(tok, r["messages"], cfg.get("enable_thinking", False))
+        k = len(DECISIONS[r["decision"]].labels)
+        feats.append({"input_ids": tok(prompt, truncation=True, max_length=cfg["max_seq_length"])["input_ids"], "decision": r["decision"],
+                      "target": list(r["soft"]) + [0.0] * (kmax - k)})  # fmt: skip
+    kind = cfg["train"]["loss"]
+
+    def collate(batch):
+        n = max(len(b["input_ids"]) for b in batch)
+        ids = torch.full((len(batch), n), tok.pad_token_id)
+        att = torch.zeros((len(batch), n), dtype=torch.long)
+        for i, b in enumerate(batch):
+            ids[i, n - len(b["input_ids"]):] = torch.tensor(b["input_ids"])
+            att[i, n - len(b["input_ids"]):] = 1
+        lab = torch.full((len(batch), kmax), 0, dtype=torch.long)
+        mask = torch.zeros((len(batch), kmax), dtype=torch.bool)
+        for i, b in enumerate(batch):
+            t = tok_ids[b["decision"]]
+            lab[i, : len(t)] = torch.tensor(t)
+            mask[i, : len(t)] = True
+        return {"input_ids": ids, "attention_mask": att, "label_ids": lab, "label_mask": mask,
+                "target": torch.tensor([b["target"] for b in batch], dtype=torch.float32)}  # fmt: skip
+
+    class SoftTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+            out = model(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"], logits_to_keep=1)
+            z = out.logits[:, -1, :].float().gather(1, inputs["label_ids"])
+            return label_distribution_loss(z, inputs["target"], inputs["label_mask"], kind)
+
+    t = cfg["train"]
+    out = ROOT / cfg["output_dir"] / f"seed={seed}"
+    steps = max_steps if max_steps > 0 else math.ceil(len(feats) / (t["per_device_batch_size"] * t["grad_accum"])) * t["epochs"]
+    args = TrainingArguments(output_dir=str(out / "checkpoints"), num_train_epochs=t["epochs"], learning_rate=t["learning_rate"],
+                             per_device_train_batch_size=t["per_device_batch_size"], gradient_accumulation_steps=t["grad_accum"],
+                             warmup_steps=math.ceil(t["warmup_ratio"] * steps), weight_decay=t["weight_decay"], optim=OPTIM.get(t["optim"], t["optim"]),
+                             bf16=True, gradient_checkpointing=True, seed=seed, data_seed=seed, logging_steps=10, save_strategy="no",
+                             report_to=[], max_steps=max_steps, remove_unused_columns=False)  # fmt: skip
+    trainer = SoftTrainer(model=model, args=args, train_dataset=feats, data_collator=collate)
+    trainer.train()
+    model.save_pretrained(out / "adapter")
+    tok.save_pretrained(out / "adapter")
+    (out / "train_log.json").write_text(json.dumps({"seed": seed, "examples": len(rows), "loss": kind, "log_history": trainer.state.log_history}, indent=1),
+                                        encoding="utf-8")
+    return out
+
+
 def train(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> Path:  # pragma: no cover - needs a GPU
     """QLoRA SFT with plain transformers + PEFT + TRL + bitsandbytes (NF4, double quant, bf16 compute). Unsloth is not used:
     its release that resolves against torch 2.8 / sm_120 here is mid-2025 and does not run with transformers 5
@@ -172,7 +248,15 @@ def cmd_fast_data(a) -> int:
 
     from ftm.fastmodel.decisions import DECISIONS, DecisionExample, to_sft_example
 
-    n, by, dropped = 0, Counter(), Counter()
+    import numpy as np
+
+    from ftm.fastmodel.calibration import softmax_t
+    from ftm.fastmodel.softloss import soft_target
+
+    n, by, dropped, row_i = 0, Counter(), Counter(), 0
+    soft = None
+    if a.soft is not None:  # score_fast_baseline.py score --tier large-logprob --train-rows output: {"i": row index, "logps": ...}
+        soft = {json.loads(x)["i"]: json.loads(x)["logps"] for x in a.soft.read_text().splitlines() if x.strip()}
     a.out.parent.mkdir(parents=True, exist_ok=True)
     with a.decisions.open(encoding="utf-8") as f, a.out.open("w", encoding="utf-8") as g:
         for line in f:
@@ -184,7 +268,14 @@ def cmd_fast_data(a) -> int:
             if r["decision"] not in DECISIONS:  # exact decisions (`stop`) of an older set are computed by the pipeline, not learned
                 dropped[r["decision"]] += 1
                 continue
-            g.write(json.dumps(to_sft_example(DecisionExample(r["decision"], r["context"], r["label"], r.get("alert_id"), "train"))) + "\n")
+            ex = to_sft_example(DecisionExample(r["decision"], r["context"], r["label"], r.get("alert_id"), "train"))
+            if soft is not None:  # target = smoothed one-hot mixed with the large tier's token distribution (ftm.fastmodel.softloss)
+                labs = DECISIONS[r["decision"]].labels
+                lp = soft.get(row_i)
+                probs = None if lp is None else softmax_t(np.array(lp)[None, :], 1.0)[0].tolist()
+                ex["soft"] = soft_target(labs.index(r["label"]), len(labs), probs, a.mix, a.smooth)
+            g.write(json.dumps(ex) + "\n")
+            row_i += 1
             n, by[r["decision"]] = n + 1, by[r["decision"]] + 1
     summary = {"out": str(a.out), "decisions": str(a.decisions), "examples": n, "by_decision": dict(by), "dropped_not_learned": dict(dropped)}
     print(json.dumps(summary, indent=2))
@@ -228,7 +319,10 @@ def cmd_train(a) -> int:
         print(f"seed {a.seed}: {adapter} exists, skipped")
         return 0
     print("Reminder: QLoRA takes the whole GPU. Is the window blocked in GPU_CALENDAR.md?")
-    print(f"saved {train(cfg, rows, a.seed, a.max_steps)}")
+    loss = cfg.get("train", {}).get("loss", "sft")
+    if loss != "sft" and any("soft" not in r for r in rows):
+        raise SystemExit(f"train.loss={loss} needs rows with soft targets: scripts/train_planner.py fast-data --soft ...")
+    print(f"saved {(train_soft if loss != 'sft' else train)(cfg, rows, a.seed, a.max_steps)}")
     return 0
 
 
@@ -254,6 +348,9 @@ def main(argv: list[str] | None = None) -> int:
     fd = sub.add_parser("fast-data")
     fd.add_argument("--decisions", type=Path, default=ROOT / "data" / "decisions" / "hi_medium_s1v1" / "decisions_train.jsonl")
     fd.add_argument("--out", type=Path, default=ROOT / "outputs" / "sft" / "fast_train_s1v1.jsonl")
+    fd.add_argument("--soft", type=Path, default=None, help="large-tier scores of the train rows: add soft targets (loss soft_ce / brier)")
+    fd.add_argument("--mix", type=float, default=0.5, help="weight of the large model's distribution in the soft target")
+    fd.add_argument("--smooth", type=float, default=0.05, help="label smoothing of the one-hot part")
     c = sub.add_parser("calibrate")
     c.add_argument("--dataset", type=Path, required=True, help="JSONL rows: decision, context, label, val_part (fit/cal/eval)")
     c.add_argument("--fast-url", required=True)

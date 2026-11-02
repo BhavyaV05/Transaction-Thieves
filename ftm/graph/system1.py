@@ -33,8 +33,9 @@ from pathlib import Path
 
 from ftm.fastmodel import context as ctxt
 from ftm.fastmodel.cascade import ConformalCascade, ConformalSet
-from ftm.fastmodel.decisions import DECISIONS, DecisionExample
+from ftm.fastmodel.decisions import DECISIONS
 from ftm.fastmodel.model import LogprobFastModel
+from ftm.fastmodel.typed import TypedDecider
 
 FUNCTIONS = ("worth", "inject", "typology")
 TIERS = ("cascade", "fast")
@@ -73,9 +74,9 @@ class System1:
         large_off = set(frozen["large_off"]) | (set(frozen["decisions"]) if tiers == "fast" else set())
         self.cascade = ConformalCascade(ConformalSet.from_dict(frozen["fast"]), ConformalSet.from_dict(frozen["large"]),
                                         frozen["fast_off"], large_off)
-        self.fast = {d: LogprobFastModel(fast_client, temperature=frozen["temperatures"][d]) for d in frozen["decisions"]}
-        self.large = ({d: LogprobFastModel(large_client, temperature=frozen["temperatures_large"][d]) for d in frozen["decisions"]}
-                      if large_client is not None else {})
+        # typed decisions (ftm.fastmodel.typed): the full calibrated label distribution, never free text
+        self.fast = TypedDecider(LogprobFastModel(fast_client), frozen["temperatures"])
+        self.large = TypedDecider(LogprobFastModel(large_client), frozen["temperatures_large"]) if large_client is not None else None
         self.records: list[dict] = []
         self._lock = threading.Lock()
 
@@ -89,7 +90,6 @@ class System1:
 
     # -- one decision ---------------------------------------------------------------------------------------------
     def decide(self, decision: str, text: str, *, alert_id: str = "", step: int = 0, extra: dict | None = None) -> S1Decision:
-        ex = DecisionExample(decision, text)
         t0 = time.perf_counter()
         errors: list[str] = []
 
@@ -97,14 +97,14 @@ class System1:
             if decision in self.cascade.fast_off:
                 return None
             try:
-                return self.fast[decision].predict_proba(ex)
+                return self.fast.decide(decision, text)
             except Exception as e:  # noqa: BLE001 - a server error is "unsure": the next tier / the safe default takes over
                 errors.append(f"fast: {e}")
                 return None
 
         def large_probs():
             try:
-                return self.large[decision].predict_proba(ex)
+                return self.large.decide(decision, text)
             except Exception as e:  # noqa: BLE001
                 errors.append(f"large: {e}")
                 return {lbl: 1 / len(DECISIONS[decision].labels) for lbl in DECISIONS[decision].labels}  # uniform: full set
@@ -151,7 +151,7 @@ class System1:
 
 def attach(system, s1: System1) -> None:
     """Switch System 1 on for a built investigator: a GraphInvestigator (adapted arms) or an LLMPlanner (`.graph`)."""
-    g = getattr(system, "graph", system)
-    if not hasattr(g, "set_system1"):
+    g = system if hasattr(system, "set_system1") else getattr(system, "graph", None)
+    if g is None or not hasattr(g, "set_system1"):
         raise ValueError(f"{type(system).__name__} does not run in the system graph; System 1 needs ftm.graph.pipeline")
     g.set_system1(s1)

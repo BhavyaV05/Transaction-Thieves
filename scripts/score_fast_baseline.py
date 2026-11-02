@@ -44,9 +44,13 @@ DEFAULT_DATA = ROOT / "data" / "decisions" / "hi_medium_s1v1" / "decisions_val.j
 DEFAULT_ALERTS = ROOT / "data" / "alerts" / "hi_medium_v2" / "val.parquet"
 
 
-def load_rows(decisions: Path, alerts: Path, cap: int | None, seed: int) -> list[dict]:
+def load_rows(decisions: Path, alerts: Path, cap: int | None, seed: int, train: bool = False) -> list[dict]:
     """Val decision rows with their `val_part`, optionally capped per (decision, part). Order is the file's."""
     df = pl.read_ndjson(decisions).filter(pl.col("decision").is_in(list(DECISIONS)))  # `stop` rows of an old set are exact, not scored
+    if train:  # TRAIN rows, scored by the large tier only to build soft targets for the fine-tune (never calibration or a report)
+        if set(df["split"].unique()) != {"train"}:
+            raise SystemExit("--train-rows scores train rows only")
+        return df.with_columns(pl.lit("train").alias("val_part")).with_row_index("i").to_dicts()
     if "val_part" not in df.columns:  # the wave-4 set carries it; the E10 set was joined here
         parts = pl.read_parquet(alerts).select("alert_id", "val_part")  # time-guard: not transactions
         df = df.join(parts, on="alert_id", how="left")
@@ -54,7 +58,7 @@ def load_rows(decisions: Path, alerts: Path, cap: int | None, seed: int) -> list
     if df["val_part"].null_count():
         raise SystemExit(f"{df['val_part'].null_count()} decision rows have no val_part (alert not in {alerts})")
     if set(df["split"].unique()) != {"val"}:
-        raise SystemExit("this script scores val rows only")
+        raise SystemExit("this script scores val rows only (soft-target scoring of TRAIN rows: --train-rows, score only)")
     rows = df.to_dicts()
     if cap is None:
         return rows
@@ -74,7 +78,7 @@ def example(r: dict) -> DecisionExample:
 
 
 def cmd_score(a) -> int:
-    rows = load_rows(a.decisions, a.alerts, a.cap, a.seed)
+    rows = load_rows(a.decisions, a.alerts, a.cap, a.seed, a.train_rows)
     if a.tier == "large":  # the stated-confidence baseline is only used on cal (conformal) and eval rows
         rows = [r for r in rows if r["val_part"] in ("cal", "eval")]
     # fast and large-logprob score every part: both tiers fit their temperature on `fit`
@@ -184,6 +188,27 @@ def cmd_report(a) -> int:
         s[3] += bool(l_ok)
     report["eval_argmax_accuracy"] = {d: {"n": s[0], "fast": s[1] / s[0], "large": (s[3] / s[2]) if s[2] else None}
                                       for d, s in acc.items()}  # fmt: skip
+    from ftm.fastmodel.calibration import softmax_t
+    from ftm.fastmodel.evalmetrics import agreement, calibration_metrics
+
+    tl = report.get("temperatures_large", {})
+    cm: dict = {}
+    for d in report["decisions"]:
+        ev = [(ex, r) for ex, r in zip(exs, rows, strict=True) if r["val_part"] == "eval" and ex.decision == d]
+        if not ev:
+            continue
+        labs = list(DECISIONS[d].labels)
+        y = np.array([labs.index(ex.label) for ex, _ in ev])
+        pf = np.stack([softmax_t(np.array(fast_by[id(ex)])[None, :], temps[d])[0] for ex, _ in ev])
+        cm[d] = {"calibration": calibration_metrics(pf, y)}
+        if from_logps:
+            pl_ = np.stack([softmax_t(np.array(large_by[id(ex)])[None, :], tl.get(d, 1.0))[0] for ex, _ in ev])
+            cm[d]["large_calibration"] = calibration_metrics(pl_, y)
+            cm[d]["agreement_with_large"] = agreement(pf, pl_)
+    report["eval_metrics"] = cm  # Jev-style: against the label and against the large model's distribution
+    for name, path in (("fast", a.latency), ("large", a.latency_large)):
+        if path is not None and path.exists():
+            report.setdefault("latency_ms_per_decision", {})[name] = json.loads(path.read_text())["ms_per_decision"]
     report["selection"] = {"cap_per_decision_part": a.cap, "seed": a.seed, "large_kind": a.large_kind,
                            "rows": {p: sum(q == p for q in parts) for p in PARTS}}  # fmt: skip
     out = {"temperatures": temps, **report}
@@ -207,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--model", required=True)
     s.add_argument("--endpoint", default=None)
     s.add_argument("--workers", type=int, default=16)
+    s.add_argument("--train-rows", action="store_true", help="--decisions is the TRAIN file: score it (large-logprob) to build soft targets")
     s.add_argument("--limit", type=int, default=None, help="score at most this many rows (timing sample)")
     s.add_argument("--out", type=Path, required=True)
     r = sub.add_parser("report")
@@ -215,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--large-kind", choices=["json", "logprob"], default="logprob")
     r.add_argument("--retire-margin", type=float, default=0.0, help="a tier must beat the fit-majority label on cal by this much")
     r.add_argument("--freeze", type=Path, default=None, help="write the frozen System 1 file (temperatures, q, retired tiers) here")
+    r.add_argument("--latency", type=Path, default=None, help="latency.json of the fast arm (t3_qwen_session.sh), recorded in the report")
+    r.add_argument("--latency-large", type=Path, default=None, help="latency.json of the large tier")
     r.add_argument("--fast-model", default="fast-s0", help="served name recorded in the frozen file")
     r.add_argument("--large-model", default="gemma4-12b", help="served name recorded in the frozen file")
     r.add_argument("--alpha", type=float, default=0.05)

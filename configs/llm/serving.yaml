@@ -108,6 +108,9 @@ models:
       fast3-s0: models/fast_4b_s1v1/seed=0/adapter
       fast3-s1: models/fast_4b_s1v1/seed=1/adapter
       fast3-s2: models/fast_4b_s1v1/seed=2/adapter
+      fast3soft-s0: models/fast_4b_s1v1_soft/seed=0/adapter   # calibration-as-objective arm (configs/llm/sft_fast_soft.yaml)
+      fast3soft-s1: models/fast_4b_s1v1_soft/seed=1/adapter
+      fast3soft-s2: models/fast_4b_s1v1_soft/seed=2/adapter
     extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8"]
   qwen3-1.7b:                              # E10 small general-LLM baseline (untuned, bf16: small enough not to need a quantised build)
     repo: Qwen/Qwen3-1.7B
