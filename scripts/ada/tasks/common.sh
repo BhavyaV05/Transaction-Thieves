@@ -1,5 +1,5 @@
 # sourced by every task script.  Owner: T3 (Akshat).  Everything runs from the shared-home ~/venv312 (torch 2.13+cu129, vLLM 0.31.0, PyG, transformers, peft, bnb).
-export PY=$HOME/venv312/bin/python PATH=$HOME/venv312/bin:$PATH
+export PY=${VENV:-$HOME/venv312}/bin/python PATH=${VENV:-$HOME/venv312}/bin:$PATH
 export RES=$HOME/tt/results; mkdir -p $RES
 GPU0=${CUDA_VISIBLE_DEVICES%%,*}; export PORT=$((8100 + ${GPU0:-0}))
 export GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
