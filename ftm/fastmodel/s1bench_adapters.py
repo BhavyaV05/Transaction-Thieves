@@ -35,8 +35,6 @@ TEV_SYSTEM = (
 TEV_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWX"
 
 
-@dataclass(frozen=True)
-
 def _dtype():
     """bf16 by default (the cards' dtype); S1BENCH_DTYPE=float16 on Turing GPUs (RTX 2080 Ti has no bf16): recorded as a deviation in the results."""
     import os
@@ -46,6 +44,7 @@ def _dtype():
     return getattr(torch, os.environ.get("S1BENCH_DTYPE", "bfloat16"))
 
 
+@dataclass(frozen=True)
 class TypedQuestion:
     state: dict  # e.g. {"text": "<decision context>"}
     instruction: str
