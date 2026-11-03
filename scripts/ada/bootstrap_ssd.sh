@@ -36,9 +36,8 @@ $P $SC/tmp/temporal_check.py > $SC/tmp/temporal_noext.txt 2>&1; cat $SC/tmp/temp
 # compiled extensions: reuse cached wheels, else build (CPU kernels; MEGA-GNN imports torch_scatter directly; sampler per the check above)
 W=$HOME/tt/wheels
 build_ext() {
-  export FORCE_ONLY_CPU=1 MAX_JOBS=${MAX_JOBS:-12} FORCE_CUDA=0 PATH=/usr/local/apps/cmake-3.31.7/bin:$PATH
+  export FORCE_ONLY_CPU=1 MAX_JOBS=${MAX_JOBS:-10} FORCE_CUDA=0 CUDAARCHS=75 TORCH_CUDA_ARCH_LIST=7.5 PATH=$V/bin:/usr/local/apps/cmake-3.31.7/bin:/usr/local/cuda/bin:$PATH   # venv python first on PATH (pyg_lib cmake asks `python` for the C++ ABI; wrong ABI = undefined symbol Node::name at import); pyg_lib: torch cmake config needs CUDAARCHS+nvcc even for a CPU build; ~30 GB RAM
   mkdir -p $SC/wheelbuild; cd $SC/wheelbuild
-  ls $W/torch_scatter-*.whl >/dev/null 2>&1 || uv pip install -q -p $P --no-deps --no-build-isolation torch_scatter 2>/dev/null
   for pkg in torch_scatter torch_sparse; do ls $W/$pkg-*.whl >/dev/null 2>&1 || { $P -m pip --version >/dev/null 2>&1 || uv pip install -q -p $P pip; $P -m pip wheel -q --no-deps --no-build-isolation -w $SC/wheelbuild $pkg && cp -n $SC/wheelbuild/$pkg-*.whl $W/; }; lap built_$pkg; done
   if ! grep -q TEMPORAL_OK $SC/tmp/temporal_noext.txt; then ls $W/pyg_lib-*.whl >/dev/null 2>&1 || { rm -rf pyg-lib; git clone -q --depth 1 --recursive --shallow-submodules https://github.com/pyg-team/pyg-lib.git && $P -m pip wheel -q --no-deps --no-build-isolation -w $SC/wheelbuild ./pyg-lib && cp -n $SC/wheelbuild/pyg_lib-*.whl $W/; }; lap built_pyg_lib; fi
   cd $SC
