@@ -1,9 +1,9 @@
 """A deterministic stand-in for a vLLM logprobs endpoint, for smoke-testing S1BENCH plumbing without a GPU.  Owner: T3 (Akshat).
 
-It is NOT a model: it reads the allowed answer tokens from the prompt ("Answer with exactly one letter: A = .., B = .." or "yes or no")
+TEST-ONLY helper (lives in tests/, nothing under scripts/ or ftm/ may use it, and no result may be produced against it).  It is NOT a model: it reads the allowed answer tokens from the prompt ("Answer with exactly one letter: A = .., B = .." or "yes or no")
 and returns first-token top_logprobs that favour one allowed token chosen by a hash of the prompt.  Numbers produced against it mean nothing.
 
-    python scripts/s1bench_fake_server.py --port 8099     # FTM_LLM_ENDPOINT=http://127.0.0.1:8099/v1
+    python tests/s1bench_fake_server.py --port 8099     # FTM_LLM_ENDPOINT=http://127.0.0.1:8099/v1
 """
 
 from __future__ import annotations
