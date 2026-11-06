@@ -42,14 +42,24 @@ MIN_TOKEN_SAVING = 0.10  # an arm must cut mean prompt tokens by this share to w
 MIN_VERDICT_RATE = 0.95
 MIN_VAR_RATIO = 0.5  # var(p_arm) / var(p0) below this = shrinking towards a constant
 AUC_DROP = 0.01
-SHAPE_LIB = "outputs/t3_library/frozen/shape_gemma.json"  # the production library (configs/final/jobs.yaml common_args)
-ACCOUNT_LIB = "outputs/t3_library/frozen_v2/account_teacher_only.json"  # the non-empty account-keyed library (frozen/account_gemma.json has 0 notes)
+# Libraries.  The part decides the file, exactly as in scripts/t3_rerun.sh: val fit and cal use the TEACHER-ONLY libraries (built from the 1,983 train alerts' teacher runs;
+# no val label can be in them), val eval uses the full ones (train teacher + the fit/cal seeding runs).  The old outputs/t3_library/frozen/*.json were built from the train teacher runs
+# PLUS the val tuning runs, so a fit/cal arm that used them read fit/cal labels (fixed 7 Nov, before any GPU run of this bench).
+V3 = "outputs/t3_library/frozen_v3"
+BT_LIB = "outputs/rag_bench/libs/shape_backtest_train.json"  # scripts/rag_offline_bench.py --write-library: no LLM, TRAIN back-test rows only (build_backtest_library(contexts["train"]))
+LIB_FILES = {"shape": {"fitcal": f"{V3}/shape_gemma_train.json", "eval": f"{V3}/shape_gemma.json"},
+             "account": {"fitcal": f"{V3}/account_gemma_train.json", "eval": f"{V3}/account_gemma.json"},
+             "shape_bt": {"fitcal": BT_LIB, "eval": BT_LIB}}  # fmt: skip
 
-LIB_DIR = "outputs/rag_bench/libs"
-LIB_PATHS = {"none": None, "shape": SHAPE_LIB, "account": ACCOUNT_LIB,
-             "shape_rebuilt": f"{LIB_DIR}/shape_tuned_teacher.json",  # scripts/t3_rag_bench.sh stage `library`: TRAIN teacher runs of the tuned stack only
-             "account_rebuilt": f"{LIB_DIR}/account_tuned_teacher.json",
-             "shape_bt": f"{LIB_DIR}/shape_backtest_train.json"}  # scripts/rag_offline_bench.py --write-library: no LLM, TRAIN back-test rows
+
+def lib_path(kind: str, part: str) -> str | None:
+    """The library file of an arm's library kind for a val part ("fitcal" or "eval"; fit and cal share the teacher-only file)."""
+    if kind == "none":
+        return None
+    if part not in ("fitcal", "eval"):
+        raise ValueError(f"part must be fitcal or eval, got {part!r}")
+    return LIB_FILES[kind][part]
+
 
 # s per alert, one by one, from docs/t3_val_runs.md (old stack, val eval): the planning figure behind the GPU-hour estimates
 SERIAL_S = {"planner": 6.3, "sharma_native": 4.2, "sharma_ported": 6.2, "torres_native": 13.9, "torres_ported": 17.6,
@@ -68,7 +78,7 @@ class ArmSpec:
     component: str  # evidence | rules | library | memory | finfre_pool | combined
     system: str
     flags: tuple[str, ...] = ()
-    library: str = "none"  # none | shape | account (planner only)
+    library: str = "none"  # none | shape | account | shape_bt (planner only); the file depends on the part: lib_path()
     seed: int = 0
     is_default: bool = False
     requires: str | None = None
@@ -102,7 +112,6 @@ def build_arms() -> list[ArmSpec]:
                             note="newest %s trail rows protected from the trimmer%s" % (n, " (WITHOUT: legacy order, the oldest rows go first)" if n == "0" else "")))
     arms.append(ArmSpec("lib_none", P, "library", P, library="none", note="WITHOUT: no strategy library"))
     arms.append(ArmSpec("lib_account", P, "library", P, library="account", note="account-keyed (E11 memorisation ablation) from the teacher-only account library"))
-    arms.append(ArmSpec("lib_shape_rebuilt", P, "library", P, library="shape_rebuilt", note="shape library rebuilt from TRAIN teacher runs of the tuned stack (stage `library`)"))
     arms.append(ArmSpec("lib_shape_bt", P, "library", P, library="shape_bt", note="shape library built from TRAIN back-test rows without any LLM run (offline bench modification)"))
     for s in GROUP_C:
         for mode in ("native", "ported"):
@@ -119,7 +128,7 @@ def build_arms() -> list[ArmSpec]:
 
 
 def blocked(arm: ArmSpec, src: str | None = None) -> str | None:
-    path = LIB_PATHS.get(arm.library)
+    path = lib_path(arm.library, "fitcal")
     if path and not (ROOT / path).exists():
         return f"library file missing ({path}); build it first"
     if arm.requires is None:
@@ -397,9 +406,8 @@ def plan_table(src: str | None = None) -> str:
         if a.seed:
             ch += f" seed={a.seed}"
         t += f"| {a.name}{' (default)' if a.is_default else ''} | {a.group} | {a.component} | {ch} | {h:.2f} | {b or 'ready'} |\n"
-    return t + (f"\nTotal: {tot:.1f} GPU-h for the arms runnable today, {every:.1f} GPU-h for all {len(arms)} arms once the library is rebuilt "
-                f"(fit+cal, 300 alerts each; planning figure: old-stack seconds per alert / {CONCURRENCY_SPEEDUP} for concurrency 4). Not included: the library teacher runs "
-                f"(1,983 train alerts, about {SERIAL_S['planner'] * 1983 / CONCURRENCY_SPEEDUP / 3600:.1f} GPU-h), the combined arm with two seeds, the once-only eval.\n")
+    return t + (f"\nTotal: {tot:.1f} GPU-h for the arms runnable today, {every:.1f} GPU-h for all {len(arms)} arms once their library files exist "
+                f"(fit+cal, 300 alerts each; planning figure: old-stack seconds per alert / {CONCURRENCY_SPEEDUP} for concurrency 4). Not included: the combined arm with two seeds, the once-only eval.\n")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -421,7 +429,8 @@ def main(argv: list[str] | None = None) -> int:
         for arm in build_arms():
             b = blocked(arm, src)
             if a.tsv:
-                print("\t".join([arm.name, arm.system, str(arm.seed), LIB_PATHS.get(arm.library) or "none", f"{arm.est_hours():.3f}", b or "ok", " ".join(arm.flags)]))
+                print("\t".join([arm.name, arm.system, str(arm.seed), lib_path(arm.library, "fitcal") or "none", lib_path(arm.library, "eval") or "none",
+                                f"{arm.est_hours():.3f}", b or "ok", " ".join(arm.flags)]))
             else:
                 print(arm.name, arm.group, arm.component, arm.flags, b or "ok")
         return 0

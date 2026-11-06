@@ -10,14 +10,13 @@
 # touched by stage `eval`, once, for the frozen winners (guarded by outputs/rag_bench_eval/.done). Test is never touched.
 #
 #   scripts/t3_rag_bench.sh plan                   # print the arm table with GPU-hour estimates and blocked arms (no GPU)
-#   scripts/t3_rag_bench.sh library                # teacher runs on TRAIN (tuned stack) + rebuild shape/account libraries (about 1.4 GPU-h)
 #   scripts/t3_rag_bench.sh arms                   # every ready arm on fit + cal (ARMS="a b" limits; DRY_RUN=1 prints the commands)
 #   scripts/t3_rag_bench.sh report                 # CPU: metrics, paired cluster-bootstrap CIs, Holm, selection -> outputs/rag_bench/selection.json
 #   scripts/t3_rag_bench.sh combined               # the all-winners arm (needs selection.json), 2 seeds, then report again
 #   scripts/t3_rag_bench.sh eval                   # ONCE: default + chosen winners (+ combined) on the 160 val eval alerts
-# Library rebuild after new teacher runs (stage `library` does exactly this):
-#   .venv/bin/python scripts/build_library.py --runs outputs/rag_bench/teacher/c0?? --data hi_medium --backtest configs/fusion/headroom_v1_table.jsonl \
-#       --out outputs/rag_bench/libs/shape_tuned_teacher.json --freeze       (and --keying account --out .../account_tuned_teacher.json)
+# Libraries (fixed 7 Nov, before any GPU run): fit and cal arms use the TEACHER-ONLY libraries outputs/t3_library/frozen_v3/{shape,account}_gemma_train.json, eval uses
+# frozen_v3/{shape,account}_gemma.json (same rule as scripts/t3_rerun.sh); the choice is made by the report script (t3_rag_bench_report.py lib_path), never here.
+# The bench no longer rebuilds libraries: frozen_v3 is built from the teacher_v2 runs (1,983 train alerts, the same tuned stack), so the old `library` stage would only repeat them.
 # Env: MODEL (gemma4-12b), OUT (outputs/rag_bench), CHUNK (100), ARMS, DRY_RUN=1, PY.
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -74,17 +73,9 @@ run_arm() {
 case $stage in
 plan)
   $REPORT plan ;;
-library)  # teacher runs on TRAIN (labels are train's; the library never sees val) with the tuned stack, then rebuild both keyings
-  serve_up
-  run_arm "$OUT/teacher_runs" teacher planner 0 none "train:1983:50" -- --keep-prompts
-  mkdir -p "$OUT/libs"
-  run $PY scripts/build_library.py --runs "$OUT"/teacher_runs/teacher/train/c0?? --data hi_medium --backtest configs/fusion/headroom_v1_table.jsonl \
-      --out "$OUT/libs/shape_tuned_teacher.json" --freeze
-  run $PY scripts/build_library.py --runs "$OUT"/teacher_runs/teacher/train/c0?? --data hi_medium --backtest configs/fusion/headroom_v1_table.jsonl \
-      --keying account --out "$OUT/libs/account_tuned_teacher.json" --freeze ;;
 arms)
   serve_up
-  while IFS=$'\t' read -r name sys seed lib est status flags; do
+  while IFS=$'\t' read -r name sys seed lib lib_eval est status flags; do
     [[ -n ${ARMS:-} && " $ARMS " != *" $name "* ]] && continue
     if [[ $status != ok ]]; then echo "$(date -Is) $name: BLOCKED ($status)"; continue; fi
     # shellcheck disable=SC2086
@@ -96,7 +87,7 @@ report)
 combined)  # all chosen winners in one arm, seeds 0 and 1: the interaction check against the default
   [[ -f $OUT/selection.json ]] || { echo "no $OUT/selection.json: run the arms and the report first"; exit 1; }
   read -r lib flags < <($REPORT winner-flags --selection "$OUT/selection.json")
-  libpath=none; [[ $lib != none ]] && libpath=$($PY -c "import sys; sys.path.insert(0,'scripts'); import t3_rag_bench_report as r; print(r.LIB_PATHS['$lib'])")
+  libpath=none; [[ $lib != none ]] && libpath=$($PY -c "import sys; sys.path.insert(0,'scripts'); import t3_rag_bench_report as r; print(r.lib_path('$lib', 'fitcal'))")
   echo "combined: library=$lib ($libpath) flags=[$flags]"
   serve_up
   for seed in 0 1; do
@@ -118,7 +109,7 @@ print(" ".join(sorted(out)))
 E
 )
   serve_up
-  while IFS=$'\t' read -r name sys seed lib est status flags; do
+  while IFS=$'\t' read -r name sys seed lib_fitcal lib est status flags; do
     [[ " $names " != *" $name "* ]] && continue
     [[ $status != ok ]] && continue
     # shellcheck disable=SC2086
@@ -126,7 +117,7 @@ E
   done < <($REPORT arms --tsv)
   if [[ -d $OUT/planner_combined ]]; then  # the combined arm of stage `combined`, once, with the same flags
     read -r lib flags < <($REPORT winner-flags --selection "$OUT/selection.json")
-    libpath=none; [[ $lib != none ]] && libpath=$($PY -c "import sys; sys.path.insert(0,'scripts'); import t3_rag_bench_report as r; print(r.LIB_PATHS['$lib'])")
+    libpath=none; [[ $lib != none ]] && libpath=$($PY -c "import sys; sys.path.insert(0,'scripts'); import t3_rag_bench_report as r; print(r.lib_path('$lib', 'eval'))")
     # shellcheck disable=SC2086
     run_arm "$EV" planner_combined planner 0 "$libpath" "eval:160:160" -- $flags
   fi

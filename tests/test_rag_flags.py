@@ -273,7 +273,7 @@ def test_the_bench_report_unblocks_the_arms_and_verifies_settings(monkeypatch):
     sys.path.insert(0, str(ROOT / "scripts"))
     import t3_rag_bench_report as rb
 
-    monkeypatch.setattr(rb, "LIB_PATHS", dict.fromkeys(rb.LIB_PATHS))  # about the flags: the library files are gitignored outputs
+    monkeypatch.setattr(rb, "lib_path", lambda kind, part: None)  # about the flags: the library files are gitignored outputs
     arms = {a.name: a for a in rb.build_arms()}
     for n in (
         "ev_none",
