@@ -17,5 +17,17 @@ sys.path[:0] = [str(ROOT), str(ROOT / "tests"), str(ROOT / "scripts")]
 import legacy_llm_planner  # noqa: E402
 import run_llm_agent  # noqa: E402
 
-run_llm_agent.LLMPlanner = legacy_llm_planner.LLMPlanner
+
+class LegacyPlanner(legacy_llm_planner.LLMPlanner):
+    """The frozen loop predates four options that only the graph planner has (rules_mode, stop_cannot_cross, menu_top_k, min_evidence_rows).  Accept them only at the value that
+    means 'the pre-graph behaviour' (rules_mode fixed = the one fixed query, no cannot-cross stop, whole menu, legacy trimming order), refuse anything else: a legacy run
+    must never silently ignore a production option."""
+
+    def __init__(self, *a, rules_mode="fixed", stop_cannot_cross=False, menu_top_k=None, min_evidence_rows=0, **kw):
+        if (rules_mode, stop_cannot_cross, menu_top_k, min_evidence_rows) != ("fixed", False, None, 0):
+            raise SystemExit(f"the frozen legacy planner has no {rules_mode=} {stop_cannot_cross=} {menu_top_k=} {min_evidence_rows=}: run with --profile none --rules fixed")
+        super().__init__(*a, **kw)
+
+
+run_llm_agent.LLMPlanner = LegacyPlanner
 sys.exit(run_llm_agent.main(sys.argv[1:]))
