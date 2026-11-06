@@ -35,3 +35,12 @@ H9 compares the gap closed by our system with the best ported external agent. `m
 - Fusion setting (fixed before G3, the file's own comment): `per_family`, `prior="zero"`, `fit_cv` is the proposal; naive is the pre-registered negative result. Pending the team call (issue and message of 28 Oct).
 - Acceptance rule: if T2 adopts time-aware acceptance (issue #84), it has to be written into `prereg/` before the freeze; after that only fixes.
 - Additional secondary analyses (review capacity, p0-adjusted estimator, issues #87 and #88) must be listed in `prereg/hypotheses.yaml` before the freeze to count as pre-registered.
+
+## 5. Decisions of 6 Nov 2026 (Shreyas; applied in `prereg/`, not frozen yet)
+
+- **Hub cap:** `none`. The rule (share > 0.2) is not triggered, largest share 0.0149; the test run re-checks and reports it.
+- **Equivalence margin:** fixed at **0.01 Brier** (option 2 of section 2, with a decision-relevance value instead of the validation-derived one): the smallest gain G2 calls worthwhile. Nothing had gone to the TA, so this is a pre-freeze edit, not a deviation. Consequence stated in the prereg: at these sample sizes non-inferiority within 0.01 is rarely shown; "not shown" is reported as such, never as equivalence. Code: `ftm.eval.final.prereg_margin` makes a numeric prereg value win over the derived one.
+- **H1, H2, H7:** kept unchanged, each with a `validation_note` (expected not met on val). H2: the ratio is not interpreted when its denominator CI contains 0.
+- **`H9.margin_gap`:** still `fix_on_val`; it is `0.01 / (Brier(one bank) - Brier(upper))` and needs the see-everything alert scores and the G4 pick.
+- **T3's R2 (ten `*_adapted` arms):** exploratory, subset only, outside Table 5a and H9 (`exploratory_arms` in `external_list.yaml`). **R3 (E18 refresh):** an addendum to E18; the 26 Oct decision stays on the prereg row (`e18_decision.yaml`).
+- **Freeze:** after #113 merges (it changes `configs/final/non_llm.yaml` and `jobs.yaml`, which the freeze hashes) and `outputs/g4/top_external.json`, `outputs/e18/stage2/decision.json`, `H9.margin_gap` and T1's artefacts exist.

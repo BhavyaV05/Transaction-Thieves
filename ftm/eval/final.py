@@ -898,6 +898,16 @@ def _clean(d: dict) -> dict:
 # --------------------------------------------------------------------------------------------------------------------
 # margins
 # --------------------------------------------------------------------------------------------------------------------
+def prereg_margin(path: Path | None = None) -> float | None:
+    """The equivalence margin when prereg/hypotheses.yaml fixes it as a number (a decision-relevance margin); None while it is `fix_on_val`."""
+    p = path or ROOT / "prereg" / "hypotheses.yaml"
+    try:
+        v = yaml.safe_load(p.read_text())["statistics"]["equivalence_margin"].get("value")
+    except (OSError, KeyError, AttributeError, TypeError):
+        return None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
+
+
 def margins(panel: Panel) -> dict:
     """Equivalence margin (Brier) and the H9 margin in gap-closed units. Fixed on validation; derived only on val."""
     if "equivalence_margin" in panel.fixed:
@@ -906,10 +916,15 @@ def margins(panel: Panel) -> dict:
         return {"equivalence_margin": m, "margin_gap": None if mg is None else float(mg), "source": "fixed on validation"}
     if panel.split == "test":
         raise Missing("the equivalence margin is not fixed: run --split val first and pass its fixed_on_val.json")
-    best, _ = panel.best_simple()
-    vec = {"random": panel.role("random").se_e2e, "best": panel.role(best).se_e2e}
-    B = panel.boot(vec, n_boot=2)
-    margin = st.equivalence_margin(B["point"]["best"], B["point"]["random"])
+    margin = prereg_margin()
+    if margin is not None:
+        source = "fixed in prereg/hypotheses.yaml"
+    else:
+        best, _ = panel.best_simple()
+        vec = {"random": panel.role("random").se_e2e, "best": panel.role(best).se_e2e}
+        B = panel.boot(vec, n_boot=2)
+        margin = st.equivalence_margin(B["point"]["best"], B["point"]["random"])
+        source = "derived on this validation run"
     mg = None
     up = panel.uppers().get("gfp_see_everything")
     if up is not None:
@@ -918,7 +933,7 @@ def margins(panel: Panel) -> dict:
         d = den["ob"] - den["up"]
         mg = margin / d if d >= mt.MIN_GAP_DENOMINATOR else None
     panel.fixed_derived.update({"equivalence_margin": margin, "margin_gap": mg})
-    return {"equivalence_margin": margin, "margin_gap": mg, "source": "derived on this validation run"}
+    return {"equivalence_margin": margin, "margin_gap": mg, "source": source}
 
 
 # --------------------------------------------------------------------------------------------------------------------
