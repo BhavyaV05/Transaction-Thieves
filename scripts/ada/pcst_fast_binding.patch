@@ -1,0 +1,11 @@
+--- a/src/pcst_fast_pybind.cc	2026-10-23 11:48:24.095008048 +0530
++++ b/src/pcst_fast_pybind.cc	2026-10-23 11:48:32.016736694 +0530
+@@ -16,7 +16,7 @@
+   py::print(output, py::arg("flush")=true);
+ }
+ 
+-std::pair<py::array_t<int>, py::array_t<int>> pcst_fast(
++std::pair<py::array_t<int64_t>, py::array_t<int64_t>> pcst_fast(
+     py::array_t<int64_t, py::array::c_style> edges,
+     py::array_t<double, py::array::c_style> prizes,
+     py::array_t<double, py::array::c_style> costs,

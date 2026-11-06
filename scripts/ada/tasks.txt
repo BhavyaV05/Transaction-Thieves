@@ -1,0 +1,11 @@
+# name|n_gpus|n_cpus|mem_gb|command   (priority order; see driver.py)
+gnn_multi|1|6|45|bash ~/tt/ada_scripts/tasks/gnn.sh multi_gnn
+gnn_mega|1|6|45|bash ~/tt/ada_scripts/tasks/gnn.sh mega_gnn
+smoke_gemma_tp2|2|4|20|bash ~/tt/ada_scripts/tasks/smoke_gemma_tp2.sh
+smoke_qlora|1|4|20|bash ~/tt/ada_scripts/tasks/smoke_qlora.sh
+s1_sys1|1|4|12|bash ~/tt/ada_scripts/tasks/s1_server.sh sys1
+s1_base|1|4|12|bash ~/tt/ada_scripts/tasks/s1_server.sh base
+s1_soft|1|4|12|bash ~/tt/ada_scripts/tasks/s1_server.sh soft
+s1_open_gpu|1|4|20|bash ~/tt/ada_scripts/tasks/s1_open.sh gpu
+s1_open_cpu|0|4|10|bash ~/tt/ada_scripts/tasks/s1_open.sh cpu
+s1_gemma_partA|2|4|16|bash ~/tt/ada_scripts/tasks/s1_gemma.sh
