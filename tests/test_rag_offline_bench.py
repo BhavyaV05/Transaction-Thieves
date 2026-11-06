@@ -138,7 +138,8 @@ def test_arm_registry_one_factor_and_unique():
         assert len([f for f in a.flags if f.startswith("--")]) <= 1
 
 
-def test_blocked_by_missing_flags_and_library_files():
+def test_blocked_by_missing_flags_and_library_files(monkeypatch):
+    monkeypatch.setattr(rb, "LIB_PATHS", {**dict.fromkeys(rb.LIB_PATHS), "shape_rebuilt": "outputs/_no_such_library.json"})
     ev_none = next(a for a in rb.build_arms() if a.name == "ev_none")
     assert rb.blocked(ev_none, "ap.add_argument('--evidence-view', help='amount | scorer')") is not None
     ok_src = "ap.add_argument('--evidence-view', help='none | amount | scorer')"

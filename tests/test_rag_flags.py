@@ -269,10 +269,11 @@ def test_summary_records_exemplars_and_flag_is_finfre_only(tmp_path):
     assert r2.returncode != 0 and "finfre_rag only" in r2.stderr
 
 
-def test_the_bench_report_unblocks_the_arms_and_verifies_settings():
+def test_the_bench_report_unblocks_the_arms_and_verifies_settings(monkeypatch):
     sys.path.insert(0, str(ROOT / "scripts"))
     import t3_rag_bench_report as rb
 
+    monkeypatch.setattr(rb, "LIB_PATHS", dict.fromkeys(rb.LIB_PATHS))  # about the flags: the library files are gitignored outputs
     arms = {a.name: a for a in rb.build_arms()}
     for n in (
         "ev_none",

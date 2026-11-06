@@ -186,9 +186,12 @@ def test_live_mock_on_real_val_alert_then_replay(tmp_path):
     assert (tmp_path / "a.html").exists()
 
 
-def test_mock_banner_and_production_threshold(tmp_path):
+def test_mock_banner_and_production_threshold(tmp_path, monkeypatch):
+    from ftm.demo import build
     from ftm.demo.build import DECISION, build_replay
 
+    av = AlertView("V000001", "val", "70", 0.5, summary=SUMMARY, evidence="", label=1)
+    monkeypatch.setattr(build, "alert_view", lambda *a: (av, SUMMARY))  # no alert data needed: this test is about the banner and the threshold
     d = make_run(tmp_path)  # summary model "mock"
     demo = build_replay([d], "V000001", data="hi_medium")
     assert demo.threshold == pytest.approx(0.322699) and demo.clear_below is None and demo.threshold_source == DECISION
