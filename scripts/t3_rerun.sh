@@ -32,6 +32,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 DRY=${DRY_RUN:-0}
+# MACHINE is recorded in every run summary (default: the PC).  EXTERNAL_SERVER=1: the endpoint is already served (e.g. on ada, scripts/ada/tasks) -> no server is started or stopped here;
+# FTM_LLM_ENDPOINT and FTM_LLM_API_KEY must be exported by the caller.
+MACHINE=${MACHINE:-t3-5070ti}
+EXTERNAL_SERVER=${EXTERNAL_SERVER:-0}
 PY=${PY:-.venv/bin/python}
 [[ -x $PY ]] || PY=$HOME/projects/Transaction-Thieves/.venv/bin/python
 TRAIN_PY=${TRAIN_PY:-$HOME/projects/train-venv/bin/python}
@@ -53,7 +57,7 @@ BT=configs/fusion/headroom_v1_table.jsonl
 FUSION=configs/fusion/headroom_v1.json
 THRESH=0.3227
 PROFILE="--profile tuned --concurrency 4"
-COMMON="--llm endpoint --toolbox harness --serving-stack vllm --machine t3-5070ti --seed 0 $PROFILE"
+COMMON="--llm endpoint --toolbox harness --serving-stack vllm --machine $MACHINE --seed 0 $PROFILE"
 FIT_N=191 CAL_N=109 EVAL_N=160 TRAIN_N=1983
 export FTM_P0_VARIANT=${FTM_P0_VARIANT:-v2} FTM_EDGE_SCORER=${FTM_EDGE_SCORER:-v2}
 
@@ -68,7 +72,7 @@ mk() { [[ $DRY == 1 ]] || mkdir -p "$@"; }
 # servers
 spid=""
 env_vllm() {
-  [[ $DRY == 1 ]] && return
+  [[ $DRY == 1 || $EXTERNAL_SERVER == 1 ]] && return
   export PATH=$HOME/projects/vllm-venv/bin:$PATH FTM_HF_HOME=${FTM_HF_HOME:-$HOME/hf_cache} HF_HUB_OFFLINE=1
   set -a; source .env; set +a
   export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1 FTM_FAST_ENDPOINT=http://127.0.0.1:8001/v1
@@ -78,6 +82,7 @@ trap serve_down EXIT
 # serve_up <profile> [serve_llm args...] : one server, waits until the endpoint lists the profile (or, for --dual, every profile named in WAIT_FOR)
 serve_up() {
   local prof=$1; shift
+  [[ $EXTERNAL_SERVER == 1 ]] && { say "external server at ${FTM_LLM_ENDPOINT:-unset} ($prof)"; return; }
   if [[ $DRY == 1 ]]; then echo "DRY: setsid $PY scripts/serve_llm.py --model $prof $* ; wait until /models lists $prof" >&3; return; fi
   mkdir -p "$V"
   setsid $PY scripts/serve_llm.py --model "$prof" "$@" > "$V/serve_$prof.log" 2>&1 &
@@ -324,11 +329,11 @@ stage_e15() {  # docs/t4_injection.md on the real endpoint; val, planner (100 al
   # shellcheck disable=SC2086
   run_log "$V/e15_planner.log" $PY scripts/run_injection_tests.py --system planner --alerts val --val-part eval --data hi_medium --n "${E15_N_PLANNER:-60}" \
       --llm endpoint --model "$MODEL" --backtest "$BT" --fusion-params "$FUSION" --set "$set" --screen heuristic \
-      --arms nogate,gate,gate+camel_flow,gate+camel_full,gate+screen --machine t3-5070ti --run-id e15_planner --out outputs/injection_v3
+      --arms nogate,gate,gate+camel_flow,gate+camel_full,gate+screen --machine "$MACHINE" --run-id e15_planner --out outputs/injection_v3
   # shellcheck disable=SC2086
   run_log "$V/e15_react.log" $PY scripts/run_injection_tests.py --system react --alerts val --val-part eval --data hi_medium --n "${E15_N_REACT:-40}" \
       --llm endpoint --model "$MODEL" --backtest "$BT" --fusion-params "$FUSION" --set "$set" --screen heuristic \
-      --arms nogate,gate,gate+screen --machine t3-5070ti --run-id e15_react --out outputs/injection_v3
+      --arms nogate,gate,gate+screen --machine "$MACHINE" --run-id e15_react --out outputs/injection_v3
   serve_down
 }
 
@@ -420,7 +425,7 @@ stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queu
     run_log "$V/e15_s1_${sysn%%|*}.log" $PY scripts/run_injection_tests.py --system "${sysn%%|*}" --alerts val --val-part eval --data hi_medium --n "${sysn#*|}" \
         --llm endpoint --model gemma4-12b-dual --backtest "$BT" --fusion-params "$FUSION" --set "$set" \
         --screen fastmodel --screen-endpoint "${FTM_FAST_ENDPOINT:-http://127.0.0.1:8001/v1}" --screen-model fast3-s$S1_SEED \
-        --arms nogate,gate,gate+screen --machine t3-5070ti --run-id "e15_s1_${sysn%%|*}" --out outputs/injection_v3
+        --arms nogate,gate,gate+screen --machine "$MACHINE" --run-id "e15_s1_${sysn%%|*}" --out outputs/injection_v3
   done
   serve_down
 }

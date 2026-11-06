@@ -160,3 +160,14 @@ def test_other_stage_dry_runs_name_the_expected_commands():
     assert "frozen_v3/shape_gemma_train.json" in out and "frozen_v3/account_gemma.json" in out
     assert out.count("sft_planner_v3.yaml") == 3
     assert "run_injection_tests.py --system planner" in out and "run_injection_tests.py --system react" in out
+
+
+def test_machine_label_is_overridable_and_defaults_to_the_pc():
+    base = {"V": "outputs/_t3_rerun_test_v3", "TEACHER": "outputs/_t3_rerun_test_teacher"}
+    pc = _dry("teacher", env=base)
+    assert pc.returncode == 0, pc.stderr
+    assert all("--machine t3-5070ti" in ln for ln in pc.stdout.splitlines() if "run_llm_agent.py" in ln)
+    ada = _dry("teacher", env={**base, "MACHINE": "ada-2080ti-tp2", "EXTERNAL_SERVER": "1"})
+    runs = [ln for ln in ada.stdout.splitlines() if "run_llm_agent.py" in ln]
+    assert runs and all("--machine ada-2080ti-tp2" in ln and "t3-5070ti" not in ln for ln in runs)
+    assert "serve_llm.py" not in ada.stdout  # the external server is used as it is

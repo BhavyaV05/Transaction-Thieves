@@ -22,6 +22,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 DRY=${DRY_RUN:-0}
+MACHINE=${MACHINE:-t3-5070ti}            # recorded in every run summary
+EXTERNAL_SERVER=${EXTERNAL_SERVER:-0}    # 1: the endpoint is already served (ada): no server here; export FTM_LLM_ENDPOINT / FTM_LLM_API_KEY
 PY=${PY:-.venv/bin/python}
 MODEL=${MODEL:-gemma4-12b}
 OUT=${OUT:-outputs/rag_bench}
@@ -35,6 +37,7 @@ stage=${1:-plan}
 
 serve_up() {
   [[ $DRY == 1 ]] && { echo "DRY: serve $MODEL" >&3; return; }
+  [[ $EXTERNAL_SERVER == 1 ]] && { echo "$(date -Is) external server at ${FTM_LLM_ENDPOINT:-unset}"; return; }
   export PATH=$HOME/projects/vllm-venv/bin:$PATH FTM_HF_HOME=${FTM_HF_HOME:-$HOME/hf_cache} HF_HUB_OFFLINE=1
   set -a; source .env; set +a
   export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1
@@ -64,7 +67,7 @@ run_arm() {
       [[ -f $d/$c/summary.json ]] && continue
       [[ $DRY == 1 ]] || rm -rf "${d:?}/$c"
       run_log "$d/$c.log" $PY scripts/run_llm_agent.py --system "$sys" --mode compose --alerts val --val-part "$part" --data hi_medium --n "$chunk" --offset "$off" \
-          --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --candidate "$name" --seed "$seed" --machine t3-5070ti \
+          --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --candidate "$name" --seed "$seed" --machine "$MACHINE" \
           --profile tuned "${libarg[@]}" "$@" --run-id "$c" --run-dir "$d/$c"
       echo "$(date -Is) $name $part/$c (offset $off): exit $?"
     done
