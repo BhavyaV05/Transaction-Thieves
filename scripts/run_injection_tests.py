@@ -49,7 +49,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import dev_responder  # noqa: E402
-from ftm.llm.fusion_adapter import ConditionalLR, FusedLR  # noqa: E402
+from ftm.llm.fusion_adapter import load_fitted  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM  # noqa: E402
 from ftm.planners.llm import LLMPlanner  # noqa: E402
@@ -226,10 +226,8 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(str(e)) from e
     if a.fusion_params is not None and bt is None:
         ap.error("--fusion-params needs --backtest")
-    if a.fusion_params:  # the same loader as run_llm_agent: ConditionalLR for the headroom_v1 JSON, FusedLR for a Fusion.params() file
-        params = json.loads(a.fusion_params.read_text(encoding="utf-8"))
-        fusion = (ConditionalLR.from_json(a.fusion_params, bt.table) if params.get("kind") == "conditional_fusion"
-                  else FusedLR.from_params(params, bt.table))
+    if a.fusion_params:
+        fusion = load_fitted(a.fusion_params, bt.table)
     else:
         fusion = NaiveLRFusion(bt.table if bt else None)
         print("NOTE: fusion = NaiveLRFusion (no --fusion-params): the named ablation, not the production fusion", file=sys.stderr)

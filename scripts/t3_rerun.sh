@@ -42,7 +42,7 @@ TOOLS="$PY scripts/t3_rerun_tools.py"
 MODEL=${MODEL:-$($PY -c 'import json,sys; p=json.load(open("outputs/e18_refresh/report.json")).get("pick"); print(p or "gemma4-12b")' 2>/dev/null || echo gemma4-12b)}
 CHUNK=${CHUNK:-80}
 V=${V:-outputs/t3_val_v3}
-TEACHER=outputs/t3_teacher_v2
+TEACHER=${TEACHER:-outputs/t3_teacher_v2}
 LIB=outputs/t3_library/frozen_v3
 SFT=outputs/sft_v3
 STUDENTS=models/planner_sft_v3

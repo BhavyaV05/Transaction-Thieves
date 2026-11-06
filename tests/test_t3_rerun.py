@@ -119,7 +119,7 @@ def test_shell_script_parses():
 
 
 def test_teacher_dry_run_lists_25_chunks_with_the_tuned_profile_and_no_test():
-    r = _dry("teacher", env={"V": "outputs/_t3_rerun_test_v3"})
+    r = _dry("teacher", env={"V": "outputs/_t3_rerun_test_v3", "TEACHER": "outputs/_t3_rerun_test_teacher"})  # empty paths: finished real chunks are skipped
     assert r.returncode == 0, r.stderr
     runs = [ln for ln in r.stdout.splitlines() if "run_llm_agent.py" in ln]
     assert len(runs) == 25 + 3 + 2  # teacher chunks, seeding fit (191), seeding cal (109)
