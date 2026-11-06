@@ -532,3 +532,13 @@ def test_synthetic_option_runs_the_whole_pipeline(tmp_path, capsys):
 def test_synthetic_option_refuses_test(tmp_path):
     with pytest.raises(SystemExit):
         script.main(["--synthetic", "--split", "test", "--outdir", str(tmp_path)])
+
+
+def test_prereg_margin_is_a_fixed_number_and_fix_on_val_means_derive(tmp_path):
+    y = tmp_path / "h.yaml"
+    y.write_text("statistics:\n  equivalence_margin: {definition: x, value: 0.01}\n")
+    assert fn.prereg_margin(y) == 0.01
+    y.write_text("statistics:\n  equivalence_margin: {definition: x, value: fix_on_val}\n")
+    assert fn.prereg_margin(y) is None  # still to be derived on validation
+    assert fn.prereg_margin(tmp_path / "missing.yaml") is None
+    assert fn.prereg_margin() == 0.01  # the committed prereg

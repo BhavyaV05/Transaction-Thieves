@@ -36,3 +36,8 @@ thinking:
   arm: "the stage-2 winner, thinking on, 1,024 output tokens per step, same 500 alerts"
   adopt_if: "Brier(on) - Brier(off) CI upper bound < -margin AND latency target still met; then on for every system"
 report: [brier_per_model_with_ci, valid_dsl_rate, median_s_per_alert, gpu_s_per_alert, tokens_per_alert, brier_vs_active_params_per_family]
+
+# Addendum 6 Nov 2026 (T3 proposal R3, docs/rewrite_prereg_proposal.md; decided by T4): option (i). The backbone refresh on validation fit + cal (300 alerts, new pipeline,
+# new candidate list, CI-contains-0 rule) is reported as an exploratory ADDENDUM to E18. It is not a replacement: the rule above and the 26 Oct decision stay the
+# pre-registered one, and the production backbone stays as decided (Gemma 4 12B, thinking off; the refresh also picked Gemma 4 12B).
+
