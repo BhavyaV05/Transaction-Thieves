@@ -171,3 +171,11 @@ def test_machine_label_is_overridable_and_defaults_to_the_pc():
     runs = [ln for ln in ada.stdout.splitlines() if "run_llm_agent.py" in ln]
     assert runs and all("--machine ada-2080ti-tp2" in ln and "t3-5070ti" not in ln for ln in runs)
     assert "serve_llm.py" not in ada.stdout  # the external server is used as it is
+
+
+def test_e15_stage_commands_state_the_backtest_mode():
+    """configs/fusion/headroom_v1_table.jsonl has no cache entries beside it, so load_backtest needs the mode: without it every E15 call stopped at startup."""
+    r = _dry("e15", env={"V": "outputs/_t3_rerun_test_v3"})
+    assert r.returncode == 0, r.stderr
+    calls = [ln for ln in r.stdout.splitlines() if "run_injection_tests.py" in ln]
+    assert len(calls) == 2 and all("--backtest-mode realistic" in ln for ln in calls)

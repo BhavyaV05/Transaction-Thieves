@@ -169,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--endpoint", default=None, help="OpenAI-compatible base URL (default: FTM_LLM_ENDPOINT)")
     ap.add_argument("--model", default=None)
     ap.add_argument("--backtest", type=Path, default=None, help="back-test dir / lr_table.jsonl (planner menu, fusion LRs)")
+    ap.add_argument("--backtest-mode", default=None, choices=["realistic", "exact"],
+                    help="the mode of a table copied away from its cache entries (configs/fusion/headroom_v1_table.jsonl has none beside it); a cross-check when the entries are there")
     ap.add_argument("--fusion-params", type=Path, default=None, help="Fusion.params() JSON fitted on val (T4)")
     ap.add_argument("--no-select-menu", action="store_true")
     ap.add_argument("--thinking", action="store_true")
@@ -221,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     bt = None
     if a.backtest is not None:
         try:
-            bt = load_backtest(a.backtest, require="realistic")
+            bt = load_backtest(a.backtest, mode=a.backtest_mode, require="realistic")
         except BacktestTableError as e:
             raise SystemExit(str(e)) from e
     if a.fusion_params is not None and bt is None:
