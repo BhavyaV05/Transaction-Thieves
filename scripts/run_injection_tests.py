@@ -118,6 +118,7 @@ def plan_text(systems: list[str], n: int, n_arms: int, n_kinds: int, sec_per_run
 def build_factory(rla, name: str, llm, a, menu, fusion, extra, pool):
     if name == "planner":
         return lambda: LLMPlanner(llm, mode=a.mode, questions=menu, seed=a.seed, extra=extra, fusion=fusion,
+                                  menu_top_k=getattr(a, "menu_top_k", None), min_evidence_rows=getattr(a, "evidence_min", 0),
                                   question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))))  # fmt: skip
     cls = {**rla.GROUP_D, **rla.GROUP_C}[name]
     kw = {"pool": pool} if name in rla.GROUP_C else {}
@@ -175,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-select-menu", action="store_true")
     ap.add_argument("--thinking", action="store_true")
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
-    ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens)
+    ap.add_argument("--max-prompt-tokens", type=int, default=None, help="prompt cap; default: the tuned profile's (6,750 at an 8k context)")
+    ap.add_argument("--menu-top-k", type=int, default=None, help="ranked top-K menu in the planner prompt; default: the tuned profile's. Without the budget the whole 204-question menu plus a 40-row trail overflows the context and every planner call ends as PromptTooLong (exposed 0)")
+    ap.add_argument("--evidence-min", type=int, default=None, help="newest trail rows protected from the prompt trimmer; default: the tuned profile's")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
     ap.add_argument("--plan", action="store_true", help="print the number of investigations and hours, run nothing")
@@ -216,6 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     tuned = load_profile("tuned")  # the production p0 and edge scorer unless the environment names others
     os.environ.setdefault("FTM_P0_VARIANT", tuned["p0_variant"])
     os.environ.setdefault("FTM_EDGE_SCORER", tuned["edge_scorer"])
+    for attr, key in (("max_prompt_tokens", "max_prompt_tokens"), ("menu_top_k", "menu_top_k"), ("evidence_min", "min_evidence_rows")):
+        if getattr(a, attr) is None:
+            setattr(a, attr, tuned.get(key, Limits.max_tokens if attr == "max_prompt_tokens" else None if attr == "menu_top_k" else 0))
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
