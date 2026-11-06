@@ -69,7 +69,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
-from ftm.llm.fusion_adapter import ConditionalLR, FusedLR  # noqa: E402
+from ftm.llm.fusion_adapter import load_fitted  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM, RecordingClient  # noqa: E402
 from ftm.llm.profile import PROFILES, decision_threshold, load_profile  # noqa: E402
@@ -557,9 +557,7 @@ def _main(argv: list[str] | None = None) -> int:
     if a.fusion_params is not None and bt is None:
         ap.error("--fusion-params needs --backtest (the fitted model reads the table's LRs and families)")
     if a.fusion_params is not None:
-        params = json.loads(a.fusion_params.read_text(encoding="utf-8"))
-        fusion = (ConditionalLR.from_json(a.fusion_params, bt.table) if params.get("kind") == "conditional_fusion"
-                  else FusedLR.from_params(params, bt.table))
+        fusion = load_fitted(a.fusion_params, bt.table)
     else:
         fusion = NaiveLRFusion(bt.table if bt else None)
         print(f"NOTE: fusion = NaiveLRFusion ({'--fusion naive: the named ablation' if a.fusion == 'naive' else 'profile none, legacy: no --fusion-params'}); "

@@ -212,7 +212,7 @@ def cmd_distill(a) -> int:
     import polars as pl
 
     from ftm.llm.backtest_table import TableAcceptance, load_backtest
-    from ftm.llm.fusion_adapter import FusedLR
+    from ftm.llm.fusion_adapter import load_fitted
     from ftm.planners.llm_distill import Teacher, distill_examples
 
     labels = {}
@@ -230,7 +230,7 @@ def cmd_distill(a) -> int:
     if runs_model != {a.teacher_model}:
         raise SystemExit(f"runs were made with {sorted(map(str, runs_model))}, not --teacher-model {a.teacher_model!r}")
     if a.fusion_params is not None:
-        fusion = FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), table)  # fitted on val (T4)
+        fusion = load_fitted(a.fusion_params, table)
     else:  # the naive summed fusion every run uses until the team adopts the fitted one (configs/final/jobs.yaml)
         from ftm.llm.investigation import NaiveLRFusion
 
