@@ -10,6 +10,7 @@ from ftm.external.react import React
 from ftm.external.text_agent import case_text
 from ftm.harness.interface import ScriptedToolBox
 from ftm.llm.budget import BudgetedClient, PromptTooLong, estimate_messages
+from ftm.llm.client import LLMError
 from ftm.llm.mock import MockLLM
 from ftm.llm.trim import OMITTED, trim_evidence
 from ftm.types import AlertContext, Limits
@@ -69,3 +70,22 @@ def test_react_on_a_dense_tokenizer_finishes_instead_of_ending_at_p0():
     llm = Dense(1.25, script=["Thought 1: nothing to ask.\nAction 1: finish[0.4]"] * 2)  # the over-long call uses up one reply
     v = React(llm).investigate(ALERT, ScriptedToolBox([]), Limits(max_tokens=4000))
     assert v.probability == pytest.approx(0.4) and v.llm_calls == 2  # first call over the cap by the server's count, resent trimmed
+
+
+class Refuses(MockLLM):
+    def __init__(self, msg):
+        super().__init__(script=[])
+        self.msg = msg
+
+    def chat(self, messages, **kwargs):
+        raise LLMError(self.msg)
+
+
+def test_over_the_models_context_length_is_prompt_too_long_not_a_crash():
+    msgs = [{"role": "user", "content": "short"}]
+    over = "POST /v1/chat/completions -> HTTP 400: This model's maximum context length is 8192 tokens."
+    with pytest.raises(PromptTooLong):
+        BudgetedClient(Refuses(over), Limits(max_tokens=6750, max_llm_calls=20)).chat(msgs)
+    with pytest.raises(LLMError):  # any other refusal still surfaces
+        BudgetedClient(Refuses("POST /v1/chat/completions -> HTTP 400: invalid schema"), Limits(max_tokens=6750, max_llm_calls=20)).chat(msgs)
+
