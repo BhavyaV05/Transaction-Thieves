@@ -32,7 +32,6 @@ Data that choose: val `fit` (191) + `cal` (109) askable alerts, 300 alerts, the 
 | rules_whole | planner | rules | --rules whole | 0.21 | ready |
 | lib_none | planner | library | library=none - | 0.21 | ready |
 | lib_account | planner | library | library=account - | 0.21 | ready |
-| lib_shape_rebuilt | planner | library | library=shape_rebuilt - | 0.21 | library file missing (outputs/rag_bench/libs/shape_tuned_teacher.json); build it first |
 | lib_shape_bt | planner | library | library=shape_bt - | 0.21 | ready |
 | sharma_native_mem_on (default) | sharma_native | memory | - | 0.14 | ready |
 | sharma_native_mem_off | sharma_native | memory | --no-memory | 0.14 | ready |
@@ -147,7 +146,7 @@ Raising the pool's positive share fixes the exemplar balance (the 20 retrieved e
 | Suggestion | Status |
 |---|---|
 | Library built WITHOUT any LLM run from the TRAIN back-test rows (every alert x every accepted question, so it cannot collapse onto the planner's favourite question) | implemented: `build_backtest_library` in `scripts/rag_offline_bench.py`; frozen file `outputs/rag_bench/libs/shape_backtest_train.json` (hash dd79ed5aabe5e760, 69 notes), GPU arm `lib_shape_bt`. Offline it does NOT transfer, so the GPU arm is a test of whether it hurts. |
-| Rebuild the libraries from TRAIN teacher runs of the tuned stack (the frozen ones come from the old stack: naive fusion, stub view) | `scripts/t3_rag_bench.sh library` (arm `lib_shape_rebuilt`) |
+| Rebuild the libraries from TRAIN teacher runs of the tuned stack (the old frozen ones come from the old stack: naive fusion, stub view) | done by the rerun, not by this bench: `outputs/t3_library/frozen_v3/*_train.json` is built from the teacher_v2 runs (1,983 train alerts, the same tuned stack); the bench stage `library` and the arm `lib_shape_rebuilt` were removed on 7 Nov (they would have repeated those runs, ~1.4 GPU-h, under another name) |
 | Condition note gains on the base rate (fit the gain on the logit scale, or build on a val-prevalence reweighted train) | NOT implemented (changes `ftm/library/build.py`, not mine); motivated by the sign flip above |
 | Typology cue from the shape in `rules_query` | implemented as a measured arm only (`shape_typology_cue`); rejected by the numbers (cue given 14%, correct 14.5%). A typology cue needs a signal that is not the receiver's 1-hop shape (e.g. the planner's own hypothesis after step 1) |
 | Query = fixed sentence + alert words, not alert words alone, and `typology_flag_hit` as the retrieval metric next to citation | measured; the GPU arms `rules_fixed` / `rules_none` / `rules_whole` decide whether the prompt benefit exists at all |
@@ -193,10 +192,21 @@ Trimmer: order unchanged (oldest evidence rows, strategies, menu questions); new
 
 ```
 scripts/t3_rag_bench.sh plan          # arm table, no GPU
-scripts/t3_rag_bench.sh library       # teacher runs on train (tuned stack) + rebuild shape/account libraries
 scripts/t3_rag_bench.sh arms          # all ready arms on val fit + cal (resumable), then the report
 scripts/t3_rag_bench.sh combined      # after reading outputs/rag_bench/selection.json
 scripts/t3_rag_bench.sh eval          # once
 python scripts/rag_offline_bench.py   # the CPU bench (about 30 min, contexts cached in outputs/rag_bench/contexts.pkl)
 ```
 
+
+
+## 11. Library fix made before any GPU run of this bench (7 Nov 2026)
+
+**What was wrong.** The fit and cal arms of this bench pointed at `outputs/t3_library/frozen/shape_gemma.json` (default) and `frozen_v2/account_teacher_only.json`. The first was built from the 1,983 train teacher runs **plus the val tuning runs** (`docs/t3_library_draft.md`: 3,091 records), so val fit/cal alert outcomes could shape the notes a fit/cal arm read: a label leak into the very alerts the bench chooses on, and the opposite of the rule `scripts/t3_rerun.sh` follows (teacher-only libraries on fit and cal, the full one on eval). Found while preparing the bench for ada; nothing had run yet, so no result is affected. The offline-bench numbers in sections 2-3 (`outputs/rag_bench/offline*.json`) are descriptive and unchanged: that bench compares the old libraries on val on purpose, and its `shape_teacher_only` arm is the train-only comparison.
+
+**What changed.**
+* The part decides the library, in one place (`scripts/t3_rag_bench_report.py`, `lib_path(kind, part)`): fit and cal use `outputs/t3_library/frozen_v3/shape_gemma_train.json` / `account_gemma_train.json` (teacher_v2 runs only); eval uses `frozen_v3/shape_gemma.json` / `account_gemma.json`. The shell script reads both paths from the report (`arms --tsv` now has `lib_fitcal` and `lib_eval` columns) and never names a library file itself. `lib_shape_bt` keeps its file for both parts: it is built from TRAIN back-test rows only (`build_backtest_library(contexts["train"])` in `scripts/rag_offline_bench.py`; no LLM, no val row).
+* The stage `library` and the arm `lib_shape_rebuilt` are gone (they would have redone ~1.4 GPU-h of teacher runs that teacher_v2 already covers on the same tuned stack, and `frozen_v3` is built from those). The arm list has 33 arms.
+* Tests (`tests/test_rag_offline_bench.py`): no fit/cal arm may point at anything but the three train-only files, eval gets the full file and never the train one, the part must be named, and no script or config on the val path may name a library built with val runs (allow-list with the reason for each remaining hit: T4's `configs/final/jobs.yaml` is the TEST final-run plan and keeps the full library; `scripts/rag_offline_bench.py` is the descriptive comparison; `scripts/t3_qwen_session.sh` is E16 on val eval only; `scripts/t3_val_session.sh` is the old session that built the libraries).
+
+The arms, the selection rule and every threshold are exactly as written in sections 1-2.
