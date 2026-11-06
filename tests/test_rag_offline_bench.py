@@ -139,15 +139,15 @@ def test_arm_registry_one_factor_and_unique():
 
 
 def test_blocked_by_missing_flags_and_library_files(monkeypatch):
-    monkeypatch.setattr(rb, "LIB_PATHS", {**dict.fromkeys(rb.LIB_PATHS), "shape_rebuilt": "outputs/_no_such_library.json"})
+    monkeypatch.setattr(rb, "lib_path", lambda kind, part: "outputs/_no_such_library.json" if kind == "account" else None)
     ev_none = next(a for a in rb.build_arms() if a.name == "ev_none")
     assert rb.blocked(ev_none, "ap.add_argument('--evidence-view', help='amount | scorer')") is not None
     ok_src = "ap.add_argument('--evidence-view', help='none | amount | scorer')"
     assert rb.blocked(ev_none, ok_src) is None
     rules = next(a for a in rb.build_arms() if a.name == "rules_whole")
     assert rb.blocked(rules, "nothing") and rb.blocked(rules, "ap.add_argument('--rules', choices=[...])") is None
-    rebuilt = next(a for a in rb.build_arms() if a.name == "lib_shape_rebuilt")
-    assert "library file missing" in (rb.blocked(rebuilt, "") or "")
+    acct = next(a for a in rb.build_arms() if a.name == "lib_account")
+    assert "library file missing" in (rb.blocked(acct, "") or "")
 
 
 def test_estimates_and_plan_table():
@@ -228,3 +228,40 @@ def test_shell_script_syntax_and_dry_run(tmp_path):
                                                         "PYTHONPATH": str(ROOT), "PATH": "/usr/bin:/bin"}, capture_output=True, text=True, cwd=ROOT)
     assert "--profile tuned" in r.stdout and "--library" not in r.stdout.split("DRY: " + sys.executable)[1].split("\n")[0]
     assert not (tmp_path / "o").exists()  # a dry run creates nothing
+
+
+# -- no val label may reach a fit/cal arm through its library (fixed 7 Nov, before any GPU run of the bench) ----------------------------------------
+TRAIN_ONLY = ("outputs/t3_library/frozen_v3/shape_gemma_train.json", "outputs/t3_library/frozen_v3/account_gemma_train.json", "outputs/rag_bench/libs/shape_backtest_train.json")
+BUILT_WITH_VAL_RUNS = ("outputs/t3_library/frozen/", "outputs/t3_library/frozen_v2/", "outputs/rag_bench/libs/shape_tuned_teacher", "outputs/rag_bench/libs/account_tuned_teacher")
+
+
+def test_fit_and_cal_arms_only_get_train_built_libraries_and_eval_gets_the_full_ones():
+    for arm in rb.build_arms():
+        fitcal, ev = rb.lib_path(arm.library, "fitcal"), rb.lib_path(arm.library, "eval")
+        assert (fitcal is None) == (arm.library == "none") and (ev is None) == (arm.library == "none")
+        if fitcal is None:
+            continue
+        assert fitcal in TRAIN_ONLY, f"{arm.name}: fit/cal would read {fitcal}"
+        assert not fitcal.startswith(BUILT_WITH_VAL_RUNS) and not (ev or "").startswith(BUILT_WITH_VAL_RUNS)
+        if arm.library in ("shape", "account"):
+            assert ev == fitcal.replace("_train.json", ".json") and ev != fitcal  # eval takes the full library, never the train one
+    with pytest.raises(ValueError):
+        rb.lib_path("shape", "fit")  # the part must be said explicitly
+
+
+def test_the_scripts_on_the_val_path_name_no_library_built_with_val_runs():
+    """Every script and config except the listed ones is free of the old libraries.  Listed, with the reason each is not a fit/cal path:
+    configs/final/jobs.yaml (T4's final-run plan for the TEST split, where the full library is the right one; reported, not changed), scripts/rag_offline_bench.py (descriptive offline
+    comparison of the old and the teacher-only libraries on val; it is what showed the difference), scripts/t3_qwen_session.sh (E16 on val `eval` only) and scripts/t3_val_session.sh
+    (the old session that BUILT those libraries; superseded by scripts/t3_rerun.sh)."""
+    allowed = {"configs/final/jobs.yaml", "scripts/rag_offline_bench.py", "scripts/t3_qwen_session.sh", "scripts/t3_val_session.sh", "scripts/t3_rag_bench_report.py", "tests/test_rag_offline_bench.py"}
+    hits = []
+    for base in ("scripts", "configs", "ftm"):
+        for f in (ROOT / base).rglob("*"):
+            if f.suffix not in (".py", ".sh", ".yaml", ".json") or "__pycache__" in f.parts or f.relative_to(ROOT).as_posix() in allowed:
+                continue
+            text = f.read_text(errors="ignore")
+            for bad in ("t3_library/frozen/", "t3_library/frozen_v2", "shape_tuned_teacher", "account_tuned_teacher"):
+                if bad in text:
+                    hits.append(f"{f.relative_to(ROOT)}: {bad}")
+    assert not hits, hits
