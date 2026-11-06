@@ -69,6 +69,8 @@ run_arm() {
           --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --candidate "$name" --seed "$seed" --machine "$MACHINE" \
           --profile tuned "${libarg[@]}" "$@" --run-id "$c" --run-dir "$d/$c"
       echo "$(date -Is) $name $part/$c (offset $off): exit $?"
+      # a chunk whose arm never called the model, or whose prompts were all too long, is not a result: stop (CHUNK_CHECK=0 to skip; DRY_RUN prints only)
+      if [[ $DRY != 1 && ${CHUNK_CHECK:-1} == 1 ]]; then $PY scripts/t3_chunk_check.py "$d/$c" || { echo "$(date -Is) $name $part/$c FAILED the chunk check: stopping, nothing recorded"; exit 4; }; fi
     done
   done
 }

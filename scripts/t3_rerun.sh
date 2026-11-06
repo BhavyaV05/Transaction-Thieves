@@ -123,6 +123,8 @@ run_chunks() {
     run_log "$dir/$c.log" $PY scripts/run_llm_agent.py $pargs --data hi_medium --n "$CHUNK" --offset "$off" $COMMON --model "$model" \
         --run-id "$c" --run-dir "$dir/$c" "$@"
     [[ $DRY == 1 ]] || say "$dir/$c (offset $off): exit $? ($(grep -c '^PromptTooLong' "$dir/$c.log") PromptTooLong, $(grep -c '^PromptRefit' "$dir/$c.log") refits)"
+    # a chunk whose arm never called the model, or whose prompts were all too long, is not a result: stop (CHUNK_CHECK=0 to skip)
+    if [[ $DRY != 1 && ${CHUNK_CHECK:-1} == 1 ]]; then $PY scripts/t3_chunk_check.py "$dir/$c" || { say "$dir/$c FAILED the chunk check: stopping, nothing recorded"; exit 4; }; fi
   done < <($TOOLS chunks "$total" "$CHUNK")
 }
 total_of() { case $1 in fit) echo $FIT_N ;; cal) echo $CAL_N ;; eval) echo $EVAL_N ;; esac; }

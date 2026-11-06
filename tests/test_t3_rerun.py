@@ -179,3 +179,25 @@ def test_e15_stage_commands_state_the_backtest_mode():
     assert r.returncode == 0, r.stderr
     calls = [ln for ln in r.stdout.splitlines() if "run_injection_tests.py" in ln]
     assert len(calls) == 2 and all("--backtest-mode realistic" in ln for ln in calls)
+
+
+def test_chunk_check_stops_a_silent_zero_call_arm_and_a_prompt_too_long_arm(tmp_path):
+    cc = _load("t3_chunk_check")
+
+    def chunk(name, calls, probs=None, ptl=0):
+        d = tmp_path / name
+        d.mkdir()
+        probs = probs if probs is not None else [0.2] * len(calls)
+        (d / "per_alert.jsonl").write_text("".join(json.dumps({"alert_id": f"A{i}", "llm_calls": c, "probability": p}) + "\n" for i, (c, p) in enumerate(zip(calls, probs, strict=True))))
+        (tmp_path / f"{name}.log").write_text("PromptTooLong[planner] A0: over the model's context length\n" * ptl)
+        return d
+
+    ok, msg = cc.check(chunk("good", [3, 0, 2, 4, 1, 2, 3, 2, 0, 3]))  # 8 of 10 alerts called the model
+    assert ok and "with an LLM call 0.80" in msg
+    ok, msg = cc.check(chunk("silent", [0] * 10))  # every alert stopped without a call: not a result
+    assert not ok and "FAIL" in msg
+    ok, _ = cc.check(chunk("toolong", [1] * 10, ptl=9))  # 0.9 PromptTooLong per alert
+    assert not ok
+    ok, _ = cc.check(chunk("noverdict", [1] * 10, probs=[None] * 5 + [0.1] * 5))
+    assert not ok
+    assert cc.main([str(tmp_path / "good")]) == 0 and cc.main([str(tmp_path / "silent")]) == 4
