@@ -919,6 +919,7 @@ TABLE_IDS = {  # id -> table stem (Writer.tables)
     "error_tags": "error_tags", "case_studies": "case_studies", "compute_table": "compute", "inj_results": "injection_summary", "e18_sweep": "e18_sweep",
     "fusion_calibration": "fusion_calibration", "shuffled_answers": "shuffled_answers", "hypothesis_verdicts": "hypotheses",
     "eps_infinity": "eps_infinity", "review_capacity": "review_capacity", "adjusted_estimates": "adjusted_estimates",
+    "p0_recalibration": "p0_recalibration",
 }
 GROUP_IDS = {"planner_comparison": ["reference", "planners", "llm"], "ft_planner": ["e16"], "library_shape": ["e11"]}  # Table 5b groups
 FIGURE_IDS = {"fig_privacy_curve": ["privacy_curve"], "fig_pareto": ["pareto", "external_gap"]}
@@ -1147,6 +1148,7 @@ def run_all(panel: Panel, inputs: dict, outdir: Path, figures: bool = True, outl
     w.attempt("eps_infinity", lambda: fadd.eps_infinity(inputs, panel.split, w))
     w.attempt("review_capacity", lambda: fadd.review_capacity(panel, w))
     w.attempt("adjusted_estimates", lambda: fadd.adjusted_estimates(panel, w))
+    w.attempt("p0_recalibration", lambda: fadd.p0_recalibration(panel, inputs, w))
     # figures
     def fig(name, builder, cols, drawer, caption):
         rows = w.attempt(name, builder)

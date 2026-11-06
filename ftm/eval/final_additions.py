@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -315,4 +316,111 @@ def adjusted_estimates(panel: Panel, w) -> list[dict]:
             f"mean by construction and only its CI differs; cluster bootstrap refits the regression on every resample of whole clusters.")  # fmt: skip
     w.table("adjusted_estimates", rows, cols, f"S2: p0-adjusted paired Brier differences of H1 and H3 ({SENSITIVITY_LABEL})", note=note)
     w.status["adjusted_estimates"].update(tier="sensitivity (S2)", label=SENSITIVITY_LABEL, details=details, not_built=missing)
+    return rows
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# recalibrated one-bank baseline (issue 108)
+# --------------------------------------------------------------------------------------------------------------------
+LOGIT_CLIP = 1e-6  # the same clip as ftm.fusion
+
+
+def _logit(p) -> np.ndarray:
+    p = np.clip(np.asarray(p, dtype="f8"), LOGIT_CLIP, 1 - LOGIT_CLIP)
+    return np.log(p / (1 - p))
+
+
+def apply_recal(p, a: float, b: float) -> np.ndarray:
+    """logit p' = a + b * logit p."""
+    return 1.0 / (1.0 + np.exp(-(a + b * _logit(p))))
+
+
+def fit_logit_recal(p, y, mode: str = "platt", ridge: float = 1.0, iters: int = 100) -> tuple[float, float]:
+    """Fit logit p' = a + b logit p on labelled alerts: damped Newton on the penalised log-loss (no scikit-learn, deterministic).
+
+    mode "platt" fits (a, b); mode "intercept" fixes b = 1 and fits only the shift a (a pure base-rate correction, which is all a prior shift needs).
+    The penalty 0.5 * ridge * (a^2 + (b - 1)^2) pulls toward "keep p0 as it is" (one pseudo-observation by default); it keeps the fit finite when the
+    scores nearly separate the labels, which unpenalised logistic regression does not (found on the real `cal` part).
+    """
+    z, y = _logit(p), np.asarray(y, dtype="f8")
+    if mode not in ("platt", "intercept"):
+        raise ValueError("mode is platt or intercept")
+    if len(z) < 2 or y.min() == y.max():
+        raise ValueError("recalibration needs both classes among the fit alerts")
+    free = [0, 1] if mode == "platt" else [0]
+    target = np.array([0.0, 1.0])
+
+    def nll(th):
+        t = th[0] + th[1] * z
+        return float((np.logaddexp(0, t) - y * t).sum() + 0.5 * ridge * ((th - target)[free] ** 2).sum())
+
+    theta = target.copy()
+    for _ in range(iters):
+        q = 1.0 / (1.0 + np.exp(-(theta[0] + theta[1] * z)))
+        g = np.array([(q - y).sum(), ((q - y) * z).sum()])[free] + ridge * (theta - target)[free]
+        wgt = q * (1 - q)
+        h = np.array([[wgt.sum(), (wgt * z).sum()], [(wgt * z).sum(), (wgt * z * z).sum()]])[np.ix_(free, free)] + ridge * np.eye(len(free))
+        step, t, f0 = np.linalg.solve(h, g), 1.0, nll(theta)
+        while t > 1e-8:  # backtracking line search: the penalised loss must go down
+            cand = theta.copy()
+            cand[free] -= t * step
+            if nll(cand) <= f0:
+                break
+            t /= 2
+        else:
+            break
+        theta = cand
+        if np.abs(t * step).max() < 1e-10:
+            break
+    return float(theta[0]), float(theta[1])
+
+
+def p0_recalibration(panel: Panel, inputs: dict, w) -> list[dict]:
+    """Table `p0_recalibration`: p0 against p0 recalibrated on labelled validation alerts, and every system against both.
+
+    The maps come from `scripts/fit_p0_recal.py` (inputs.yaml `p0_recal.path`), fitted on labelled validation parts only and frozen: a validation
+    analysis uses maps fitted on parts before `eval`, the test analysis a map fitted on all validation alerts. Labels of the part being scored never enter a map.
+    Sensitivity: the headline H1 stays against raw p0 as pre-registered; this row asks how much of a gain is recalibration of the one-bank score.
+    """
+    spec = (inputs or {}).get("p0_recal") or {}
+    if not spec.get("path"):
+        raise Missing("inputs.yaml p0_recal.path is not set (scripts/fit_p0_recal.py writes it)")
+    maps = json.loads(Path(spec["path"]).read_text()).get("maps") or {}
+    if not maps:
+        raise Missing(f"{spec['path']} holds no maps")
+    y, cl = panel.y, panel.clusters
+    se0 = (panel.p0 - y) ** 2
+    rows, details = [], {}
+    primary = spec.get("primary") or next(iter(maps))
+    if primary not in maps:
+        raise fn.AnalysisInputError(f"p0_recal.primary {primary!r} is not among the maps {sorted(maps)}")
+    for name, mp in maps.items():
+        p_r = apply_recal(panel.p0, float(mp["a"]), float(mp["b"]))
+        se_r = (p_r - y) ** 2
+        d = bs.bootstrap_means(se_r - se0, cl, panel.n_boot, panel.seed)[:, 0]
+        rows.append({"comparison": f"p0 recalibrated [{name}] minus p0", "map": name, "fitted on": mp.get("parts", ""), "n fit": mp.get("n_fit"),
+                     "label rate in fit": mp.get("base_rate_fit"), "label rate scored": float(y.mean()), "a": mp["a"], "b": mp["b"],
+                     "Brier": float(se_r.mean()), "difference": float((se_r - se0).mean()), "95% CI": _fci(fn.ci_tuple(d), 4),
+                     "note": "primary recalibrated baseline" if name == primary else ""})  # fmt: skip
+        details[name] = {"a": mp["a"], "b": mp["b"], "brier_p0": float(se0.mean()), "brier_recal": float(se_r.mean())}
+    mp = maps[primary]
+    se_ref = (apply_recal(panel.p0, float(mp["a"]), float(mp["b"])) - y) ** 2
+    systems: dict[str, np.ndarray] = {k.label(): s.se_e2e for k, s in panel.scores.items()}
+    systems.update({name: s.se_e2e for name, s in panel.sources.items()})
+    for label, se in systems.items():
+        m = np.isfinite(se)
+        if m.sum() < 2:
+            continue
+        vs0 = bs.bootstrap_means(se[m] - se0[m], cl[m], panel.n_boot, panel.seed)[:, 0]
+        vsr = bs.bootstrap_means(se[m] - se_ref[m], cl[m], panel.n_boot, panel.seed)[:, 0]
+        rows.append({"comparison": f"{label} minus p0", "n": int(m.sum()), "Brier": float(se[m].mean()), "difference": float((se[m] - se0[m]).mean()),
+                     "95% CI": _fci(fn.ci_tuple(vs0), 4)})  # fmt: skip
+        rows.append({"comparison": f"{label} minus p0 recalibrated [{primary}]", "n": int(m.sum()), "Brier": float(se[m].mean()),
+                     "difference": float((se[m] - se_ref[m]).mean()), "95% CI": _fci(fn.ci_tuple(vsr), 4)})  # fmt: skip
+    cols = ["comparison", "map", "fitted on", "n fit", "label rate in fit", "label rate scored", "a", "b", "n", "Brier", "difference", "95% CI", "note"]
+    note = (f"Sensitivity, outside the Holm families, never changes a verdict (issue 108). Negative difference = the first term is better. The recalibration "
+            f"is logit p' = a + b logit p fitted on labelled validation alerts only ({spec['path']}); the label rate differs between the fit and the scored "
+            f"alerts, so a map fitted on early validation parts can hurt later ones; the primary map is the one fitted closest in time to the scored alerts.")  # fmt: skip
+    w.table("p0_recalibration", rows, cols, "Recalibrated one-bank baseline (sensitivity)", note=note)
+    w.status["p0_recalibration"].update(tier="sensitivity", primary=primary, maps=details)
     return rows

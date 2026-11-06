@@ -189,9 +189,12 @@ def test_diverse_injection_split_is_disjoint_and_the_val_families_are_there():
     assert merge_typology("scatter_gather") == "hub"
 
 
-def test_dual_serving_profile_lists_two_servers_on_two_ports():
+def test_dual_serving_profile_lists_two_servers_on_two_ports(tmp_path, monkeypatch):
     sl = load_script("serve_llm")
     cfg = sl.load_config()
+    monkeypatch.setattr(sl, "ROOT", tmp_path)  # adapters are gitignored: serve_llm only loads the ones that exist
+    for adapter in cfg["models"]["qwen3-4b-fast"]["lora_modules"].values():
+        (tmp_path / adapter).mkdir(parents=True)
     assert sl.dual_members(cfg, "system1") == ["gemma4-12b-dual", "qwen3-4b-fast"]
     a, b = (sl.vllm_args(cfg, m, sl.profile_port(cfg, m, 8000)) for m in sl.dual_members(cfg, "system1"))
     assert "--kv-cache-dtype" in a and "--enable-lora" in b and "--enforce-eager" in b
