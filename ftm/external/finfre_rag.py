@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from ftm.external.text_agent import _SUMMARY_HIDDEN
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
 from ftm.llm.client import ChatClient
@@ -255,8 +256,13 @@ class FinfreRag:
         banks = list(alert.summary.get("partner_banks", []))
         if not banks or not eps_levels(session.eps_left):
             return []
+        # The model has to see the case and the banks here: without them it picks a bank blind and every question can land on one the gate refuses.
+        num, cat = tabular_row(alert)
+        facts = {k: v for k, v in alert.summary.items() if k not in _SUMMARY_HIDDEN}
         msgs = [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": (f"Alert {alert.alert_id}. Before scoring you may ask partner banks up to "
+                {"role": "user", "content": (f"Alert {alert.alert_id}. {sentence(num, cat, self.pool.selected)}\n"
+                                             f"Transaction: {json.dumps(facts, default=str)}\nPartner banks: {banks}\n"
+                                             f"Before scoring you may ask partner banks up to "
                                              f"{MAX_QUESTIONS} small private questions; each answer is one noisy value and costs "
                                              f"eps (left: {session.eps_left:g}). Question language:\n{self.dsl.reference_text()}\n"
                                              'Reply with ONE JSON object: {"questions": [{"bank": ..., "eps": ..., "question": '

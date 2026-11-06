@@ -232,6 +232,15 @@ def test_ported_mode_adds_partner_answers_to_the_current_case():
     assert native.last_trace["partner_lines"] == []
 
 
+def test_the_question_round_shows_the_case_and_the_banks():
+    llm = MockLLM(script=[json.dumps({"questions": []}), "Score: 3"])
+    a = alert(counterparty_bank=1588, partner_banks=[1588, 220], evidence="SECRET-TRAIL")
+    ff.FinfreRag(llm, ff.ExemplarPool(rows(60)), mode="ported").investigate(a, RuleTools(), Limits())
+    prompt = llm.requests[0]["messages"][1]["content"]
+    assert "The alerted payment:" in prompt and '"counterparty_bank": 1588' in prompt and "Partner banks: [1588, 220]" in prompt
+    assert "SECRET-TRAIL" not in prompt
+
+
 def test_fit_score_map_shrinks_toward_the_fixed_table_and_uses_only_the_given_labels():
     m = ff.fit_score_map([5] * 40 + [1] * 40, [1] * 30 + [0] * 10 + [0] * 38 + [1] * 2)
     assert m[5] == pytest.approx((30 + 4 * 0.95) / 44) and m[1] < 0.1 and m[3] == ff.SCORE_TO_P[3]
