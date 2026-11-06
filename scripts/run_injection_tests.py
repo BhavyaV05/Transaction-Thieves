@@ -284,7 +284,8 @@ def main(argv: list[str] | None = None) -> int:
                 "log_version": RUN_LOG_VERSION, "model": model, "thinking": int(a.thinking),
                 "mode": "native" if system.endswith("_native") else "ported"}  # fmt: skip
         rows, pairs, t0 = [], [], time.perf_counter()
-        for ctx, label in alerts:
+        partial = (sdir / "pairs.partial.jsonl").open("w")  # every pair is on disk as soon as it is scored: a long run can be inspected (and, if it dies, its finished alerts re-merged)
+        for n_done, (ctx, label) in enumerate(alerts, 1):
             planted = pick_items(items, ctx.alert_id, kinds, a.seed)
             for arm_name in arms:
                 arm = ARMS[arm_name]
@@ -295,7 +296,13 @@ def main(argv: list[str] | None = None) -> int:
                 for it in planted:
                     att = run_alert(item=it, **kw)
                     pairs.append(score_pair(clean, att, it))
+                    partial.write(json.dumps(pairs[-1]) + "\n")
+                    partial.flush()
                     rows += _rows(rla, att, ctx, label, base, tb_variant, "inj", fusion, a.val_part, it.item_id)
+            ex = sum(p["exposed"] for p in pairs)
+            print(f"[{system}] alert {n_done}/{len(alerts)} {ctx.alert_id}: {len(pairs)} pairs, exposed {ex}, PromptTooLong runs {sum(p['prompt_too_long'] > 0 for p in pairs)}, "
+                  f"runs without an LLM call {sum(p['no_llm_call'] for p in pairs)}, {time.perf_counter() - t0:.0f} s", flush=True)
+        partial.close()
         df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
         df.write_parquet(sdir / "runlog.parquet")
         frames.append(df)
