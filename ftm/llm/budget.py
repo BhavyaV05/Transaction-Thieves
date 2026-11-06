@@ -14,7 +14,7 @@ import math
 import sys
 from dataclasses import dataclass, field
 
-from ftm.llm.client import ChatClient, ChatResponse
+from ftm.llm.client import ChatClient, ChatResponse, LLMError
 from ftm.llm.trim import trim_evidence
 from ftm.types import Limits
 
@@ -100,7 +100,13 @@ class BudgetedClient:
             raise PromptTooLong(f"{self.tag}: prompt ~{est} tokens > cap {cap}")
         refits = 0
         while True:
-            resp = self.client.chat(messages, **kwargs)
+            try:
+                resp = self.client.chat(messages, **kwargs)
+            except LLMError as e:  # over the model's own limit: the server refuses before counting, the same outcome as over the cap
+                if "maximum context length" not in str(e):
+                    raise
+                _note("PromptTooLong" if self.trim else "PromptTooLong[planner]", self.tag, f"over the model's context length, estimate ~{est}")
+                raise PromptTooLong(f"{self.tag}: prompt over the model's context length, estimate ~{est}") from e
             u = self.usage
             u.llm_calls += 1
             u.tokens_in += resp.tokens_in

@@ -16,14 +16,18 @@ privacy:                            # configs/privacy/default.yaml (T2); fixed h
 statistics:
   bootstrap: {resamples: 10000, seed: 0, level: 0.95, unit: cluster}
   clusters: attempt+accounts        # ftm.eval.bootstrap.cluster_ids; HI-Small val alerts: largest share 0.03 (T1, 2026-10-19)
-  clusters_fallback: {rule: "if largest_share > 0.2 on HI-Medium val alerts, use hub_cap", hub_cap: fix_on_val}
+  clusters_fallback: {rule: "if largest_share > 0.2 on HI-Medium val alerts, use hub_cap", hub_cap: none}   # rule not triggered: largest attempt+accounts share 0.0149 on the 806 val eval alerts (28 Oct); the test run re-checks and reports the share
   correction:
     primary: {method: holm, family: [H1, H2, H3, H4, H9], alpha: 0.05}   # Holm orders by p-value; the list order is for reporting
     secondary: {method: holm, family: [H6, H7, H10], alpha: 0.05}
     exploratory: {method: none, family: [H5, H8], label: "uncorrected, exploratory"}
   equivalence_margin:
-    definition: "0.5 * |Brier(random planner) - Brier(best simple planner)| on the same alerts"
-    value: fix_on_val
+    # CHANGED before the freeze (6 Nov 2026; nothing had gone to the TA). The earlier definition, 0.5 * |Brier(random) - Brier(best simple planner)|, gave 2.4e-05 on
+    # the val dry run (the simple planners differ by 0.0006), far below what 160 to 806 alerts resolve (detectable Brier difference about 0.025 to 0.05), so every
+    # equivalence claim would have been a superiority test in disguise. The margin is now a fixed decision-relevance value: the smallest Brier gain G2 calls worthwhile.
+    definition: "fixed: 0.01 Brier, the smallest gain G2 treats as worthwhile (not derived from planner noise)"
+    value: 0.01
+    consequence: "at these sample sizes non-inferiority within 0.01 is rarely shown (the CI half-width is about the margin); 'not shown' is reported as such, never as equivalence"
   gap_closed:
     formula: "(Brier(one bank) - Brier(system)) / (Brier(one bank) - Brier(upper))"
     upper_limits: [gfp_see_everything, best_sota_see_everything]
@@ -36,6 +40,7 @@ statistics:
 hypotheses:
   H1:
     tier: primary
+    validation_note: "6 Nov 2026: on validation no live mode beats p0 (best +0.001 to +0.003 worse), so H1 is expected not to be met; kept as pre-registered and reported as a negative result with its diagnosis"
     claim: "At eps = 2 per alert, private questions close at least 30% of the gap (Brier)."
     statistic: gap_closed(one_bank, ours_compose_eps2, upper)
     reject_null_if: "95% CI lower bound > 0 AND point estimate >= 0.30"
@@ -44,6 +49,7 @@ hypotheses:
     experiment: E2
   H2:
     tier: primary
+    validation_note: "6 Nov 2026: expected not met, and the ratio is unstable: on val the raw-sharing gain over p0 is about 0.001 (denominator CI contains 0). Kept as pre-registered; the ratio is reported but not interpreted when the denominator CI contains 0"
     claim: "Questions get at least 70% of the benefit of sharing raw records, while sharing none."
     statistic: "(Brier(one_bank) - Brier(ours_eps2)) / (Brier(one_bank) - Brier(raw_share_3_banks))"
     reject_null_if: "95% CI lower bound >= 0.70"
@@ -88,6 +94,7 @@ hypotheses:
     experiment: E8
   H7:
     tier: secondary
+    validation_note: "6 Nov 2026: on val llm_decides (+0.0011) is not worse than compose (+0.0029), so H7 is expected not met; kept as pre-registered and reported as a negative result"
     claim: "A calibrated formula making the final call beats the LLM deciding."
     statistic: "Brier(ours_compose) - Brier(llm_decides)"
     reject_null_if: "95% CI upper bound < 0"

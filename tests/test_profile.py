@@ -66,3 +66,16 @@ def test_run_llm_agent_defaults_to_the_production_profile(tmp_path, monkeypatch)
     # an explicit table without its fitted fusion is refused (no silent fallback to naive)
     with pytest.raises(SystemExit):
         mod.main(["--toolbox", "harness", "--backtest", "configs/fusion/headroom_v1_table.jsonl", "--n", "1", "--out", str(out)])
+
+
+def test_no_backtest_is_not_stopped_by_the_menu_bound():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("rla", ROOT / "scripts/run_llm_agent.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    prof = load_profile("tuned")
+    assert mod.cannot_cross_stop(0.3, False, prof, "compose")
+    assert not mod.cannot_cross_stop(0.3, False, prof, "no_backtest")  # no menu, so the bound is 0: every alert ended on p0 with no LLM call
+    assert not mod.cannot_cross_stop(0.3, True, prof, "compose") and not mod.cannot_cross_stop(None, False, prof, "compose")
+

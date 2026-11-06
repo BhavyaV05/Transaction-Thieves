@@ -1,0 +1,77 @@
+{
+ "ref": "/home/akshat/projects/Transaction-Thieves/outputs/t3_val_v3/fit/ours_compose/c000",
+ "first": 20,
+ "tests": {
+  "/home/akshat/projects/rewrite_notes/ada_pull/crosscheck/conc1": {
+   "n_alerts": 20,
+   "n_with_llm_calls_in_both": 13,
+   "same_first_prompt_estimate_and_tokens": 0.35,
+   "same_first_step": 0.6,
+   "same_question_sequence": 0.45,
+   "same_sequence_and_outcomes": 0.45,
+   "same_llm_calls": 0.65,
+   "same_final_probability": 0.45,
+   "final_probability_within_0.01": 0.55,
+   "mean_abs_probability_diff": 0.015040436672387386,
+   "max_abs_probability_diff": 0.05444716716645126,
+   "n_without_probability": 0,
+   "brier_ref": 0.08418294999057037,
+   "brier_test": 0.08641616224020217,
+   "brier_diff_test_minus_ref": 0.002233212249631804,
+   "brier_diff_ci95": [
+    -0.004613891767936547,
+    0.00994018623800167
+   ],
+   "median_seconds_per_alert_ref": 15.1609441469991,
+   "median_seconds_per_alert_test": 18.48529269080609,
+   "alerts_where_sequence_differs": [
+    "V000690",
+    "V000721",
+    "V000746",
+    "V000553",
+    "V000135",
+    "V000459",
+    "V000590",
+    "V000903",
+    "V000468",
+    "V000713",
+    "V000129"
+   ]
+  },
+  "/home/akshat/projects/rewrite_notes/ada_pull/crosscheck/conc4": {
+   "n_alerts": 20,
+   "n_with_llm_calls_in_both": 13,
+   "same_first_prompt_estimate_and_tokens": 0.35,
+   "same_first_step": 0.6,
+   "same_question_sequence": 0.5,
+   "same_sequence_and_outcomes": 0.5,
+   "same_llm_calls": 0.85,
+   "same_final_probability": 0.55,
+   "final_probability_within_0.01": 0.6,
+   "mean_abs_probability_diff": 0.012539303495872723,
+   "max_abs_probability_diff": 0.05444716716645126,
+   "n_without_probability": 0,
+   "brier_ref": 0.08418294999057037,
+   "brier_test": 0.08617813875255495,
+   "brier_diff_test_minus_ref": 0.00199518876198459,
+   "brier_diff_ci95": [
+    -0.004550358156051776,
+    0.00963508601303171
+   ],
+   "median_seconds_per_alert_ref": 15.1609441469991,
+   "median_seconds_per_alert_test": 51.21507996181026,
+   "alerts_where_sequence_differs": [
+    "V000690",
+    "V000721",
+    "V000746",
+    "V000553",
+    "V000135",
+    "V000590",
+    "V000903",
+    "V000468",
+    "V000713",
+    "V000129"
+   ]
+  }
+ }
+}
