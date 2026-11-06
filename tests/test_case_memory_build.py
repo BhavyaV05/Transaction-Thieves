@@ -49,3 +49,5 @@ def test_case_memory_factory_and_pool_stratification():
     out = rla.stratified_order(df, 0, 40, 0.5)
     assert out["label"].sum() == 20 and out.height == 40
     assert rla.stratified_order(df, 0, 40, 0.5)["alert_id"].to_list() == out["alert_id"].to_list()  # seeded
+    dfb = df.with_columns(pl.col("label").cast(pl.Boolean))  # the real train alerts store the label as Boolean (polars 2.0 raises on Boolean == int)
+    assert rla.stratified_order(dfb, 0, 40, 0.5)["alert_id"].to_list() == out["alert_id"].to_list()
