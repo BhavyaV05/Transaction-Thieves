@@ -1,0 +1,65 @@
+# Public benchmark datasets for S1BENCH Part A (docs/t3_s1bench.md section 2.1).  Pinned dataset revisions (resolved on HF 2 Nov 2026).
+# `eval` is the benchmark's OWN evaluation split (never our data); `calib` is the split used ONLY to fit one temperature per task.
+cache_root: /home/akshat/projects/s1bench_data   # raw downloads live outside the repo
+prepared_root: /home/akshat/projects/s1bench_data/prepared
+calib_cap: 500
+perm_cap_large: 1000     # items used for the option-order arms when a task has more than 26 options
+perm_cap_unfair: 400     # clauses used for the option-order arms of unfair_tos (8 decisions per clause)
+s1mb:
+  repo: hotchpotch/S1MB-english-v1
+  revision: 10bcb8c6916b98b966cc1f03aab1781a7c354b4c
+  licence: "other (mixed-source): each subset keeps its original licence, see the README table; evaluation use only"
+  evaluator_repo: https://github.com/hotchpotch/S1MB
+  evaluator_commit: 36bd448307b1a2fc01ab591bbb643f31ef1e8b6e
+  evaluator_licence: MIT
+  results_repo: hotchpotch/s1mb-result
+  results_revision: 426b8308eded1260e3abe050d95bd36450da020a
+tasks:
+  banking77:
+    repo: PolyAI/banking77
+    revision: 1846984189f2bc0ac51c6fc3a600fa9e1714e0c6
+    licence: cc-by-4.0
+    kind: multiclass
+    question: "Which banking intent does the customer message express?"
+    eval: {file: data/test-00000-of-00001.parquet, text: text, label: label}
+    calib: {file: data/train-00000-of-00001.parquet, text: text, label: label}
+  clinc150_oos:
+    repo: clinc/clinc_oos
+    revision: 155b9c710419136e17307b80d0a13e68cd46b4ec
+    licence: cc-by-3.0
+    kind: multiclass_oos
+    question: "Which assistant intent does the user request express? Choose out of scope when it fits none of the others."
+    eval: {file: plus/test-00000-of-00001.parquet, text: text, label: intent}
+    calib: {file: plus/validation-00000-of-00001.parquet, text: text, label: intent}
+  hwu64:
+    repo: FastFit/hwu_64
+    revision: 9fb5bff1e37c4c5a6d46c1ff6f286b6d3f362222
+    licence: "cc-by-4.0 (original NLU-Evaluation-Data; the mirror states none)"
+    kind: multiclass
+    question: "Which scenario and action does the user utterance express?"
+    eval: {file: data/test-00000-of-00001.parquet, text: text, label: label}
+    calib: {file: data/validation-00000-of-00001.parquet, text: text, label: label}
+  toxicchat:
+    repo: lmsys/toxic-chat
+    revision: 29df8e4dba60e1f4af4b4075c0705c5b313548a8
+    licence: cc-by-nc-4.0
+    kind: binary_yesno
+    question: "Is the user message toxic (hateful, harassing, sexual, violent, or an attempt to jailbreak the assistant)?"
+    eval: {file: data/0124/toxic-chat_annotation_test.csv, text: user_input, label: toxicity}
+    calib: {file: data/0124/toxic-chat_annotation_train.csv, text: user_input, label: toxicity}
+  unfair_tos:
+    repo: coastalcph/lex_glue
+    revision: c23fdff1a6bf74e0e1a71cb86f1e781d37da888c
+    licence: cc-by-4.0
+    kind: multilabel_yesno
+    question: "Does this Terms-of-Service clause contain an unfair term of the type: {label}?"
+    eval: {file: unfair_tos/test-00000-of-00001.parquet, text: text, label: labels}
+    calib: {file: unfair_tos/validation-00000-of-00001.parquet, text: text, label: labels}
+  sst2:
+    repo: stanfordnlp/sst2
+    revision: 8d51e7e4887a4caaa95b3fbebbf53c0490b58bbb
+    licence: "none stated upstream (GLUE)"
+    kind: multiclass
+    question: "Is the sentiment of this movie-review sentence negative or positive?"
+    eval: {file: data/validation-00000-of-00001.parquet, text: sentence, label: label}
+    calib: {file: data/train-00000-of-00001.parquet, text: sentence, label: label}

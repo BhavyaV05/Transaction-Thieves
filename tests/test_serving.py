@@ -189,3 +189,13 @@ def test_llamacpp_dry_run_hides_key_and_checks_host(tmp_path, monkeypatch, capsy
     assert "llama-server" in out and "--jinja" in out and "sekret-key" not in out and "--api-key" not in out
     with pytest.raises(SystemExit):
         serve.main(["--model", "qwen3.8-27b-q3", "--host", "0.0.0.0", "--dry-run"])
+
+
+def test_turing_flags_replace_fp8_kv_and_add_fp16(cfg):
+    base = serve.vllm_args(cfg, "qwen3-4b-fast", 8001, host="127.0.0.1")
+    assert "--kv-cache-dtype" in base
+    t = serve.turing_args(base, tp=2)
+    assert "--kv-cache-dtype" not in t and "fp8" not in t
+    assert t[t.index("--dtype") + 1] == "float16" and t[t.index("--tensor-parallel-size") + 1] == "2"
+    assert [a for a in t if a not in ("--dtype", "float16", "--tensor-parallel-size", "2")] == [a for a in base if a not in ("--kv-cache-dtype", "fp8")]
+    assert "--tensor-parallel-size" not in serve.turing_args(base)

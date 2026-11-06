@@ -1,0 +1,72 @@
+# Models and sources for S1BENCH (docs/t3_s1bench.md sections 3 and 8).  Weights/code are NEVER committed; they live under cache_root.
+# Revisions resolved on Hugging Face / GitHub 2 Nov 2026.
+cache_root: /home/akshat/projects/s1bench_data
+venv_open: /home/akshat/projects/s1bench_data/venv-open   # torch 2.10 CPU + transformers 5.17 (the open models' cards pin these); the main venv is untouched
+ours:
+  system1_candidates: [fast3-s0, fast-s2]       # first one the server lists is used; the adapter name is written into every output file
+  base: Qwen/Qwen3-4B                            # the untuned reference (Qwen3-4B-AWQ profile `qwen3-4b-fast` serves base + adapters)
+  base_revision: 1cfa9a7208912126459214e8b04321603b3df60c
+  params_m: {system1: 4000, qwen3-4b: 4000, gemma4-12b: 12000}
+open_models:
+  bekko-400m:
+    repo: hotchpotch/bekko-system-one-v0-400m
+    revision: 1960df5602bd93cc8d336fdebd9fb68a30926e13
+    licence: "none assigned by the card (declaration 'remains to be finalized'): evaluation only, nothing redistributed"
+    interface: "BekkoSentenceTransformer.predict (remote code inference_v0.py), types choice / noul / score"
+    params_m: 395
+    runs_on: cpu
+  laya:
+    repo: convaiinnovations/laya
+    revision: 7b928d828b7b0e022f929d9bd2e44165aa270148
+    licence: apache-2.0
+    interface: "laya Router / laya.load(...).predict(state, questions) (package laya==0.3.20, as pinned by the S1MB evaluator)"
+    params_m: 421
+    runs_on: cpu
+  laya-typed-decisions:
+    repo: convaiinnovations/laya-typed-decisions
+    revision: e929ae5cf69bc34259cd2f95c9e91145b818b1f0
+    licence: apache-2.0
+    interface: "same as laya; fine-tuned on the typed-decisions workflows"
+    params_m: 421
+    runs_on: cpu
+  gliner25-decide:
+    repo: fastino/GLiNER2.5-Decide
+    revision: 9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90
+    licence: apache-2.0
+    interface: "gliner2.AutoExtractor.classify_text / schema classification with include_confidence (full softmax over labels)"
+    params_m: 340
+    runs_on: cpu
+  jevk5:
+    repo: alibiserikbay/JevK5
+    revision: c4f7fdb3aeab5582336406e78d3bef11bf98833d
+    licence: apache-2.0
+    source: {repo: https://github.com/allebee/jevk5, commit: 7b97499c9103009d0e634001907353d8d53aaecf}
+    interface: "jevk5.runtime.JevK5(...).probabilities(state, definition): letter-logit readout, temperature in jevk5_config.json (bf16 Qwen3.5-4B, 8.4 GB)"
+    params_m: 4000
+    runs_on: gpu
+  tev1-4b:
+    repo: togethercomputer/Tev1-4B-experimental
+    revision: 0b7becf017daa0e5eb222f8ce7483c8c8259c52f
+    licence: "none stated on the card (base Qwen3.5-4B is apache-2.0)"
+    source: {repo: https://github.com/togethercomputer/tev1, commit: 1dde7782382c9f49d627153759b8d1deab426ce0}
+    interface: "decision JSON {state, question, options[label,key,description]} in a user turn, system instruction from the card, answer = one option letter A-X; probabilities from first-token logprobs"
+    params_m: 4000
+    runs_on: gpu
+  open-jev-9b:
+    repo: ZefanCai/Open-Jev-9B
+    revision: 47e966881e489511c0c7f5633a9e1960a676a551
+    licence: apache-2.0
+    source: {repo: https://github.com/Zefan-Cai/Open-Jev, commit: 3308a15ccd7eea1df7a37d6ddc39b023b801ba16}
+    interface: "jev.server /v1/systemone (Qwen3.5-9B backbone + LoRA r8 + scalar head, one forward per candidate, saved temperature 1.897)"
+    params_m: 9000
+    runs_on: gpu
+    status: "BLOCKED: bf16 backbone is about 18 GB, the card is 16 GB, and no 4-bit/AWQ/GGUF build of Open-Jev-9B exists on the Hub (search 2 Nov); see docs section 9"
+published_rows:      # directories of hotchpotch/s1mb-result used for the faithfulness table (section 8)
+  - typesafe/jev_1_13
+  - hotchpotch/bekko-system-one-v0-400m
+  - convaiinnovations/laya
+  - convaiinnovations/laya-typed-decisions
+  - fastino/GLiNER2.5-Decide
+  - alibiserikbay/JevK5
+  - togethercomputer/Tev1-4B-experimental
+  - ZefanCai/Open-Jev-9B
