@@ -15,7 +15,8 @@ outputs/injection/<run_id>/<system>/{runlog.parquet, pairs.jsonl, summary.json} 
 Run-log v1 rows (ftm.eval.runlog): `variant` = e15:<arm>:<channel>:<clean|inj>:<toolbox>, `injection_id` set on the rows
 of a run with a planted item. Pair a run with its twin by (system, arm, alert_id, injection_id), clean = injection_id null.
 
-Val alerts only (the test split is refused here, FTM_FINAL_RUN is never read). Mock runs are labelled model=mock and
+Val alerts only, except the final run (G5): `--alerts test` needs FTM_FINAL_RUN=1 (ftm.guards), takes the frozen ids from
+`--alert-ids`, never reads a label, and `--runlog-out` writes the merged run log (scripts/run_final.py job e15.<system>.subset). Mock runs are labelled model=mock and
 variant ...:harness_mock; none of their numbers is a result. Definitions: docs/t4_injection.md.
 """
 
@@ -25,6 +26,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import random
 import sys
 import time
@@ -47,7 +49,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import dev_responder  # noqa: E402
-from ftm.llm.fusion_adapter import FusedLR  # noqa: E402
+from ftm.llm.fusion_adapter import load_fitted  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM  # noqa: E402
 from ftm.planners.llm import LLMPlanner  # noqa: E402
@@ -146,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--system", default="planner", help="planner | a name from run_llm_agent.py | comma list | all")
     ap.add_argument("--mode", choices=[m.value for m in Mode], default="compose", help="planner mode")
-    ap.add_argument("--alerts", choices=["synthetic", "val"], default="synthetic")
+    ap.add_argument("--alerts", choices=["synthetic", "val", "test"], default="synthetic", help="test: final run only")
     ap.add_argument("--val-part", choices=["fit", "cal", "eval"], default=None)
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--n", type=int, default=4, help="alerts per system")
@@ -156,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--types", default=",".join([*inj.TYPES, "benign"]), help="item kinds planted per alert")
     ap.add_argument("--channel", choices=["auto", *CHANNELS], default="auto",
                     help="auto: note for systems that can ask a bank, evidence for the native ones")
+    ap.add_argument("--alert-ids", type=Path, default=None, help="final run: one alert id per line, never more than these")
+    ap.add_argument("--runlog-out", type=Path, default=None, help="also write all systems' run-log rows merged to this parquet")
     ap.add_argument("--set", type=Path, default=SET_PATH, help="injection set JSONL (default: generated, seed 0)")
     ap.add_argument("--llm", choices=["mock", "mock-obedient", "endpoint"], default="mock")
     ap.add_argument("--screen", choices=["heuristic", "fastmodel"], default="heuristic",
@@ -198,7 +202,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.llm == "endpoint" and a.alerts == "synthetic":
         ap.error("--llm endpoint needs --alerts val: synthetic alerts are for dry runs")
+    if a.alerts == "test":
+        from ftm import guards
 
+        guards.require_final_run("test alerts")  # before any file is touched
+        if a.llm != "endpoint":
+            ap.error("--alerts test needs --llm endpoint")
+
+    from ftm.llm.profile import load_profile
+
+    tuned = load_profile("tuned")  # the production p0 and edge scorer unless the environment names others
+    os.environ.setdefault("FTM_P0_VARIANT", tuned["p0_variant"])
+    os.environ.setdefault("FTM_EDGE_SCORER", tuned["edge_scorer"])
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -211,8 +226,11 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(str(e)) from e
     if a.fusion_params is not None and bt is None:
         ap.error("--fusion-params needs --backtest")
-    fusion = (FusedLR.from_params(json.loads(a.fusion_params.read_text(encoding="utf-8")), bt.table)
-              if a.fusion_params else NaiveLRFusion(bt.table if bt else None))
+    if a.fusion_params:
+        fusion = load_fitted(a.fusion_params, bt.table)
+    else:
+        fusion = NaiveLRFusion(bt.table if bt else None)
+        print("NOTE: fusion = NaiveLRFusion (no --fusion-params): the named ablation, not the production fusion", file=sys.stderr)
     menu = accepted_menu(bt.table) if bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value else []
     extra = {"chat_template_kwargs": {"enable_thinking": a.thinking}}
     screen = heuristic_screen
@@ -220,17 +238,20 @@ def main(argv: list[str] | None = None) -> int:
         screen = fastmodel_screen(HttpChatClient.from_env(endpoint=a.screen_endpoint, model=a.screen_model))
 
     tools, tb_variant = rla.make_toolbox("harness", a.seed, a.data, a.alerts)
+    wanted = {ln.strip() for ln in a.alert_ids.read_text(encoding="utf-8").splitlines() if ln.strip()} if a.alert_ids else None
     sessions = {True: tools, False: replace(tools._h, gate=open_gate(tools._h.gate)).toolbox()}  # noqa: SLF001
     if a.alerts == "synthetic":
         alerts = rla.synthetic_alerts(a.n, a.seed, labelled=True)  # random labels: Brier is machinery, never a result
         alerts = [(replace(c, summary={**c.summary, "partner_banks": [1, 2, 3]}), y) for c, y in alerts]
     else:
-        alerts = rla.data_alerts(a.data, "val", a.n, a.seed, a.k, a.val_part, rla.askable_ids(tools))
+        only = rla.askable_ids(tools) if wanted is None else rla.askable_ids(tools) & wanted
+        alerts = rla.data_alerts(a.data, a.alerts, a.n, a.seed, a.k, a.val_part, only)
         world = rla.modelled_banks(tools)
         alerts = [(replace(c, summary={**c.summary, "partner_banks": [b for b in c.summary["partner_banks"] if str(b) in world]}), y)
                   for c, y in alerts]  # fmt: skip
     limits = Limits(max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     all_rows: list[dict] = []
+    frames: list[pl.DataFrame] = []
     skipped: list[str] = []
     for system in systems:
         sdir = out / system
@@ -266,16 +287,20 @@ def main(argv: list[str] | None = None) -> int:
                     rows += _rows(rla, att, ctx, label, base, tb_variant, "inj", fusion, a.val_part, it.item_id)
         df = pl.DataFrame(rows, schema={c: PY_TYPES[t] for c, t in RUN_LOG_COLUMNS.items()}, strict=False)
         df.write_parquet(sdir / "runlog.parquet")
+        frames.append(df)
         (sdir / "pairs.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pairs))
         srows = summarize(pairs)
         summary = {"run_id": run_id, "system": system, "model": model, "llm": a.llm, "toolbox": tb_variant,
                    "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "n_alerts": len(alerts),
                    "arms": arms, "kinds": kinds, "channel": channel, "injection_set_sha256": set_sha,
-                   "labels": "random (dry run)" if a.alerts == "synthetic" else "val", "n_pairs": len(pairs),
+                   "labels": "random (dry run)" if a.alerts == "synthetic" else "none (test)" if a.alerts == "test" else "val", "n_pairs": len(pairs),
                    "seconds": time.perf_counter() - t0, "rows": srows, "camel_compare": compare_arms(srows)}  # fmt: skip
         (sdir / "summary.json").write_text(json.dumps(summary, indent=2, default=str))
         all_rows += srows
         print(f"[{system}] {len(pairs)} pairs, {df.height} run-log rows -> {sdir}")
+    if a.runlog_out is not None and frames:
+        a.runlog_out.parent.mkdir(parents=True, exist_ok=True)
+        pl.concat(frames, how="vertical_relaxed").write_parquet(a.runlog_out)  # time-guard: not transactions
     top = {"run_id": run_id, "systems": systems, "skipped": skipped, "arms": arms, "kinds": kinds, "llm": a.llm, "alerts": a.alerts,
            "n_alerts": len(alerts), "rows": all_rows, "camel_compare": compare_arms(all_rows)}  # fmt: skip
     (out / "summary.json").write_text(json.dumps(top, indent=2, default=str))

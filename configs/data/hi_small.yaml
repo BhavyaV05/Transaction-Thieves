@@ -3,6 +3,7 @@ raw_dir: data/raw/hi_small
 parquet_dir: data/parquet/hi_small
 views_dir: data/views/hi_small
 alerts_dir: data/alerts/hi_small
+alerts_dir_v2: data/alerts/hi_small_v2   # same alert rows, p0 recalibrated (scripts/recal_p0.py); select with ftm.data.io.alerts_dir(cfg, p0="v2") or FTM_P0_VARIANT=v2
 n_banks: 30             # largest banks by transaction count
 # HI-Small spans 18 calendar days (2022-09-01 .. 09-18) but 99.98% of the rows are in days 1-10;
 # days 11-18 are a sparse tail (1,108 rows, mostly late legs of laundering attempts).

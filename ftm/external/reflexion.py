@@ -12,7 +12,8 @@ Adaptations, fixed before any run (fairness protocol, plan.md 7.2):
   - Trials share ONE eps budget, ONE call cap and the same Investigation: bank answers already received are real
     facts, so the next trial sees them (and repeats are refused). The environment cannot be reset as in the paper.
   - At most `max_trials` (default 3) trials; a new trial needs at least `min_calls_for_retry` calls left.
-End-to-end probability = finish[...] of the last trial that finished; None if none did. Verdict.trials records how
+End-to-end probability = finish[...] of the last trial that finished; a trial that ends without one gets ReAct's forced
+final-answer call (`wrap_up`, one of the same capped calls); None only if the calls run out first. Verdict.trials records how
 many trials ran on the alert (the runner writes it to traces.jsonl and summary.json).
 """
 
@@ -75,6 +76,7 @@ class Reflexion(React):
                             + "\n".join(f"- {e.program} to bank {e.bank}: {describe(e)}" for e in session.log) + "\n\n")  # fmt: skip
             messages = self.first_messages(alert, ex, preface)
             step = self.episode(messages, ex, budget, step)
+            self.wrap_up(messages, ex, budget, step)  # as ReAct: a trial that ran out of time/eps still owes its answer
             if ex.finished is not None:
                 final = ex.finished
             else:

@@ -4,7 +4,9 @@ alpha_clean: 0.02         # target miss rate among clean rows (clean label dropp
 half_life_days: 0.25        # time weighting of calibration rows; the cal part spans < 1 day, so the half-life is a fraction of a day (None = equal weights)
 scrc_beta: 0.0005         # max laundering share among auto-cleared transactions (selective risk bound)
 scrc_delta: 0.1           # confidence level of the bound
-apply_scrc: false         # true: also alert everything below the certified clear threshold (widens alerts)
+apply_scrc: false         # NOT applied: the selective-risk bound (scrc_lambda, cleared_risk_ub) is only REPORTED in data/runs/alerts_<ds>.json; alerts are p0 >= t_launder. true would also alert everything below the certified clear threshold (widens alerts, changes the alert set)
+conformal_part: cal       # val part the Mondrian thresholds are chosen on; must be disjoint from the parts a p0 calibrator was fit on (make_alerts refuses otherwise)
+day_frac: volume          # projection of alerts/day: "volume" weights a part by its share of val rows (weekend vs Monday), "time" = the old 0.25 of the time span
 fixed_window: [0.15, 0.85]  # ablation
 # No 72 h evidence-window drop rule (decision 3): history before the split is legitimate evidence. The span rule is a flag column (`spans_split`) only.
 seed: 0

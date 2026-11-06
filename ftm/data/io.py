@@ -13,6 +13,7 @@ All scans return LazyFrames; call `.collect()`.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +33,16 @@ def load_config(name_or_path: str | Path) -> dict:
     if not p.suffix:
         p = _CONFIG_DIR / f"{name_or_path}.yaml"
     return yaml.safe_load(p.read_text())
+
+
+def alerts_dir(cfg: dict, p0: str | None = None) -> Path:
+    """Alert directory of a dataset config: p0 "v1" (default, `alerts_dir`) or "v2" (`alerts_dir_v2`: the same alert rows, recalibrated p0 and a `p0_v1` column).
+
+    p0=None reads FTM_P0_VARIANT (default v1). Alert ids, rows and order are identical in both; only the p0 column differs."""
+    v = p0 or os.environ.get("FTM_P0_VARIANT", "v1")
+    if v not in ("v1", "v2"):
+        raise ValueError(f"p0 variant is v1 or v2, not {v!r}")
+    return Path(cfg["alerts_dir_v2"] if v == "v2" else cfg["alerts_dir"])
 
 
 def _splits(split) -> list[str]:

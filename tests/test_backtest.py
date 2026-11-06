@@ -93,7 +93,7 @@ def test_one_block_is_the_original_process_and_blocks_are_clamped():
     assert evalue([0, 1, 0], [True, False, False], blocks=2) > 0
 
 
-def test_time_blocks_are_part_of_the_namespace_only_when_used():
+def test_time_blocks_are_always_part_of_the_namespace():
     assert BacktestConfig().namespace("a", 0) == BacktestConfig(time_blocks=1).namespace("a", 0)
     assert BacktestConfig(time_blocks=4).namespace("a", 0) != BacktestConfig().namespace("a", 0)
 
@@ -298,6 +298,26 @@ def test_shards_write_one_cache_and_assemble_matches_an_unsharded_run(world, tmp
     assert sorted(merged, key=key) == sorted(whole, key=key)
 
 
+def test_per_alert_rows_are_recorded_for_every_asked_alert_and_assemble_to_parquet(world, tmp_path):
+    import polars as pl
+
+    from ftm.backtest.engine import write_alert_rows
+
+    cache = BacktestCache(tmp_path, CFG.namespace("synth-320", 11))
+    bt = Backtester(world.banks, world.alerts, CFG, cache=cache)
+    e = bt.run_question(INFORMATIVE, 2.0)
+    bt.run_question("dormant(ALERT.receiver, days=7)", 1.0)
+    assert "accepted" not in e  # decided per batch by accept(), never per entry
+    df = pl.read_parquet(write_alert_rows(cache))
+    assert set(df.columns) == {"alert_id", "canonical", "eps", "bank", "answer", "answer_bin", "label"}
+    one = df.filter((pl.col("canonical") == e["program_canonical"]) & (pl.col("eps") == 2.0))
+    assert one.height == e["n_answers"] and one["label"].sum() == e["n_launder"]
+    labels = {a.alert_id: a.label for a in world.alerts}
+    assert all(labels[i] == y for i, y in zip(one["alert_id"], one["label"], strict=True))
+    assert set(one["answer_bin"].unique()) <= set(e["lr"])  # the cells of the LR table
+    assert set(df["bank"].unique()) <= set(world.banks)
+
+
 def test_assembling_twice_ignores_the_report_written_next_to_the_cache(world, tmp_path):
     cache = BacktestCache(tmp_path, CFG.namespace("synth-320", 11))
     Backtester(world.banks, world.alerts, CFG, cache=cache).run_batch([INFORMATIVE], [2.0])
@@ -340,3 +360,7 @@ def test_asked_bank_is_the_bank_that_holds_the_subject(world):
     assert asked_bank(parse("n_tx(ALERT.sender, dir=in, window=before(72))"), b) is None  # home-bank account
     assert asked_bank(parse("set_contacts(ALERT.payers, dir=in, window=before(72))"), b) == b.partner_bank
     assert asked_bank(parse("at_least(n_tx(ALERT.receiver, dir=in, window=before(72)), k=2)"), b) == b.receiver_bank
+
+
+def test_the_namespace_names_the_ledger_so_pre_history_caches_are_never_read():
+    assert BacktestConfig().namespace("a", 0) != BacktestConfig(ledger="split").namespace("a", 0)

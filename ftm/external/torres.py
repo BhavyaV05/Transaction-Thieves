@@ -39,7 +39,7 @@ from ftm.llm.investigation import DuplicateQuestion, Fusion, Investigation, Naiv
 from ftm.llm.jsonout import JsonOutputError, parse_and_validate
 from ftm.planners.llm_dsl import DslAdapter, V0Dsl
 from ftm.planners.llm_prompt import EPS_LEVELS, eps_levels
-from ftm.types import AlertContext, Limits, Verdict
+from ftm.types import NO_EVIDENCE_TEXT, AlertContext, Limits, Verdict
 
 DISPOSITIONS = ("dismiss", "monitor", "escalate")
 QUOTAS = {"policy": 3, "context": 1, "transaction": 20, "similar_case": 4}
@@ -158,7 +158,7 @@ class Torres:
                                  "time") if k in s}  # fmt: skip
         if ctx and self.quotas["context"]:
             add("context", "Alerted transaction: " + json.dumps(ctx) + f"; bank's model score {alert.p0:.3f}")
-        rows = [ln for ln in str(s.get("evidence", "")).splitlines() if ln.strip()]
+        rows = [ln for ln in str(s.get("evidence", "")).splitlines() if ln.strip() and ln.strip() != NO_EVIDENCE_TEXT]
         for ln in rows[-self.quotas["transaction"]:]:  # the newest rows, the alert last
             add("transaction", ln.strip())
         near = self.memory.nearest(alert_features(alert)) if self.memory.rows else {}

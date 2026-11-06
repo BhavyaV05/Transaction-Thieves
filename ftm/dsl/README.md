@@ -61,7 +61,7 @@ families of the expert specs (`set_contacts`, the bank-level set question of pla
 ## Sensitivity
 
 The change of the exact answer when one transaction is added or removed (the protection unit). Bool, k-ary and the
-distinct counts are 1; `n_repeated` is 2 (one transfer can complete a pair); `chain_length` equals its `max_hops`
+distinct counts are 1; `n_repeated` is 4 (one added transfer counts itself and can pair up to two others that match it but not each other: 3, rounded up); `chain_length` equals its `max_hops`
 cap (one added transfer can join two chains), default 3. This is a function of the program, so C5 reads it from
 `sensitivity(node)`.
 

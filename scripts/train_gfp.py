@@ -28,6 +28,17 @@ def commit() -> str:
     return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
 
 
+def guard_repro(ack: bool, csv: str, out: str, log: str = "data/runs/repro_acks.log") -> None:
+    """--repro splits the raw CSV 60/20/20 by row order, which overlaps our test days: refuse without the explicit flag, and log each acknowledged run."""
+    if not ack:
+        raise SystemExit("--repro uses the paper's row-order split, which overlaps our test days (it bypasses the split guards). Pass --ack-paper-split-overlaps-test to run it; nothing from it may feed a model or decision.")
+    import datetime
+
+    Path(log).parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "a") as fh:
+        fh.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} commit={commit()} csv={csv} out={out} acknowledged paper-split/test-day overlap\n")
+
+
 def repro(csv: str, out: str, threads: int) -> None:
     """E1/G1 reproduction on the published split. REPRODUCTION ONLY, behind --repro because the
     published 60/20/20 split overlaps our test days: it reads the raw CSV, uses only the paper's
@@ -300,9 +311,11 @@ def main() -> None:
     ap.add_argument("--combine", action="store_true")
     ap.add_argument("--recalibrate", action="store_true", help="refit calibrators from stored raw scores")
     ap.add_argument("--banks", type=int, nargs="*", default=None, help="subset of banks (debugging)")
+    ap.add_argument("--ack-paper-split-overlaps-test", action="store_true", help="required by --repro: the paper's 60/20/20 row-order split overlaps our test days; acknowledged and logged")
     ap.add_argument("--final", action="store_true", help="week 14: also score the TEST rows (needs FTM_FINAL_RUN=1, set by scripts/run_final.py only)")
     a = ap.parse_args()
     if a.repro:
+        guard_repro(a.ack_paper_split_overlaps_test, a.csv, a.out)
         repro(a.csv, a.out, a.threads)
     elif a.recalibrate and a.data:
         recalibrate(a.data)

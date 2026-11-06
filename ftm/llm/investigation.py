@@ -9,9 +9,10 @@ One `Investigation` per alert does what must be identical across systems:
   - updates the posterior with a `Fusion` (LLM text never enters it, invariant 2);
   - assembles the Verdict with the cost fields from `BudgetedClient`.
 
-`NaiveLRFusion` + `LRTable` are PLACEHOLDERS for T4's fusion v0 (hand-off #18) and T2's back-test table
-(hand-off #9): summed log-LRs of accepted questions on top of logit(p0), i.e. the "naive summed" ablation of
-plan.md 6.9. Swap in the real ones through the `Fusion` protocol.
+`NaiveLRFusion` is the "naive summed" ablation of plan.md 6.9 (summed log-LRs of accepted questions on top of logit(p0)) and the
+shared LR lookup that `FusedLR` / `ConditionalLR` (ftm/llm/fusion_adapter.py) subclass; it is NOT the production fusion. Production
+runs (`run_llm_agent.py --profile tuned`) use the fitted ConditionalLR of configs/fusion/headroom_v1.json; the naive one is reached
+only by `--fusion naive` (named ablation) or in tests. `LRTable` is T2's assembled back-test table (ftm/llm/backtest_table.py).
 
 ASSUMPTION until harness v0 (T2, week 3) fixes it: a gate refusal surfaces from `ask_bank` as an exception whose
 class is PermissionError or named *Gate*/*Blocked*/*Compliance*, and an accountant refusal as one named
@@ -29,6 +30,7 @@ from typing import Protocol
 
 from ftm.harness.interface import ToolBox
 from ftm.llm.budget import Usage
+from ftm.llm.routing import expected_bank
 from ftm.llm.untrusted import wrap_untrusted
 from ftm.planners.llm_dsl import DslCheck
 from ftm.planners.llm_prompt import AnswerSoFar
@@ -68,6 +70,7 @@ class LREntry:
     lr: dict[str, float]  # answer_key -> clipped LR
     family: str | None = None
     bins: tuple[float, ...] | None = None
+    p_cell: dict | None = field(default=None, compare=False)  # cell -> (P(cell | clean), P(cell | launder)), when the table has it
 
     def lr_for(self, value) -> float | None:
         return self.lr.get(answer_key(value, list(self.bins) if self.bins else None))
@@ -85,7 +88,8 @@ class LRTable:
     @classmethod
     def from_rows(cls, rows: Iterable[dict]) -> LRTable:
         return cls(LREntry(r["program_canonical"], float(r["eps"]), bool(r["accepted"]), dict(r["lr"]),
-                           r.get("family"), tuple(r["bins"]) if r.get("bins") else None) for r in rows)  # fmt: skip
+                           r.get("family"), tuple(r["bins"]) if r.get("bins") else None,
+                           {k: (v[0], v[1]) for k, v in r["p_cell"].items()} if r.get("p_cell") else None) for r in rows)  # fmt: skip
 
     def entries(self) -> list[LREntry]:
         return list(self._d.values())
@@ -109,6 +113,8 @@ class NaiveLRFusion:
     def _lr(self, e: QuestionLogEntry) -> float | None:
         if not isinstance(e.response, Reply) or e.gate_decision != "allowed":
             return None
+        if e.expected_bank is not None and str(e.bank) != e.expected_bank:
+            return None  # the back-test asked another bank (or none): this answer has no measured LR
         entry = self.table.get(e.program, e.eps)
         if entry is None or not entry.accepted:
             return None
@@ -193,7 +199,7 @@ class Investigation:
         key = (check.canonical, str(bank))
         if key in self._asked:
             raise DuplicateQuestion(f"already asked bank {bank}: {check.canonical}")
-        entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+        entry = self._entry(step, bank, check, eps)
         self.last_refusal = None
         if eps > self.eps_left + 1e-9:
             entry.gate_decision = "over_budget"
@@ -208,6 +214,10 @@ class Investigation:
         elif entry.gate_decision == "allowed":
             self._batch.append(days)
         return entry
+
+    def _entry(self, step: int, bank, check: DslCheck, eps: float) -> QuestionLogEntry:
+        return QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps),
+                                expected_bank=expected_bank(check.canonical, self.alert.summary, self.alert.home_bank))  # fmt: skip
 
     def _refuse(self, entry: QuestionLogEntry, exc: Exception) -> None:
         decision = _gate_outcome(exc)
@@ -253,7 +263,7 @@ class Investigation:
                 continue
             seen.add(key)
             if eps > self.eps_left - reserved + 1e-9:
-                entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+                entry = self._entry(step, bank, check, eps)
                 entry.gate_decision = "over_budget"
                 out[i] = entry
             else:
@@ -278,7 +288,7 @@ class Investigation:
         waits = [0.0]
         for i, (bank, check, eps, step) in enumerate(requests):
             if i in responses:
-                entry = QuestionLogEntry(step=step, bank=str(bank), program=check.canonical, eps=float(eps))
+                entry = self._entry(step, bank, check, eps)
                 r = responses[i]
                 if isinstance(r, Exception):
                     self._refuse(entry, r)

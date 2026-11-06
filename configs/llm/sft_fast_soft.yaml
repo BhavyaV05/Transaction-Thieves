@@ -1,0 +1,25 @@
+# Calibration-as-objective arm of the System 1 fast model (T3, wave 4): same QLoRA as sft_fast.yaml, but the loss is a proper scoring rule on the
+# full label distribution against soft targets (smoothed one-hot mixed with the large tier's token distribution), ftm.fastmodel.softloss.
+# Rows: scripts/train_planner.py fast-data --soft <large scores of the train rows>. Compared with plain SFT + temperature on cal (docs/t3_system1.md).
+task: fast_model
+base_model: Qwen/Qwen3-4B
+revision: 1cfa9a7208912126459214e8b04321603b3df60c
+load_in_4bit: true
+max_seq_length: 2048
+enable_thinking: false
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+train:
+  loss: soft_ce            # soft_ce | brier
+  epochs: 1
+  learning_rate: 2.0e-4
+  per_device_batch_size: 8
+  grad_accum: 4
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  optim: adamw_8bit
+seeds: [0, 1, 2]
+output_dir: models/fast_4b_s1v1_soft

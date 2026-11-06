@@ -1,7 +1,7 @@
 """Fine-tuned ModernBERT / DeBERTa classifiers (and a TF-IDF floor) for the five small decisions: the E10 component baselines.
 
 Owner: T2 (Bhavya).  Spec: plan.md 7.3 and 8 (E10), tracks.md 4.9 ("fine-tuned ModernBERT/DeBERTa classifiers ... on the small-decision
-set. These fit on your 4 GB GPU"), week 10.  Data: `scripts/make_decision_set.py` (hand-off #13); the five decisions and their
+set. These fit on your 4 GB GPU"), week 10.  Data: `scripts/make_system1_set.py`; the five decisions and their
 labels are T3's `ftm/fastmodel/decisions.py`.
 
 One classifier per decision type, fine-tuned on the TRAIN rows of the decision set and nothing else. The context text goes in as

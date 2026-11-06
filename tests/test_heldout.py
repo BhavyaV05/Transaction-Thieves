@@ -64,7 +64,8 @@ def test_heldout_cycles_drop_the_cycle_alerts_and_rows_from_train_only(dataset):
     # validation is untouched: cycle alerts stay so they can be evaluated
     vfull, vheld = load_world(str(cfg), "val", root=root), load_world(str(cfg), "val", root=root, heldout_cycles=True)
     assert [a.alert_id for a in vfull.alerts] == [a.alert_id for a in vheld.alerts] and vheld.n_heldout_dropped == 0
-    assert rows(vfull) == rows(vheld) and any(a.typology == "cycle" for a in vheld.alerts)
+    assert rows(vfull) - rows(vheld) == 2 * n_cycle  # the val ledgers carry the (held-out) train history, nothing else differs
+    assert any(a.typology == "cycle" for a in vheld.alerts)
     with pytest.raises(ValueError, match="locked"):
         load_world(str(cfg), "test", root=root, heldout_cycles=True)
 

@@ -2,6 +2,8 @@
 # Qwen servers for T3's fine-tuned models, one server at a time (the 16 GB card): E16 val runs and the E10 fast-tier scoring.
 #   scripts/t3_qwen_session.sh e16        qwen3-8b-lora: prompted base + the 3 QLoRA students on the 160 val `eval` alerts -> outputs/t3_val/eval/e16_*
 #   scripts/t3_qwen_session.sh fast       qwen3-4b-lora: untuned 4B + tuned seeds 0-2 score every val decision row   -> outputs/e10/<arm>/fast.jsonl
+#   scripts/t3_qwen_session.sh fast3 qwen3-4b-fast    wave 4: base + adapters fast3-s0..2 score the NEW decision set (data/decisions/hi_medium_s1v1) -> outputs/s1v1/<arm>/fast.jsonl
+#   scripts/t3_qwen_session.sh large3 gemma4-12b      wave 4: Gemma 4 12B large tier by token logprobs on every val row            -> outputs/s1v1/large/large_lp.jsonl
 #   scripts/t3_qwen_session.sh small      qwen3-1.7b: untuned small general LLM, same rows                          -> outputs/e10/untuned_1.7b/fast.jsonl
 # Latency per decision (one request at a time, 300 rows) is measured for every scored arm: outputs/e10/<arm>/latency.json.
 set -uo pipefail
@@ -11,7 +13,7 @@ set -a; source .env; set +a
 export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1
 PY=${PY:-.venv/bin/python}
 OUT=${T3_VAL_OUT:-outputs/t3_val}
-BT=data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl
+PROFILE="--profile tuned"   # production components (configs/llm/tuned.yaml)
 SHAPE=outputs/t3_library/frozen/shape_gemma.json
 which=$1; MODEL=$2
 
@@ -26,11 +28,11 @@ serve_up() {
   echo "$(date -Is) $MODEL loaded in $(( $(date +%s) - t0 ))s"
 }
 trap 'kill -- -$spid 2>/dev/null; wait $spid 2>/dev/null' EXIT
-mkdir -p "$OUT" outputs/e10
+mkdir -p "$OUT" outputs/e10 outputs/s1v1
 serve_up
 
-score_arm() {  # score_arm <arm dir name> <served model name>
-  local arm=$1 m=$2 d=outputs/e10/$1
+score_arm() {  # score_arm <arm dir name> <served model name> [root, default outputs/e10]
+  local arm=$1 m=$2 d=${3:-outputs/e10}/$1
   mkdir -p "$d"
   $PY scripts/score_fast_baseline.py score --tier fast --model "$m" --workers 16 --out "$d/fast.jsonl" > "$d/score.log" 2>&1
   # latency: one request at a time on a fixed sample (the rows are the first 300 of the file's order)
@@ -53,7 +55,7 @@ case $which in
         c=$(printf "c%03d" $((off / 80))); [[ -f $dir/$c/summary.json ]] && continue
         rm -rf "${dir:?}/$c"
         $PY scripts/run_llm_agent.py --system planner --mode compose --alerts val --val-part eval --data hi_medium --n 80 --offset $off \
-            --llm endpoint --toolbox harness --model "$m" --serving-stack vllm --machine t3-5070ti --seed 0 --backtest "$BT" \
+            --llm endpoint --toolbox harness --model "$m" --serving-stack vllm --machine t3-5070ti --seed 0 $PROFILE \
             --library "$SHAPE" --run-id "$c" --run-dir "$dir/$c" > "$dir/$c.log" 2>&1
         echo "$(date -Is) $name $c: exit $?"
       done
@@ -61,6 +63,18 @@ case $which in
   fast)
     score_arm untuned_4b qwen3-4b-lora
     for s in 0 1 2; do score_arm tuned_s$s fast-s$s; done ;;
+  fast3)
+    score_arm untuned_4b qwen3-4b-fast outputs/s1v1
+    for s in 0 1 2; do score_arm tuned_s$s fast3-s$s outputs/s1v1; done
+    for s in 0 1 2; do [[ -d models/fast_4b_s1v1_soft/seed=$s/adapter ]] && score_arm soft_s$s fast3soft-s$s outputs/s1v1; done ;;  # calibration-as-objective arm
+  large3)
+    mkdir -p outputs/s1v1/large
+    $PY scripts/score_fast_baseline.py score --tier large-logprob --model "$MODEL" --workers 8 --out outputs/s1v1/large/large_lp.jsonl > outputs/s1v1/large/score.log 2>&1
+    echo "$(date -Is) scored large tier: $(tail -1 outputs/s1v1/large/score.log)"
+    # same server: the train rows too (soft targets for the calibration-as-objective arm, docs/t3_system1.md section 8 step 1)
+    $PY scripts/score_fast_baseline.py --decisions data/decisions/hi_medium_s1v1/decisions_train.jsonl score --tier large-logprob --train-rows \
+        --model "$MODEL" --workers 8 --out outputs/s1v1/large/large_lp_train.jsonl > outputs/s1v1/large/score_train.log 2>&1
+    echo "$(date -Is) scored large tier on train rows: $(tail -1 outputs/s1v1/large/score_train.log)" ;;
   small) score_arm untuned_1.7b qwen3-1.7b ;;
 esac
 echo "$(date -Is) done: $which"

@@ -28,15 +28,15 @@ def test_calibrate_cascade_uses_each_val_part_for_its_job_and_flags_thin_types()
     ex, parts = [], []
     for part in ("fit", "cal", "eval"):
         for i in range(300):
-            ex.append(DecisionExample("stop", "c", "yes" if i % 2 else "no", f"{part}{i}"))
+            ex.append(DecisionExample("worth_asking", "c", "yes" if i % 2 else "no", f"{part}{i}"))
             parts.append(part)
     for i in range(5):  # a thin type: 5 cal rows at alpha 0.1 cannot reach a quantile
         ex.append(DecisionExample("rule_applies", "c", "yes", f"r{i}"))
         parts.append("cal")
     temps, _, rep = calibrate_cascade(ex, parts, m, m, alpha=0.1)
-    d, thin = rep["decisions"]["stop"], rep["decisions"]["rule_applies"]
+    d, thin = rep["decisions"]["worth_asking"], rep["decisions"]["rule_applies"]
     assert (d["n_fit"], d["n_cal"], d["n_eval"]) == (300, 300, 300) and d["n"] == 300 and not d["fast_full_set"]
-    assert temps["stop"] > 1.5 and d["top_label_ece_eval"] < d["top_label_ece_eval_T1"]  # T fitted on `fit`
+    assert temps["worth_asking"] > 1.5 and d["top_label_ece_eval"] < d["top_label_ece_eval_T1"]  # T fitted on `fit`
     assert thin["fast_full_set"] and thin["large_full_set"] and thin["always_defer"] and thin["no_fit_rows"]
     assert thin["n_cal"] == 5 and thin["n_eval"] == 0 and "n" not in thin
     assert rep["flagged"] == ["rule_applies"]
