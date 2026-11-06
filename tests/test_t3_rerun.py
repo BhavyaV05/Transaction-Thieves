@@ -155,7 +155,7 @@ def test_val_eval_refuses_before_the_calibration_maps_exist():
 
 
 def test_other_stage_dry_runs_name_the_expected_commands():
-    out = _dry("distill", "library", "student-train", "e15", env={"V": "outputs/_t3_rerun_test_v3"}).stdout
+    out = _dry("distill", "library", "student-train", "e15", env={"V": "outputs/_t3_rerun_test_v3", "SFT": "outputs/_t3_rerun_test_sft"}).stdout
     assert "--filter expected" in out and "--stop-threshold 0.3227" in out and "rebalance" in out
     assert "frozen_v3/shape_gemma_train.json" in out and "frozen_v3/account_gemma.json" in out
     assert out.count("sft_planner_v3.yaml") == 3
