@@ -44,7 +44,7 @@ CHUNK=${CHUNK:-80}
 V=${V:-outputs/t3_val_v3}
 TEACHER=${TEACHER:-outputs/t3_teacher_v2}
 LIB=outputs/t3_library/frozen_v3
-SFT=outputs/sft_v3
+SFT=${SFT:-outputs/sft_v3}
 STUDENTS=models/planner_sft_v3
 DSPY=${DSPY:-outputs/t3_dspy/react_miprov2.json}   # 2 Nov: reuse the MIPROv2 program (sha 0697b613...; the DSPy-ReAct loop and prompts are unchanged by the rewrite, parity-tested); DSPY=outputs/t3_dspy_v3/react_miprov2.json re-optimises (2.7 h)
 S1_SEED=${S1_SEED:-0}

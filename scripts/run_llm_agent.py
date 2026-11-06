@@ -346,6 +346,12 @@ def verdict_rows(v: Verdict, base: dict, label: int | None, *, ctx: AlertContext
 ENV_SWITCHES = ("FTM_EDGE_SCORER", "FTM_P0_VARIANT")  # set by --edge-scorer / --p0-variant (the tuned profile)
 
 
+def cannot_cross_stop(threshold: float | None, disabled: bool, prof: dict, mode: str) -> bool:
+    """The stop's bound comes from the back-tested menu, which no_backtest deliberately does not get: an empty menu bounds every
+    move at 0, so that arm would stop each alert before its first LLM call and return p0."""
+    return threshold is not None and not disabled and bool(prof.get("stop_cannot_cross")) and mode != Mode.NO_BACKTEST.value
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one investigation run; the profile's process-wide switches (FTM_EDGE_SCORER, FTM_P0_VARIANT) are restored afterwards, so an
     in-process caller (tests, demo) is not left on the tuned profile."""
@@ -592,7 +598,7 @@ def _main(argv: list[str] | None = None) -> int:
                 ap.error("--coinv-emit-unvalidated applies to co_investigator only")
             kw["emit_unvalidated"] = True
     threshold = decision_threshold(a.decision) if a.decision else None  # configs/decision/*.yaml, fitted on val fit + cal
-    cannot_cross = threshold is not None and not a.no_cannot_cross and bool(prof.get("stop_cannot_cross"))
+    cannot_cross = cannot_cross_stop(threshold, a.no_cannot_cross, prof, a.mode)
     menu = []
     if a.system == "planner" and bt is not None and not a.no_select_menu and a.mode != Mode.NO_BACKTEST.value:
         menu = accepted_menu(bt.table)  # tracks.md 5.4: select a back-tested question or compose a new one
