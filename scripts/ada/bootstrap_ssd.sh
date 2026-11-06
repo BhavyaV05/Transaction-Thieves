@@ -50,7 +50,7 @@ uv pip install -q -p $P -c $CON "$VW" torch==2.13.0 torchaudio==2.11.0 torchvisi
 uv pip install -q -p $P --reinstall --no-deps --index-url https://download.pytorch.org/whl/cpu "torchcodec==0.17.0+cpu" || exit 15; lap torchcodec_cpu
 $P -c "import torchcodec; print('torchcodec', torchcodec.__version__)" || exit 16
 $P $HOME/tt/ada_scripts/patch_vllm_turing.py $V || exit 17; lap vllm_t75_patch   # Gemma 4 head_size-512 layers: Triton attention needs 96 KB shared memory, an sm_75 GPU has 64 KB
-uv pip install -q -p $P polars pyarrow pandas scikit-learn lightgbm tqdm pyyaml pytest omegaconf requests wandb langgraph==1.2.19 lark simpy duckdb hydra-core rank-bm25 || exit 14   # langgraph..rank-bm25: ftm/ (the planner graph, run_llm_agent.py)
+uv pip install -q -p $P polars pyarrow pandas scikit-learn lightgbm tqdm pyyaml pytest omegaconf requests wandb langgraph==1.2.19 lark simpy duckdb hydra-core rank-bm25 pcst_fast || exit 14   # langgraph..rank-bm25: ftm/ (the planner graph, run_llm_agent.py)
 uv pip install -q -p $P peft==0.21.2 trl==1.16.0 bitsandbytes==0.50.2 accelerate==1.15.0 datasets==5.1.0 || uv pip install -q -p $P peft trl bitsandbytes accelerate datasets
 uv pip install -q -p $P sentence-transformers gliner2==2.1.0 laya==0.3.20 pydantic; lap rest
 wait $BPID; cat $SC/tmp/build_ext.log; lap ext_build_done

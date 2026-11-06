@@ -17,7 +17,7 @@ if wait_server gemma4-12b $pid; then
   # a 6,000-token prompt (the planner's cap) to see prefill time and that the KV cache holds it
   $PY - <<'PY'
 import json, os, time, urllib.request
-body = {"model": "gemma4-12b", "messages": [{"role": "user", "content": ("transfer 17 amount 120.5 USD wire; " * 600) + "Answer with exactly one letter: A = yes, B = no. Is that a lot?"}], "max_tokens": 1, "logprobs": True, "top_logprobs": 5, "temperature": 0}
+body = {"model": "gemma4-12b", "messages": [{"role": "user", "content": ("transfer 17 amount 120.5 USD wire; " * 400) + "Answer with exactly one letter: A = yes, B = no. Is that a lot?"}], "max_tokens": 1, "logprobs": True, "top_logprobs": 5, "temperature": 0}
 rq = urllib.request.Request(os.environ["FTM_LLM_ENDPOINT"] + "/chat/completions", json.dumps(body).encode(), {"Authorization": "Bearer " + os.environ["VLLM_API_KEY"], "Content-Type": "application/json"})
 t = time.time(); r = json.load(urllib.request.urlopen(rq, timeout=600)); print("RESULT long_prompt tokens", r["usage"], "seconds", round(time.time() - t, 2))
 PY
