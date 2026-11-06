@@ -91,3 +91,37 @@ Driver restart inside a running job (`scripts/ada/restart_driver.sh <jobid>`): t
 ## 5. Software freeze
 
 The venv built by `scripts/ada/bootstrap_ssd.sh` is frozen into `~/tt/venv_ssd_freeze.txt` at the end of each bootstrap (`uv pip freeze`). Freeze of job 61908 (6 Nov 2026, after the torchcodec / pcst_fast fixes): FREEZE_PLACEHOLDER
+
+## 6. Gemma 4 12B on two RTX 2080 Ti (tensor parallel 2, fp16) and the cross-machine check (6 Nov 2026, job 61908, gnode078)
+
+**It serves.** `scripts/serve_llm.py --model gemma4-12b --turing --tp 2 --gpu-util 0.88` (the profile of `configs/llm/serving.yaml`; `--turing` drops the fp8 KV cache and adds `--dtype float16`; vLLM 0.31.0+cu129, Marlin w4a16 kernels, TRITON_ATTN forced by vLLM for Gemma 4's mixed head sizes). Two things stood in the way, both fixed in `scripts/ada/bootstrap_ssd.sh`:
+
+1. `OSError: libnvrtc.so.13` at `import vllm`: the PyPI linux wheel of torchcodec 0.17.0 is the CUDA 13 build, vLLM imports torchcodec unconditionally (`vllm/multimodal/media/audio.py`), and the earlier constraints file pinned exactly that wheel. The driver here is 570 (CUDA 12.8) so cu13 libraries are not an option; vLLM uses torchcodec only to decode audio, which the profile switches off. Fix: `torchcodec==0.17.0+cpu` from the PyTorch CPU index, installed after vLLM.
+2. After the weights loaded, the first attention call failed: `triton OutOfResources: shared memory, Required: 98304, Hardware limit: 65536`. Gemma 4's global-attention layers have head size 512; vLLM's Triton unified-attention kernel tiles 32 KV tokens, which needs 96 KB of shared memory, and an sm_75 GPU has 64 KB. `scripts/ada/patch_vllm_turing.py` changes the launch parameters only (KV tile 16 and 2 pipeline stages for head size >= 512 below compute capability 8.0). Checked standalone against an fp32 reference on a 2080 Ti with the TP2 shapes (8 query heads, 1 KV head per GPU, head 512): max abs error 2e-3 (prefill 2 x 1,500 tokens), 2e-4 (decode), 6e-5 (300-token chunk on 4,000 of context); tile 32 fails at any stage count.
+
+Measured (4 server starts, the load and compile times vary with the page cache): server up after 226-261 s cold (weights 10-14 s from the node SSD, the rest is torch.compile 0.5-88 s, CUDA-graph capture 14 s and profiling); 9.7 GB used per GPU at `--gpu-memory-utilization 0.88`; KV cache 4.44 GiB per GPU = **34,822 tokens, 4.25 concurrent requests of 8,192 tokens** (about 6 requests at the planner's usual 5-6k-token prompt); single-token logprob request 0.08-0.11 s warm.
+
+**Real planner prompts** (ours_compose, tuned profile, library `shape_gemma_train.json`, the first 20 alerts of val `fit`, 13 of which reach the LLM; 32-35 LLM calls, 179-199k prompt tokens, 4.3-4.7k generated tokens per run):
+
+| | PC (RTX 5070 Ti, recorded run c000, same 20 alerts) | ada serial | ada concurrency 4 |
+|---|---|---|---|
+| median seconds per alert (alerts that call the LLM) | 15.2 | 18.5 (summary median over the 16 timed alerts: 17.8) | 51.2 per alert (queueing), 19.2 in the run summary |
+| seconds per LLM call | 6.5 | 8.2 | 19.7 per call under load |
+| generated tokens per second (tokens out / call seconds, prompts included) | 19.9 | 16.4 | 6.8 per stream |
+| wall for the 16 concurrent-phase alerts | 266 s for 76 alerts (c000, concurrency 4) = 3.5 s/alert | 193 s = 12.1 s/alert | 169 s = 10.6 s/alert |
+
+So two 2080 Ti at TP2 serve Gemma about 25 % slower per call than the 5070 Ti and gain only about 14 % throughput from concurrency 4 (the PC's fp8 KV holds many more requests); on this node three other GPUs were running S1BENCH servers at the same time. Practical rate for planning: about 11-12 s per planner alert on the whole 2-GPU pair.
+
+**Do the results match the PC run?** Compared per alert with `scripts/ada/cross_compare.py` (raw output `docs/t3_ada_crosscheck.json`; same 20 alert ids, same commit f949bf3 code, same library hash 39464ed7b909466c, same data files). No, not exactly, and the size of the difference is stated here:
+
+| ada vs PC | serial | concurrency 4 | ada serial vs ada concurrency 4 |
+|---|---|---|---|
+| same first step (action, question, bank, eps) | 12/20 (0.60) | 12/20 (0.60) | 18/20 (0.90) |
+| same full question sequence and outcomes | 9/20 (0.45) | 10/20 (0.50) | 16/20 (0.80) |
+| same number of LLM calls | 0.65 | 0.85 | 0.80 |
+| identical final probability | 9/20 (0.45) | 11/20 (0.55) | 17/20 (0.85) |
+| final probability within 0.01 / mean abs diff / max abs diff | 0.55 / 0.0150 / 0.054 | 0.60 / 0.0125 / 0.054 | 0.95 / 0.0025 / 0.038 |
+| Brier on the 20 alerts | 0.0864 vs 0.0842 | 0.0862 vs 0.0842 | 0.0864 vs 0.0862 |
+| paired Brier difference (bootstrap 95 % CI over alerts) | +0.0022 [-0.0046, +0.0099] | +0.0020 [-0.0046, +0.0096] | -0.0002 [-0.0017, +0.0008] |
+
+Reading: the planner's choices change on about half of the alerts between the machines, against about a fifth between a serial and a concurrent run on ada itself, so the machine (fp16 on Turing with TP2 and Marlin against the PC's bf16 and fp8 KV) matters more than batching noise. The aggregate Brier is the same within what 20 alerts can show (difference +0.002, CI covering 0), the verdict probabilities stay close (mean 0.013-0.015), and valid-DSL rate is 1.0 on both machines (ada usable-output rate 0.91 serial / 0.80 concurrent, PC 0.79 over 80 alerts). The inputs match: server-counted prompt tokens differ by exactly 4 on all 13 first prompts with the same evidence rows and the same menu, and the same code on the PC's CPU (a capture server that stores the request) builds byte-identical requests to the ones built on ada (checked on 9 requests), so the offset is not an ada effect; the recorded PC run's prompt estimate also sits 1-2 tokens higher than a fresh build with the same code and data, and server-side template accounting between vLLM versions is the likely cause (not verified). Consequence for placing work: planner runs on ada reproduce the PC's *aggregate* behaviour but not alert-by-alert choices, so a result must never be assembled from PC and ada alerts of the same arm. A whole arm (same chunk set) can run on either machine; arms that are compared with each other must run on the same machine.
