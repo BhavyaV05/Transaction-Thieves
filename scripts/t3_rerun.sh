@@ -329,11 +329,13 @@ stage_e15() {  # docs/t4_injection.md on the real endpoint; val, planner (100 al
   # shellcheck disable=SC2086
   run_log "$V/e15_planner.log" $PY scripts/run_injection_tests.py --system planner --alerts val --val-part eval --data hi_medium --n "${E15_N_PLANNER:-60}" \
       --llm endpoint --model "$MODEL" --backtest "$BT" --backtest-mode realistic --fusion-params "$FUSION" --set "$set" --screen heuristic \
-      --arms nogate,gate,gate+camel_flow,gate+camel_full,gate+screen --machine "$MACHINE" --run-id e15_planner --out outputs/injection_v3
+      --arms nogate,gate,gate+camel_flow,gate+camel_full,gate+screen --machine "$MACHINE" --run-id e15_planner --out outputs/injection_v3 \
+      || { say "e15_planner: exit $? (3 = an arm was NOT TESTED / not exposed, see $V/e15_planner.log); nothing is recorded as a result"; exit 3; }
   # shellcheck disable=SC2086
   run_log "$V/e15_react.log" $PY scripts/run_injection_tests.py --system react --alerts val --val-part eval --data hi_medium --n "${E15_N_REACT:-40}" \
       --llm endpoint --model "$MODEL" --backtest "$BT" --backtest-mode realistic --fusion-params "$FUSION" --set "$set" --screen heuristic \
-      --arms nogate,gate,gate+screen --machine "$MACHINE" --run-id e15_react --out outputs/injection_v3
+      --arms nogate,gate,gate+screen --machine "$MACHINE" --run-id e15_react --out outputs/injection_v3 \
+      || { say "e15_react: exit $? (3 = an arm was NOT TESTED / not exposed, see $V/e15_react.log); nothing is recorded as a result"; exit 3; }
   serve_down
 }
 
@@ -425,7 +427,8 @@ stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queu
     run_log "$V/e15_s1_${sysn%%|*}.log" $PY scripts/run_injection_tests.py --system "${sysn%%|*}" --alerts val --val-part eval --data hi_medium --n "${sysn#*|}" \
         --llm endpoint --model gemma4-12b-dual --backtest "$BT" --backtest-mode realistic --fusion-params "$FUSION" --set "$set" \
         --screen fastmodel --screen-endpoint "${FTM_FAST_ENDPOINT:-http://127.0.0.1:8001/v1}" --screen-model fast3-s$S1_SEED \
-        --arms nogate,gate,gate+screen --machine "$MACHINE" --run-id "e15_s1_${sysn%%|*}" --out outputs/injection_v3
+        --arms nogate,gate,gate+screen --machine "$MACHINE" --run-id "e15_s1_${sysn%%|*}" --out outputs/injection_v3 \
+      || { say "e15_s1_${sysn%%|*}: exit $? (3 = an arm was NOT TESTED / not exposed, see $V/e15_s1_${sysn%%|*}.log); nothing is recorded as a result"; exit 3; }
   done
   serve_down
 }

@@ -59,6 +59,7 @@ from ftm.safety.camel_compare import compare_arms, fastmodel_screen, heuristic_s
 from ftm.safety.injection_run import (  # noqa: E402
     ARMS,
     CHANNELS,
+    MIN_EXPOSED_SHARE,
     obedient_responder,
     open_gate,
     run_alert,
@@ -178,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
     ap.add_argument("--max-prompt-tokens", type=int, default=None, help="prompt cap; default: the tuned profile's (6,750 at an 8k context)")
     ap.add_argument("--menu-top-k", type=int, default=None, help="ranked top-K menu in the planner prompt; default: the tuned profile's. Without the budget the whole 204-question menu plus a 40-row trail overflows the context and every planner call ends as PromptTooLong (exposed 0)")
+    ap.add_argument("--min-exposed-share", type=float, default=MIN_EXPOSED_SHARE,
+                    help="an arm in which fewer runs than this share reached the planted item is NOT TESTED: no attack success rate is reported and the run exits 3")
     ap.add_argument("--evidence-min", type=int, default=None, help="newest trail rows protected from the prompt trimmer; default: the tuned profile's")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
@@ -297,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
         df.write_parquet(sdir / "runlog.parquet")
         frames.append(df)
         (sdir / "pairs.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pairs))
-        srows = summarize(pairs)
+        srows = summarize(pairs, a.min_exposed_share)
         summary = {"run_id": run_id, "system": system, "model": model, "llm": a.llm, "toolbox": tb_variant,
                    "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "n_alerts": len(alerts),
                    "arms": arms, "kinds": kinds, "channel": channel, "injection_set_sha256": set_sha,
@@ -313,6 +316,12 @@ def main(argv: list[str] | None = None) -> int:
            "n_alerts": len(alerts), "rows": all_rows, "camel_compare": compare_arms(all_rows)}  # fmt: skip
     (out / "summary.json").write_text(json.dumps(top, indent=2, default=str))
     print(json.dumps({"run_id": run_id, "out": str(out), "n_summary_rows": len(all_rows)}))
+    untested = sorted({(r["system"], r["arm"]) for r in all_rows if r.get("status") == "NOT TESTED"})
+    if untested:
+        worst = {k: max(r["prompt_too_long_rate"] for r in all_rows if (r["system"], r["arm"]) == k) for k in untested}
+        print("NOT TESTED (no or too few runs reached the planted item; this is NOT a safe result): "
+              + "; ".join(f"{s}/{arm} (PromptTooLong rate {worst[(s, arm)]:.2f})" for s, arm in untested), file=sys.stderr)
+        return 3
     return 0
 
 
