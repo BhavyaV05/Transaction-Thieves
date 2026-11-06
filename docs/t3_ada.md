@@ -90,7 +90,7 @@ Driver restart inside a running job (`scripts/ada/restart_driver.sh <jobid>`): t
 
 ## 5. Software freeze
 
-The venv built by `scripts/ada/bootstrap_ssd.sh` is frozen into `~/tt/venv_ssd_freeze.txt` at the end of each bootstrap (`uv pip freeze`). Freeze of job 61908 (6 Nov 2026, after the torchcodec / pcst_fast fixes): FREEZE_PLACEHOLDER
+The venv built by `scripts/ada/bootstrap_ssd.sh` is frozen into `~/tt/venv_ssd_freeze.txt` at the end of each bootstrap (`uv pip freeze`). Freeze of job 61908 (6 Nov 2026, after the torchcodec / pcst_fast fixes): `docs/t3_ada_venv_freeze.txt` (`uv pip freeze`, 257 packages), sha256 `e1b244b7004bc4d625f518a844d8b3164892745a75036fa457980e21a326f1aa`. This freeze was taken from the venv whose bootstrap predated the pcst_fast build step and the langgraph line (both were installed by hand with the commands now in the script).
 
 ## 6. Gemma 4 12B on two RTX 2080 Ti (tensor parallel 2, fp16) and the cross-machine check (6 Nov 2026, job 61908, gnode078)
 
