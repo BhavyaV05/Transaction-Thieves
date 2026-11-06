@@ -45,6 +45,10 @@ build_ext() {
 ( build_ext ) > $SC/tmp/build_ext.log 2>&1 &
 BPID=$!
 uv pip install -q -p $P -c $CON "$VW" torch==2.13.0 torchaudio==2.11.0 torchvision==0.28.0 --extra-index-url https://download.pytorch.org/whl/cu129 || exit 13; lap vllm
+# torchcodec: the PyPI linux wheel (0.17.0) is the CUDA 13 build; its libtorchcodec_image.so needs libnvrtc.so.13, and vLLM imports it unconditionally from vllm/multimodal/media/audio.py, so
+# `vllm serve` died with "OSError: libnvrtc.so.13".  The driver here is 570 (CUDA 12.8), which cannot run cu13 anyway, and vLLM only uses torchcodec to decode audio (disabled: --limit-mm-per-prompt audio 0).  Take the CPU build.
+uv pip install -q -p $P --reinstall --no-deps --index-url https://download.pytorch.org/whl/cpu "torchcodec==0.17.0+cpu" || exit 15; lap torchcodec_cpu
+$P -c "import torchcodec; print('torchcodec', torchcodec.__version__)" || exit 16
 uv pip install -q -p $P polars pyarrow pandas scikit-learn lightgbm tqdm pyyaml pytest omegaconf requests wandb || exit 14
 uv pip install -q -p $P peft==0.21.2 trl==1.16.0 bitsandbytes==0.50.2 accelerate==1.15.0 datasets==5.1.0 || uv pip install -q -p $P peft trl bitsandbytes accelerate datasets
 uv pip install -q -p $P sentence-transformers gliner2==2.1.0 laya==0.3.20 pydantic; lap rest

@@ -21,6 +21,7 @@ body = {"model": "gemma4-12b", "messages": [{"role": "user", "content": ("transf
 rq = urllib.request.Request(os.environ["FTM_LLM_ENDPOINT"] + "/chat/completions", json.dumps(body).encode(), {"Authorization": "Bearer " + os.environ["VLLM_API_KEY"], "Content-Type": "application/json"})
 t = time.time(); r = json.load(urllib.request.urlopen(rq, timeout=600)); print("RESULT long_prompt tokens", r["usage"], "seconds", round(time.time() - t, 2))
 PY
-else echo "RESULT gemma_tp2 DOES_NOT_SERVE"; fi
+else echo "RESULT gemma_tp2 DOES_NOT_SERVE"; RC=1; fi
 grep -i -E "marlin|kernel|backend|dtype|error|KV cache|cuda graph" $SERVELOG | head -20
-kill -- -$pid 2>/dev/null; wait $pid 2>/dev/null; true
+kill -- -$pid 2>/dev/null; wait $pid 2>/dev/null
+[ "${RC:-0}" = 0 ] || fail "gemma tp2 did not serve (see $SERVELOG)"

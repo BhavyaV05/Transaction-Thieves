@@ -7,6 +7,7 @@ SC=${SCRATCH_DIR:-/ssd_scratch/$USER}; export HF_HOME=$SC/hf HF_HUB_DISABLE_PROG
 export VLLM_API_KEY=$($PY -c "import secrets;print(secrets.token_urlsafe(24))"); export FTM_LLM_API_KEY=$VLLM_API_KEY FTM_LLM_ENDPOINT=http://127.0.0.1:$PORT/v1
 export S1BENCH_PREPARED=$HOME/tt/s1bench_data/prepared S1BENCH_CACHE=$HOME/tt/s1bench_data S1BENCH_DTYPE=float16
 S1=$HOME/tt/tt-s1bench
+fail() { echo "TASK_FAILED $*"; exit 1; }   # driver.py also refuses a done marker when the task log carries this line
 wait_server() {  # wait_server <served name> <pid>
   local t0=$(date +%s)
   until curl -sf -H "Authorization: Bearer $VLLM_API_KEY" $FTM_LLM_ENDPOINT/models | grep -q "\"$1\""; do

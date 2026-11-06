@@ -47,6 +47,9 @@ def main():
             with open(RES / "walltimes.tsv", "a") as f:
                 f.write(f"{r['t']['name']}\t{time.strftime('%F %T')}\trc={rc}\twall_s={wall:.0f}\ttry={r['t']['tries']}\tgpus={r['gpus']}\n")
             print(time.strftime("%F %T"), r["t"]["name"], "rc", rc, f"{wall:.0f}s", flush=True)
+            if rc == 0 and "TASK_FAILED" in r["log"].read_text()[r["log_pos"]:]:
+                rc = 1  # a task script reported failure but exited 0: never record a done marker for it
+                print(time.strftime("%F %T"), r["t"]["name"], "reported TASK_FAILED with rc 0; treated as failed", flush=True)
             if rc == 0:
                 (RES / "done" / r["t"]["name"]).write_text(f"{wall:.0f}s\n")
             elif r["t"]["tries"] < 2:
@@ -57,11 +60,13 @@ def main():
                 gpus, free = free[: t["g"]], free[t["g"]:]
                 env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(map(str, gpus)), OMP_NUM_THREADS=str(max(1, t["c"])))
                 t["tries"] += 1
-                log = open(RES / "logs" / f"{t['name']}.log", "a")
+                log_path = RES / "logs" / f"{t['name']}.log"
+                log_pos = log_path.stat().st_size if log_path.exists() else 0
+                log = open(log_path, "a")
                 log.write(f"\n=== {time.strftime('%F %T')} try {t['tries']} gpus {gpus}: {t['cmd']}\n")
                 log.flush()
                 p = subprocess.Popen(["bash", "-c", t["cmd"]], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-                running.append({"t": t, "p": p, "gpus": gpus, "t0": time.time()})
+                running.append({"t": t, "p": p, "gpus": gpus, "t0": time.time(), "log": log_path, "log_pos": log_pos})
                 tasks.remove(t)
                 used_c, used_m = used_c + t["c"], used_m + t["m"]
                 print(time.strftime("%F %T"), "start", t["name"], "gpus", gpus, flush=True)

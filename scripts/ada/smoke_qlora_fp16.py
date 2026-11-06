@@ -42,7 +42,7 @@ def main() -> None:
     labels[:, : -256] = -100
     out = {"model": a.model, "seq": a.seq, "attn": a.attn, "gpu": torch.cuda.get_device_name(0), "load_s": round(load_s, 1), "steps": []}
     try:
-        for i in range(a.steps):
+        for _i in range(a.steps):
             t1 = time.time()
             with torch.autocast("cuda", dtype=torch.float16):
                 loss = model(input_ids=ids, labels=labels).loss
