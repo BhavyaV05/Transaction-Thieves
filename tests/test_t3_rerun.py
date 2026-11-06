@@ -181,23 +181,51 @@ def test_e15_stage_commands_state_the_backtest_mode():
     assert len(calls) == 2 and all("--backtest-mode realistic" in ln for ln in calls)
 
 
-def test_chunk_check_stops_a_silent_zero_call_arm_and_a_prompt_too_long_arm(tmp_path):
+def _chunk(tmp_path, name, system, calls, probs=None, ptl=0.0, system1=None):
+    d = tmp_path / name
+    d.mkdir()
+    n = len(calls)
+    probs = probs if probs is not None else [0.2] * n
+    (d / "per_alert.jsonl").write_text("".join(json.dumps({"alert_id": f"A{i}", "llm_calls": c, "probability": p}) + "\n" for i, (c, p) in enumerate(zip(calls, probs, strict=True))))
+    (d / "summary.json").write_text(json.dumps({"system": system, "system1": system1}))
+    (tmp_path / f"{name}.log").write_text("PromptTooLong[x] A0: over the model's context length\n" * round(ptl * n))
+    return d
+
+
+def test_chunk_check_stops_our_dead_arms(tmp_path):
     cc = _load("t3_chunk_check")
-
-    def chunk(name, calls, probs=None, ptl=0):
-        d = tmp_path / name
-        d.mkdir()
-        probs = probs if probs is not None else [0.2] * len(calls)
-        (d / "per_alert.jsonl").write_text("".join(json.dumps({"alert_id": f"A{i}", "llm_calls": c, "probability": p}) + "\n" for i, (c, p) in enumerate(zip(calls, probs, strict=True))))
-        (tmp_path / f"{name}.log").write_text("PromptTooLong[planner] A0: over the model's context length\n" * ptl)
-        return d
-
-    ok, msg = cc.check(chunk("good", [3, 0, 2, 4, 1, 2, 3, 2, 0, 3]))  # 8 of 10 alerts called the model
+    ok, msg = cc.check(_chunk(tmp_path, "good", "ours_compose", [3, 0, 2, 4, 1, 2, 3, 2, 0, 3]))  # 8 of 10 alerts called the model
     assert ok and "with an LLM call 0.80" in msg
-    ok, msg = cc.check(chunk("silent", [0] * 10))  # every alert stopped without a call: not a result
-    assert not ok and "FAIL" in msg
-    ok, _ = cc.check(chunk("toolong", [1] * 10, ptl=9))  # 0.9 PromptTooLong per alert
-    assert not ok
-    ok, _ = cc.check(chunk("noverdict", [1] * 10, probs=[None] * 5 + [0.1] * 5))
-    assert not ok
+    ok, msg = cc.check(_chunk(tmp_path, "silent", "ours_compose", [0] * 10))
+    assert not ok and "FAIL arm=ours_compose rule=share of alerts with an LLM call value=0.00" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "toolong", "react_adapted", [1] * 10, ptl=0.9))
+    assert not ok and "rule=PromptTooLong per alert value=0.90" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "noverdict", "ours_llm_decides", [1] * 10, probs=[None] * 4 + [0.1] * 6))
+    assert not ok and "without a verdict value=0.40" in msg
     assert cc.main([str(tmp_path / "good")]) == 0 and cc.main([str(tmp_path / "silent")]) == 4
+
+
+def test_chunk_check_reports_but_does_not_stop_external_agents_at_their_real_values(tmp_path):
+    cc = _load("t3_chunk_check")
+    cases = {"lats": dict(probs=[0.2] * 13 + [None] * 7, calls=[2] * 20),  # verdict rate 0.65
+             "co_investigator_native": dict(probs=[0.2] * 9 + [None] * 11, calls=[3] * 20),  # 0.46
+             "react": dict(probs=[0.2] * 18 + [None] * 2, calls=[3] * 20),  # 0.90
+             "reflexion": dict(probs=[0.2] * 19 + [None], calls=[3] * 20),  # 0.95
+             "dspy_react": dict(probs=[0.2] * 20, calls=[3] * 20, ptl=0.2)}  # PromptTooLong 0.2 per alert
+    for system, kw in cases.items():
+        ok, msg = cc.check(_chunk(tmp_path, system, system, **kw))
+        assert ok, msg  # reported, not policed
+    ok, msg = cc.check(_chunk(tmp_path, "lats2", "lats", [2] * 20, probs=[0.2] * 13 + [None] * 7))
+    assert "WARN arm=lats" in msg and "FAIL" not in msg
+    ok, msg = cc.check(_chunk(tmp_path, "dead", "sharma_ported", [0] * 10))  # no LLM call at all
+    assert not ok and "FAIL arm=sharma_ported rule=no alert made an LLM call" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "alltoolong", "react", [1] * 10, ptl=0.9))  # nearly every call too long
+    assert not ok and "maximum=0.8" in msg
+
+
+def test_chunk_check_skips_the_call_share_rule_when_system1_answers(tmp_path):
+    cc = _load("t3_chunk_check")
+    ok, msg = cc.check(_chunk(tmp_path, "s1", "ours_compose", [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], system1="outputs/s1v1/system1_frozen_s0.json"))  # the fast tier answered
+    assert ok, msg
+    ok, msg = cc.check(_chunk(tmp_path, "s1bad", "ours_compose", [0] * 10, probs=[None] * 10, system1="x"))  # but no verdicts at all is still a failure
+    assert not ok and "without a verdict" in msg
