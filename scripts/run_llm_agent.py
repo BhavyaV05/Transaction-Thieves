@@ -135,7 +135,7 @@ def sample_order(height: int, seed: int, n: int, offset: int = 0) -> list[int]:
 def stratified_order(alerts: pl.DataFrame, seed: int, n: int, pos_frac: float) -> pl.DataFrame:
     """n alerts of which round(n * pos_frac) are positive (all of a class if it has fewer), each class in seeded order.
     Train alerts only (labels are read): the exemplar pool and the case memory."""
-    y = alerts["label"].to_list()
+    y = [int(v) for v in alerts["label"].to_list()]  # Boolean column; polars 2.0 raises on Boolean == int
     n_pos = round(n * pos_frac)
     parts = []
     for lab, k in ((1, n_pos), (0, n - n_pos)):
