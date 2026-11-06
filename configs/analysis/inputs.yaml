@@ -50,6 +50,7 @@ eps_sweep: {path: null}
 
 # power.txt: the Brier difference to be detected and the projected test size (HI-Medium projection from validation, docs/report/00_outline.md n_alerts)
 power: {target_brier_difference: 0.01, projected_test_alerts: 3475}
+p0_recal: {path: null, primary: null}   # scripts/fit_p0_recal.py output: logit recalibration of p0 fitted on labelled validation parts (sensitivity S3, issue 108)
 
 e18: {summary_csv: null}            # outputs/e18/stage2/summary.csv (T3's E18 table)
 fast_model: {path: null}            # JSON with {"decision_types": [{name, alpha, error_marginal, kept, speedup, brier_delta}]}
