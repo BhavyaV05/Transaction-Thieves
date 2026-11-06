@@ -59,6 +59,7 @@ from ftm.safety.camel_compare import compare_arms, fastmodel_screen, heuristic_s
 from ftm.safety.injection_run import (  # noqa: E402
     ARMS,
     CHANNELS,
+    MIN_EXPOSED_SHARE,
     obedient_responder,
     open_gate,
     run_alert,
@@ -118,6 +119,7 @@ def plan_text(systems: list[str], n: int, n_arms: int, n_kinds: int, sec_per_run
 def build_factory(rla, name: str, llm, a, menu, fusion, extra, pool):
     if name == "planner":
         return lambda: LLMPlanner(llm, mode=a.mode, questions=menu, seed=a.seed, extra=extra, fusion=fusion,
+                                  menu_top_k=getattr(a, "menu_top_k", None), min_evidence_rows=getattr(a, "evidence_min", 0),
                                   question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))))  # fmt: skip
     cls = {**rla.GROUP_D, **rla.GROUP_C}[name]
     kw = {"pool": pool} if name in rla.GROUP_C else {}
@@ -169,11 +171,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--endpoint", default=None, help="OpenAI-compatible base URL (default: FTM_LLM_ENDPOINT)")
     ap.add_argument("--model", default=None)
     ap.add_argument("--backtest", type=Path, default=None, help="back-test dir / lr_table.jsonl (planner menu, fusion LRs)")
+    ap.add_argument("--backtest-mode", default=None, choices=["realistic", "exact"],
+                    help="the mode of a table copied away from its cache entries (configs/fusion/headroom_v1_table.jsonl has none beside it); a cross-check when the entries are there")
     ap.add_argument("--fusion-params", type=Path, default=None, help="Fusion.params() JSON fitted on val (T4)")
     ap.add_argument("--no-select-menu", action="store_true")
     ap.add_argument("--thinking", action="store_true")
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
-    ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens)
+    ap.add_argument("--max-prompt-tokens", type=int, default=None, help="prompt cap; default: the tuned profile's (6,750 at an 8k context)")
+    ap.add_argument("--menu-top-k", type=int, default=None, help="ranked top-K menu in the planner prompt; default: the tuned profile's. Without the budget the whole 204-question menu plus a 40-row trail overflows the context and every planner call ends as PromptTooLong (exposed 0)")
+    ap.add_argument("--min-exposed-share", type=float, default=MIN_EXPOSED_SHARE,
+                    help="an arm in which fewer runs than this share reached the planted item is NOT TESTED: no attack success rate is reported and the run exits 3")
+    ap.add_argument("--evidence-min", type=int, default=None, help="newest trail rows protected from the prompt trimmer; default: the tuned profile's")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--machine", default="unknown")
     ap.add_argument("--plan", action="store_true", help="print the number of investigations and hours, run nothing")
@@ -214,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
     tuned = load_profile("tuned")  # the production p0 and edge scorer unless the environment names others
     os.environ.setdefault("FTM_P0_VARIANT", tuned["p0_variant"])
     os.environ.setdefault("FTM_EDGE_SCORER", tuned["edge_scorer"])
+    for attr, key in (("max_prompt_tokens", "max_prompt_tokens"), ("menu_top_k", "menu_top_k"), ("evidence_min", "min_evidence_rows")):
+        if getattr(a, attr) is None:
+            setattr(a, attr, tuned.get(key, Limits.max_tokens if attr == "max_prompt_tokens" else None if attr == "menu_top_k" else 0))
     run_id = a.run_id or time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
     out = a.out / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -221,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     bt = None
     if a.backtest is not None:
         try:
-            bt = load_backtest(a.backtest, require="realistic")
+            bt = load_backtest(a.backtest, mode=a.backtest_mode, require="realistic")
         except BacktestTableError as e:
             raise SystemExit(str(e)) from e
     if a.fusion_params is not None and bt is None:
@@ -289,7 +300,7 @@ def main(argv: list[str] | None = None) -> int:
         df.write_parquet(sdir / "runlog.parquet")
         frames.append(df)
         (sdir / "pairs.jsonl").write_text("".join(json.dumps(p) + "\n" for p in pairs))
-        srows = summarize(pairs)
+        srows = summarize(pairs, a.min_exposed_share)
         summary = {"run_id": run_id, "system": system, "model": model, "llm": a.llm, "toolbox": tb_variant,
                    "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "n_alerts": len(alerts),
                    "arms": arms, "kinds": kinds, "channel": channel, "injection_set_sha256": set_sha,
@@ -305,6 +316,12 @@ def main(argv: list[str] | None = None) -> int:
            "n_alerts": len(alerts), "rows": all_rows, "camel_compare": compare_arms(all_rows)}  # fmt: skip
     (out / "summary.json").write_text(json.dumps(top, indent=2, default=str))
     print(json.dumps({"run_id": run_id, "out": str(out), "n_summary_rows": len(all_rows)}))
+    untested = sorted({(r["system"], r["arm"]) for r in all_rows if r.get("status") == "NOT TESTED"})
+    if untested:
+        worst = {k: max(r["prompt_too_long_rate"] for r in all_rows if (r["system"], r["arm"]) == k) for k in untested}
+        print("NOT TESTED (no or too few runs reached the planted item; this is NOT a safe result): "
+              + "; ".join(f"{s}/{arm} (PromptTooLong rate {worst[(s, arm)]:.2f})" for s, arm in untested), file=sys.stderr)
+        return 3
     return 0
 
 

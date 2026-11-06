@@ -160,3 +160,72 @@ def test_other_stage_dry_runs_name_the_expected_commands():
     assert "frozen_v3/shape_gemma_train.json" in out and "frozen_v3/account_gemma.json" in out
     assert out.count("sft_planner_v3.yaml") == 3
     assert "run_injection_tests.py --system planner" in out and "run_injection_tests.py --system react" in out
+
+
+def test_machine_label_is_overridable_and_defaults_to_the_pc():
+    base = {"V": "outputs/_t3_rerun_test_v3", "TEACHER": "outputs/_t3_rerun_test_teacher"}
+    pc = _dry("teacher", env=base)
+    assert pc.returncode == 0, pc.stderr
+    assert all("--machine t3-5070ti" in ln for ln in pc.stdout.splitlines() if "run_llm_agent.py" in ln)
+    ada = _dry("teacher", env={**base, "MACHINE": "ada-2080ti-tp2", "EXTERNAL_SERVER": "1"})
+    runs = [ln for ln in ada.stdout.splitlines() if "run_llm_agent.py" in ln]
+    assert runs and all("--machine ada-2080ti-tp2" in ln and "t3-5070ti" not in ln for ln in runs)
+    assert "serve_llm.py" not in ada.stdout  # the external server is used as it is
+
+
+def test_e15_stage_commands_state_the_backtest_mode():
+    """configs/fusion/headroom_v1_table.jsonl has no cache entries beside it, so load_backtest needs the mode: without it every E15 call stopped at startup."""
+    r = _dry("e15", env={"V": "outputs/_t3_rerun_test_v3"})
+    assert r.returncode == 0, r.stderr
+    calls = [ln for ln in r.stdout.splitlines() if "run_injection_tests.py" in ln]
+    assert len(calls) == 2 and all("--backtest-mode realistic" in ln for ln in calls)
+
+
+def _chunk(tmp_path, name, system, calls, probs=None, ptl=0.0, system1=None):
+    d = tmp_path / name
+    d.mkdir()
+    n = len(calls)
+    probs = probs if probs is not None else [0.2] * n
+    (d / "per_alert.jsonl").write_text("".join(json.dumps({"alert_id": f"A{i}", "llm_calls": c, "probability": p}) + "\n" for i, (c, p) in enumerate(zip(calls, probs, strict=True))))
+    (d / "summary.json").write_text(json.dumps({"system": system, "system1": system1}))
+    (tmp_path / f"{name}.log").write_text("PromptTooLong[x] A0: over the model's context length\n" * round(ptl * n))
+    return d
+
+
+def test_chunk_check_stops_our_dead_arms(tmp_path):
+    cc = _load("t3_chunk_check")
+    ok, msg = cc.check(_chunk(tmp_path, "good", "ours_compose", [3, 0, 2, 4, 1, 2, 3, 2, 0, 3]))  # 8 of 10 alerts called the model
+    assert ok and "with an LLM call 0.80" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "silent", "ours_compose", [0] * 10))
+    assert not ok and "FAIL arm=ours_compose rule=share of alerts with an LLM call value=0.00" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "toolong", "react_adapted", [1] * 10, ptl=0.9))
+    assert not ok and "rule=PromptTooLong per alert value=0.90" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "noverdict", "ours_llm_decides", [1] * 10, probs=[None] * 4 + [0.1] * 6))
+    assert not ok and "without a verdict value=0.40" in msg
+    assert cc.main([str(tmp_path / "good")]) == 0 and cc.main([str(tmp_path / "silent")]) == 4
+
+
+def test_chunk_check_reports_but_does_not_stop_external_agents_at_their_real_values(tmp_path):
+    cc = _load("t3_chunk_check")
+    cases = {"lats": dict(probs=[0.2] * 13 + [None] * 7, calls=[2] * 20),  # verdict rate 0.65
+             "co_investigator_native": dict(probs=[0.2] * 9 + [None] * 11, calls=[3] * 20),  # 0.46
+             "react": dict(probs=[0.2] * 18 + [None] * 2, calls=[3] * 20),  # 0.90
+             "reflexion": dict(probs=[0.2] * 19 + [None], calls=[3] * 20),  # 0.95
+             "dspy_react": dict(probs=[0.2] * 20, calls=[3] * 20, ptl=0.2)}  # PromptTooLong 0.2 per alert
+    for system, kw in cases.items():
+        ok, msg = cc.check(_chunk(tmp_path, system, system, **kw))
+        assert ok, msg  # reported, not policed
+    ok, msg = cc.check(_chunk(tmp_path, "lats2", "lats", [2] * 20, probs=[0.2] * 13 + [None] * 7))
+    assert "WARN arm=lats" in msg and "FAIL" not in msg
+    ok, msg = cc.check(_chunk(tmp_path, "dead", "sharma_ported", [0] * 10))  # no LLM call at all
+    assert not ok and "FAIL arm=sharma_ported rule=no alert made an LLM call" in msg
+    ok, msg = cc.check(_chunk(tmp_path, "alltoolong", "react", [1] * 10, ptl=0.9))  # nearly every call too long
+    assert not ok and "maximum=0.8" in msg
+
+
+def test_chunk_check_skips_the_call_share_rule_when_system1_answers(tmp_path):
+    cc = _load("t3_chunk_check")
+    ok, msg = cc.check(_chunk(tmp_path, "s1", "ours_compose", [0, 0, 0, 1, 0, 0, 0, 0, 0, 0], system1="outputs/s1v1/system1_frozen_s0.json"))  # the fast tier answered
+    assert ok, msg
+    ok, msg = cc.check(_chunk(tmp_path, "s1bad", "ours_compose", [0] * 10, probs=[None] * 10, system1="x"))  # but no verdicts at all is still a failure
+    assert not ok and "without a verdict" in msg

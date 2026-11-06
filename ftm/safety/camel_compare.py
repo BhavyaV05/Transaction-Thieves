@@ -206,7 +206,8 @@ def compare_arms(summary_rows: list[dict]) -> list[dict]:
     out = []
     for (system, channel, kind), arms in sorted(by.items()):
         row: dict = {"system": system, "channel": channel, "kind": kind,
-                     "n_exposed": {a: arms[a]["n_exposed"] for a in ARM_ORDER if a in arms}}  # fmt: skip
+                     "n_exposed": {a: arms[a]["n_exposed"] for a in ARM_ORDER if a in arms},
+                     "not_tested": [a for a in ARM_ORDER if a in arms and arms[a].get("status") == "NOT TESTED"]}  # fmt: skip
         for a in ARM_ORDER:
             if a in arms:
                 row[f"asr[{a}]"] = arms[a]["asr_exposed"]
