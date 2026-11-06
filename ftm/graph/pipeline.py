@@ -26,10 +26,11 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from ftm.compliance.query import rules_query
+from ftm.compliance.rules_mode import check_mode, fetch_rules
 from ftm.decision.threshold import max_log_odds_shift
 from ftm.dsl.parser import family as dsl_family
 from ftm.dsl.parser import parse as dsl_parse
+from ftm.graph.menu_rank import rank_menu
 from ftm.graph.policy import Ask, MenuItem, PlannerPolicy, PlannerView, Stop
 from ftm.graph.state import AlertState
 from ftm.harness.interface import ToolBox
@@ -110,9 +111,10 @@ class GraphInvestigator:
 
     def __init__(self, policy: PlannerPolicy, fusion: Fusion | None = None, llm: ChatClient | None = None, *,
                  dsl: DslAdapter | None = None, questions: list[dict] | None = None, question_filter: QuestionFilter | None = None,
-                 evidence_fn: EvidenceFn = summary_evidence, use_rules: bool = True, use_library: bool = False,
+                 evidence_fn: EvidenceFn = summary_evidence, use_rules: bool = True, use_library: bool = False, rules_mode: str = "alert",
                  threshold: float | None = None, max_failures_in_row: int = 3, allow_compose: bool = False,
-                 stop_cannot_cross: bool = False):  # fmt: skip
+                 stop_cannot_cross: bool = False, menu_top_k: int | None = None):  # fmt: skip
+        self.menu_top_k = menu_top_k  # None = the whole routed menu (legacy); K = the ranked top-K by expected Brier reduction
         self.policy, self.llm = policy, llm
         self.fusion = fusion or NaiveLRFusion()
         self.dsl = dsl or V0Dsl()
@@ -120,6 +122,7 @@ class GraphInvestigator:
         self.question_filter = question_filter
         self.evidence_fn = evidence_fn
         self.use_rules, self.use_library = use_rules, use_library
+        self.rules_mode = check_mode(rules_mode)  # none | fixed | alert (default) | whole; use_rules=False is none
         self.threshold = threshold
         self.max_failures_in_row = max_failures_in_row
         self.allow_compose = allow_compose
@@ -180,7 +183,7 @@ class GraphInvestigator:
         evidence = self.evidence_fn(alert, tools)
         rules = []
         if self.use_rules:
-            for r in tools.lookup_rules(rules_query(alert, _gate_of(tools)))[:5]:
+            for r in fetch_rules(tools, self.rules_mode, alert, _gate_of(tools)):
                 rules.append({"rule_id": str(r.get("rule_id")), "text": str(r.get("text") or r.get("snippet", ""))[:300]})
         hint = None
         if self.system1 is not None and self.system1.enabled("typology"):
@@ -205,7 +208,8 @@ class GraphInvestigator:
             for eps in q.get("eps") or ():
                 entry = table.get(q["program"], eps) if table is not None else None
                 bins = sorted(entry.lr.items()) if entry is not None else []
-                items.append(MenuItem(str(q["id"]), q["program"], float(eps), str(q.get("bank") or ""), str(q.get("family") or ""), bins))
+                items.append(MenuItem(str(q["id"]), q["program"], float(eps), str(q.get("bank") or ""), str(q.get("family") or ""), bins,
+                                      getattr(entry, "p_cell", None), tuple(getattr(entry, "bins", None) or ())))
         return items
 
     def _view(self, s: AlertState) -> PlannerView:
@@ -220,10 +224,14 @@ class GraphInvestigator:
         summary = {"home_bank": alert.home_bank, **{k: v for k, v in alert.summary.items() if k not in SUMMARY_HIDDEN}}
         if s.get("typology_hint"):  # System 1, settled by its cascade; a hint, not a fact (the planner may disagree)
             summary["system1_typology_hint"] = s["typology_hint"]
+        shown, stats = None, None
+        if self.menu_top_k is not None:  # the prompt budget: the top-K by expected Brier reduction at the current posterior
+            shown, stats = rank_menu(s["menu"], getattr(self.fusion, "model", None), session.posterior, session.eps_left,
+                                     {e.program for e in session.log}, self.menu_top_k)
         return PlannerView(alert_summary=summary, p0=alert.p0, posterior=session.posterior, threshold=self.threshold,
                            evidence=s["evidence"], rules=s["rules"], strategies=s["strategies"], menu=s["menu"], answers=answers,
                            eps_left=session.eps_left, calls_left=budget.calls_left, step=s["step"],
-                           allow_compose=self.allow_compose)  # fmt: skip
+                           allow_compose=self.allow_compose, menu_shown=shown, menu_stats=stats)  # fmt: skip
 
     def _cannot_cross(self, s: AlertState) -> bool:
         """The remaining eps cannot move the fused log-odds across the threshold. The bound per eps is derived from the menu's

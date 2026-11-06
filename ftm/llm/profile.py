@@ -57,3 +57,16 @@ def pick_evidence_view(report: dict, candidates: tuple[str, ...] = ("scorer_pcst
     best = max(rows[n]["recall_at_k"] for n in ok)
     win = min((n for n in ok if rows[n]["recall_at_k"] >= best - RECALL_TIE), key=lambda n: (rows[n]["mean_tokens_est"], n))
     return win if rows[win]["recall_at_k"] >= rows[reference]["recall_at_k"] - RECALL_TIE else reference
+
+
+MAX_MODEL_LEN = 8192  # every serving config (Gemma 4 12B and the E18 candidates, configs/experiments/e18_backbone_sweep.yaml)
+OUTPUT_RESERVE = 800  # the largest per-step answer budget of the planner: a wave of 4 (ftm.planners.llm_prompt.output_token_budget = 791)
+SERVER_OVERSHOOT = 6308 / 6000 - 1 + 0.02  # Gemma 4's largest measured server/estimator ratio on trimmed prompts (docs/t3_e8.md) + the refit margin
+CAP_STEP = 250
+
+
+def prompt_cap(max_model_len: int = MAX_MODEL_LEN, output_reserve: int = OUTPUT_RESERVE, overshoot: float = SERVER_OVERSHOOT,
+               step: int = CAP_STEP) -> int:
+    """The largest estimator-token cap whose server-counted prompt plus the answer budget still fits the context window:
+    floor_step((max_model_len - output_reserve) / (1 + overshoot)). docs/t3_prompt_budget.md 1.3."""
+    return int((max_model_len - output_reserve) / (1 + overshoot)) // step * step

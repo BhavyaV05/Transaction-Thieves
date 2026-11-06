@@ -13,8 +13,8 @@ All scans return LazyFrames; call `.collect()`.
 
 from __future__ import annotations
 
-from datetime import datetime
 import os
+from datetime import datetime
 from pathlib import Path
 
 import polars as pl

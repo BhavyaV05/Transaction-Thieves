@@ -125,9 +125,13 @@ def vllm_args(cfg: dict, name: str, port: int, host: str | None = None) -> list[
         args += ["--reasoning-parser", m["reasoning_parser"]]
     if m.get("quantization"):
         args += ["--quantization", str(m["quantization"])]  # vLLM 0.31.0 rejects bitsandbytes; unused by the current profiles
-    if m.get("lora_modules"):  # E16: one server for the quantised base ("same model prompted") and the QLoRA adapters
-        args += ["--enable-lora", "--max-lora-rank", str(m.get("max_lora_rank", 16)), "--lora-modules",
-                 *[f"{k}={(ROOT / v).resolve()}" for k, v in m["lora_modules"].items()]]  # fmt: skip
+    loras = {k: (ROOT / v).resolve() for k, v in (m.get("lora_modules") or {}).items()}
+    missing = sorted(k for k, p in loras.items() if not p.exists())
+    if missing:  # an adapter not trained yet (e.g. soft-target seeds 1-2) must not stop the server; a request for it fails loudly instead
+        print(f"serve_llm: not loading adapters with no files yet: {', '.join(missing)}", file=sys.stderr)
+    loras = {k: p for k, p in loras.items() if k not in missing}
+    if loras:  # E16: one server for the quantised base ("same model prompted") and the QLoRA adapters
+        args += ["--enable-lora", "--max-lora-rank", str(m.get("max_lora_rank", 16)), "--lora-modules", *[f"{k}={p}" for k, p in loras.items()]]
     args += [str(x) for x in m.get("extra_args") or []]  # per-profile flags, e.g. no image inputs for Gemma 4
     return args
 

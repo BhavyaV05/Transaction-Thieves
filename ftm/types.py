@@ -94,3 +94,6 @@ class Verdict:
     llm_calls: int = 0
     gpu_seconds: float = 0.0
     trials: int | None = None  # Reflexion: trials run on this alert; None for systems without trials
+
+
+NO_EVIDENCE_TEXT = "(no evidence trail given)"  # evidence view "none" (RAG bench WITHOUT arm): the one line every system prints for the trail

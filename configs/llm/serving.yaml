@@ -53,9 +53,11 @@ models:
     revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
     licence: apache-2.0
     max_model_len: 8192
-    gpu_memory_utilization: 0.84           # was 0.88: OOM in a thinking-arm prefill (26 Oct, 15.8 GB peak beside the desktop); KV cache only
+    gpu_memory_utilization: 0.86           # was 0.88 (OOM in a thinking-arm prefill, 26 Oct), then 0.84; 0.86 = vLLM 0.31's own advice to keep the pre-0.21 KV size
     reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
-    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory
+    # text only: no vision/audio encoder memory. fp8 KV (2 Nov): at bf16 KV the cache held 13,974 tokens = 1.7 requests of 8,192, so concurrency 4
+    # ran ~2 at a time; fp8 roughly doubles it (planner prompts share a ~3k-token cached prefix). Same setting as the dual-serve profile.
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}', --kv-cache-dtype, fp8, --max-num-seqs, "8"]
   qwen3-8b-lora:                           # E16 (planner QLoRA): the AWQ Qwen3-8B above with LoRA enabled. Served alone it is the "same model
     repo: Qwen/Qwen3-8B-AWQ                #  prompted" arm; the adapters (trained as QLoRA on the bf16 base) are addressed by name in `model`.
     revision: 4da05a8edb55c6046cce958586c33b61da07bb79   # vLLM 0.31.0 has no bitsandbytes quantisation, so the bf16 base cannot be served 4-bit
@@ -68,6 +70,18 @@ models:
       planner-sft-s0: models/planner_sft/seed=0/adapter
       planner-sft-s1: models/planner_sft/seed=1/adapter
       planner-sft-s2: models/planner_sft/seed=2/adapter
+  qwen3-8b-lora-v3:                        # E16 rerun (scripts/t3_rerun.sh student-e16): the same AWQ Qwen3-8B, adapters of the v3 distilled set (teacher_v2)
+    repo: Qwen/Qwen3-8B-AWQ
+    revision: 4da05a8edb55c6046cce958586c33b61da07bb79
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85
+    reasoning_parser: qwen3
+    max_lora_rank: 16
+    lora_modules:                          # trained by scripts/train_planner.py with configs/llm/sft_planner_v3.yaml (gitignored, models/)
+      planner-sft-v3-s0: models/planner_sft_v3/seed=0/adapter
+      planner-sft-v3-s1: models/planner_sft_v3/seed=1/adapter
+      planner-sft-v3-s2: models/planner_sft_v3/seed=2/adapter
   qwen3-4b-lora:                           # E10 (fast model): AWQ Qwen3-4B with LoRA enabled: the untuned base and the tuned adapters
     repo: Qwen/Qwen3-4B-AWQ
     revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
@@ -112,7 +126,7 @@ models:
       fast3soft-s0: models/fast_4b_s1v1_soft/seed=0/adapter   # calibration-as-objective arm (configs/llm/sft_fast_soft.yaml)
       fast3soft-s1: models/fast_4b_s1v1_soft/seed=1/adapter
       fast3soft-s2: models/fast_4b_s1v1_soft/seed=2/adapter
-    extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8"]
+    extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8", --attention-backend, TRITON_ATTN]   # fp8 KV picks FlashInfer, whose arch check fails on sm_120 (2 Nov); Gemma 4 already runs TRITON_ATTN
   qwen3-1.7b:                              # E10 small general-LLM baseline (untuned, bf16: small enough not to need a quantised build)
     repo: Qwen/Qwen3-1.7B
     revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e

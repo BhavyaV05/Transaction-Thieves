@@ -10,5 +10,8 @@ backtest_mode: realistic
 fusion_params: configs/fusion/headroom_v1.json        # kind conditional_fusion: ConditionalLR (eps free, shrink 0.5)
 decision: configs/decision/headroom_v1.yaml           # threshold (escalate >=) -> planner threshold= and the cannot_cross stop
 stop_cannot_cross: true
-concurrency: 4
+concurrency: 8                        # 2 Nov: fp8 KV on the Gemma profile (configs/llm/serving.yaml) makes room; vLLM queues the rest
 timing_sample: 4
+max_prompt_tokens: 6750               # ftm.llm.profile.prompt_cap(): floor250((8192 - 800) / 1.0713); tests/test_profile.py re-derives it (docs/t3_prompt_budget.md 1.3)
+menu_top_k: 8                         # rule of docs/t3_prompt_budget.md 2 on val fit+cal (scripts/prompt_budget_study.py report): smallest K with coverage >= 0.90 inside the cap
+min_evidence_rows: 40                 # same rule: smallest N keeping >= 95% of the trail's pattern-edge recall (N=25 keeps 92.4%); 40 = the whole trail (k)

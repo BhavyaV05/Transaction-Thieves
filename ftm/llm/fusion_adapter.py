@@ -14,7 +14,9 @@ does not set it); a family in the log that the model does not know raises rather
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -77,3 +79,10 @@ class ConditionalLR(NaiveLRFusion):
                 x += self.model.weight(fam) * math.log(lr)
         z = float(self.model.logit_base([p0])[0]) + self.model.shrink * x
         return float(fuse.sigmoid(z))
+
+
+def load_fitted(path: str | Path, table: LRTable | None = None) -> NaiveLRFusion:
+    """The one loader for `--fusion-params`: ConditionalLR for a ConditionalFusion.to_json file (kind conditional_fusion, the
+    frozen headroom_v1), FusedLR for a Fusion.params() file."""
+    params = json.loads(Path(path).read_text(encoding="utf-8"))
+    return ConditionalLR.from_json(path, table) if params.get("kind") == "conditional_fusion" else FusedLR.from_params(params, table)

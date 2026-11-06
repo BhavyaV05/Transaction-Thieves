@@ -244,7 +244,7 @@ def test_nothing_public_hands_out_a_bank_the_gate_or_the_accountant():
         val = getattr(t, name)
         assert not isinstance(val, forbidden), name
     assert {n for n in dir(t) if not n.startswith("_")} == {
-        "begin", "end", "wrap", "ask_bank", "ask_banks", "local_graph", "lookup_rules", "search_library",
+        "begin", "end", "wrap", "ask_bank", "ask_banks", "local_graph", "lookup_rules", "all_rules", "search_library",
         "questions_log", "eps_spent", "elapsed_days", "last_elapsed_days",
     }  # fmt: skip
 

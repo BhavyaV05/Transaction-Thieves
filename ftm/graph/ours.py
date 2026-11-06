@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ftm.graph.menu_rank import ranked_questions
 from ftm.graph.pipeline import AskResult, family_of, library_strategies, route
 from ftm.graph.policy import Action, Ask, PlannerView, Stop
 from ftm.llm.budget import BudgetedClient, BudgetExceeded, PromptTooLong
@@ -43,6 +44,9 @@ MAX_PROMPT_REFITS = 2  # resends after a server-counted PromptTooLong, per alert
 PROMPT_REFIT_MARGIN = 1.02
 
 
+MENU_KEYS = ("offered", "shown", "dropped_nonpositive", "dropped_no_cells", "beyond_top_k")
+
+
 @dataclass
 class PlannerStats:
     """Aggregated over alerts. `usable_output_rate` is the >=95% acceptance metric (stops count as usable)."""
@@ -58,6 +62,15 @@ class PlannerStats:
     refusals: int = 0  # asks the gate / accountant refused
     refused_repeats: int = 0  # the same refused (question, bank) proposed again, caught before it reached the gate
     seconds_per_alert: list[float] = field(default_factory=list)
+    prompts: int = 0  # planner prompts built (a refit rebuilds one)
+    rules_offered: int = 0  # summed over prompts: documents the rules mode offered
+    rules_in_prompt: int = 0  # summed over prompts: documents that fit under the prompt cap
+    questions_offered: int = 0  # summed over prompts: menu items after routing
+    questions_in_prompt: int = 0  # summed over prompts: menu items left after the trimmer (the whole-corpus arm displaces some)
+    evidence_rows_offered: int = 0  # summed over prompts: rows of the evidence trail
+    evidence_rows_in_prompt: int = 0  # summed over prompts: rows left after the trimmer
+    evidence_floor_broken: int = 0  # prompts whose trail went below the protected minimum (everything else was already cut)
+    menu: dict = field(default_factory=lambda: dict.fromkeys(MENU_KEYS, 0))  # summed over prompts, profile tuned only (ftm.graph.menu_rank)
 
     @property
     def json_parse_rate(self) -> float:
@@ -80,6 +93,14 @@ class PlannerStats:
         return {"alerts": self.alerts, "outputs": self.outputs, "json_parse_rate": self.json_parse_rate,
                 "valid_dsl_rate": self.valid_dsl_rate, "usable_output_rate": self.usable_output_rate,
                 "duplicates": self.duplicates, "refusals": self.refusals, "refused_repeats": self.refused_repeats,
+                "mean_rules_offered": self.rules_offered / self.prompts if self.prompts else float("nan"),
+                "mean_rules_in_prompt": self.rules_in_prompt / self.prompts if self.prompts else float("nan"),
+                "mean_questions_offered": self.questions_offered / self.prompts if self.prompts else float("nan"),
+                "mean_questions_in_prompt": self.questions_in_prompt / self.prompts if self.prompts else float("nan"),
+                "mean_evidence_rows_offered": self.evidence_rows_offered / self.prompts if self.prompts else float("nan"),
+                "mean_evidence_rows_in_prompt": self.evidence_rows_in_prompt / self.prompts if self.prompts else float("nan"),
+                "prompts_below_evidence_floor": self.evidence_floor_broken,
+                "menu_budget": ({k: self.menu[k] / self.prompts for k in MENU_KEYS} if self.menu["offered"] else None),  # per-prompt means
                 "median_seconds_per_alert": s[len(s) // 2] if s else float("nan")}  # fmt: skip
 
     @classmethod
@@ -91,6 +112,11 @@ class PlannerStats:
                 setattr(out, k, getattr(out, k) + v)
             out.alerts += p.alerts
             out.usable += p.usable
+            for k in ("prompts", "rules_offered", "rules_in_prompt", "questions_offered", "questions_in_prompt", "evidence_rows_offered",
+                      "evidence_rows_in_prompt", "evidence_floor_broken"):
+                setattr(out, k, getattr(out, k) + getattr(p, k))
+            for k in MENU_KEYS:
+                out.menu[k] += p.menu[k]
             out.seconds_per_alert += p.seconds_per_alert
         return out
 
@@ -117,7 +143,9 @@ class OursPolicy:
     def __init__(self, *, mode: Mode, dsl: DslAdapter | None = None, questions: dict[str, dict] | None = None,
                  use_library: bool = False, batch_writer: QuestionBatchWriter | None = None, temperature: float = 0.0,
                  seed: int = 0, extra: dict | None = None, keep_prompts: bool = False, max_output_tokens: int | None = None,
-                 batch_schedule: tuple[int, ...] | None = None, stats: PlannerStats | None = None):  # fmt: skip
+                 batch_schedule: tuple[int, ...] | None = None, stats: PlannerStats | None = None,
+                 min_evidence_rows: int = 0):  # fmt: skip
+        self.min_evidence_rows = min_evidence_rows  # prompt budget (profile tuned): the newest N evidence rows survive the trimmer; 0 = legacy
         self.mode = mode
         self.dsl = dsl or V0Dsl()
         self.questions = questions or {}
@@ -146,7 +174,8 @@ class OursPolicy:
         step = view.step
         state = PlannerState(
             alert_summary=view.alert_summary, evidence_text=view.evidence, partner_banks=o.banks, eps_left=view.eps_left,
-            calls_left=view.calls_left, questions=st["menu_raw"], strategies=o.strategies,
+            calls_left=view.calls_left, strategies=o.strategies,
+            questions=st["menu_raw"] if view.menu_shown is None else ranked_questions(st["menu_raw"], view.menu_shown),
             rules=view.rules, answers=session.answers_so_far(), posterior=view.posterior, feedback=o.feedback,
             wave_k=schedule[o.slot] if schedule else 1, p0=view.p0, threshold=view.threshold,
         )  # fmt: skip
@@ -154,7 +183,24 @@ class OursPolicy:
         o.trace.append(rec)
         o.pending = None
         try:
-            msgs, est = build_messages_with_estimate(self.mode, state, self.dsl, limits.max_tokens, o.token_scale)
+            fit: dict = {}
+            msgs, est = build_messages_with_estimate(self.mode, state, self.dsl, limits.max_tokens, o.token_scale, fit,
+                                                     self.min_evidence_rows)  # fmt: skip
+            state.rules = state.rules[:fit["rules_kept"]]  # the schema may only cite rules the prompt shows
+            self.stats.prompts += 1
+            self.stats.rules_in_prompt += fit["rules_kept"]
+            self.stats.rules_offered += fit["rules_offered"]
+            self.stats.questions_in_prompt += fit["questions_kept"]
+            self.stats.questions_offered += len(st["menu_raw"])
+            self.stats.evidence_rows_offered += fit["evidence_offered"]
+            self.stats.evidence_rows_in_prompt += fit["evidence_rows"]
+            self.stats.evidence_floor_broken += fit["evidence_floor_broken"]
+            if view.menu_stats is not None:  # the menu ranking of this step (profile tuned)
+                rec["menu"] = {**view.menu_stats, "shown": [[m.qid, m.eps] for m in view.menu_shown]}
+                rec["prompt_est"], rec["evidence_rows"] = est, fit["evidence_rows"]
+                for k in ("offered", "dropped_nonpositive", "dropped_no_cells", "beyond_top_k"):
+                    self.stats.menu[k] += view.menu_stats[k]
+                self.stats.menu["shown"] += len(view.menu_shown)
             resp = llm.chat(msgs, json_schema=planner_schema(self.mode, state),
                             max_tokens=self.max_output_tokens or output_token_budget(self.mode, state.wave_k), temperature=self.temperature,
                             seed=self.seed, extra=self.extra)  # fmt: skip

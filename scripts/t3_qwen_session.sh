@@ -65,11 +65,16 @@ case $which in
     for s in 0 1 2; do score_arm tuned_s$s fast-s$s; done ;;
   fast3)
     score_arm untuned_4b qwen3-4b-fast outputs/s1v1
-    for s in 0 1 2; do score_arm tuned_s$s fast3-s$s outputs/s1v1; done ;;
+    for s in 0 1 2; do score_arm tuned_s$s fast3-s$s outputs/s1v1; done
+    for s in 0 1 2; do [[ -d models/fast_4b_s1v1_soft/seed=$s/adapter ]] && score_arm soft_s$s fast3soft-s$s outputs/s1v1; done ;;  # calibration-as-objective arm
   large3)
     mkdir -p outputs/s1v1/large
     $PY scripts/score_fast_baseline.py score --tier large-logprob --model "$MODEL" --workers 8 --out outputs/s1v1/large/large_lp.jsonl > outputs/s1v1/large/score.log 2>&1
-    echo "$(date -Is) scored large tier: $(tail -1 outputs/s1v1/large/score.log)" ;;
+    echo "$(date -Is) scored large tier: $(tail -1 outputs/s1v1/large/score.log)"
+    # same server: the train rows too (soft targets for the calibration-as-objective arm, docs/t3_system1.md section 8 step 1)
+    $PY scripts/score_fast_baseline.py --decisions data/decisions/hi_medium_s1v1/decisions_train.jsonl score --tier large-logprob --train-rows \
+        --model "$MODEL" --workers 8 --out outputs/s1v1/large/large_lp_train.jsonl > outputs/s1v1/large/score_train.log 2>&1
+    echo "$(date -Is) scored large tier on train rows: $(tail -1 outputs/s1v1/large/score_train.log)" ;;
   small) score_arm untuned_1.7b qwen3-1.7b ;;
 esac
 echo "$(date -Is) done: $which"

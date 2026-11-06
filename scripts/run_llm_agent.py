@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT))
 import polars as pl  # noqa: E402
 
 from ftm import guards  # noqa: E402
+from ftm.compliance.rules_mode import RULES_MODES, RulesModeToolBox  # noqa: E402
 from ftm.dsl.parser import family, parse  # noqa: E402
 from ftm.eval.runlog import RUN_LOG_COLUMNS, RUN_LOG_VERSION  # noqa: E402
 from ftm.external.bed_llm import dev_responder as bed_llm_dev_responder  # noqa: E402
@@ -68,7 +69,7 @@ from ftm.llm.backtest_table import (  # noqa: E402
 )
 from ftm.llm.client import HttpChatClient  # noqa: E402
 from ftm.llm.devtools import DevRandomToolBox, dev_responder  # noqa: E402
-from ftm.llm.fusion_adapter import ConditionalLR, FusedLR  # noqa: E402
+from ftm.llm.fusion_adapter import load_fitted  # noqa: E402
 from ftm.llm.investigation import NaiveLRFusion  # noqa: E402
 from ftm.llm.mock import MockLLM, RecordingClient  # noqa: E402
 from ftm.llm.profile import PROFILES, decision_threshold, load_profile  # noqa: E402
@@ -391,8 +392,15 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-memory", action="store_true", help="Group C: run with an empty case memory (the pre-fix behaviour)")
     ap.add_argument("--k", type=int, default=None, help="evidence edges (default: the profile's, 40)")
     ap.add_argument("--evidence-view", default=None,
-                    help="amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt (ftm.retrieval.evidence_views.view; "
+                    help="amount | amount_1hop | scorer | scorer_greedy | scorer_pcst | long_prompt | none (ftm.retrieval.evidence_views.view; "
+                         "none = the alert summary only, every system prints '(no evidence trail given)'; "
                          "default: the profile's, else amount_1hop = the week-2 selection)")
+    ap.add_argument("--rules", choices=RULES_MODES, default="alert",
+                    help="none = no rules; fixed = the one fixed sentence (the old RULES_QUERY), top 5; alert = rules_query(alert), top 5 (default); "
+                         "whole = the whole corpus, cut to the prompt cap by the shared trimmer (the kept count is in summary.json). "
+                         "Planner and the adapted arms: their rules section; Group D / C: their own lookup_rules calls")
+    ap.add_argument("--no-exemplars", action="store_true",
+                    help="FinFRE-RAG: zero-shot, the same prompt without the exemplar block (the pool still fixes the features shown)")
     ap.add_argument("--edge-scorer", choices=["v1", "v2"], default=None,
                     help="edge scorer behind the scorer views (default: the profile's, else FTM_EDGE_SCORER, else v1)")
     ap.add_argument("--llm", choices=["mock", "endpoint"], default="mock")
@@ -403,7 +411,16 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reasoning-effort", default=None, help="gpt-oss: low | medium | high (sent instead of enable_thinking)")
     ap.add_argument("--max-output-tokens", type=int, default=None,
                     help="per-step output budget (E18 thinking arm: 1024, counted in tokens_out and latency)")
-    ap.add_argument("--max-prompt-tokens", type=int, default=Limits.max_tokens, help="Limits.max_tokens, the prompt cap")
+    ap.add_argument("--max-prompt-tokens", type=int, default=None,
+                    help=f"Limits.max_tokens, the prompt cap (default: the profile's, else {Limits.max_tokens}; tuned: what the server allows, "
+                         "docs/t3_prompt_budget.md)")
+    ap.add_argument("--menu-top-k", default=None,
+                    help="planner and adapted arms: show the K questions with the largest expected Brier reduction at the current posterior "
+                         "(drop those with gain <= 0), compact bin -> LR maps; 'all' = every positive-gain question; 'off' = the whole "
+                         "routed menu, table order (legacy). Default: the profile's")
+    ap.add_argument("--evidence-min", type=int, default=None,
+                    help="planner: the newest N evidence rows are cut last (after strategies, menu questions and surplus rules); "
+                         "0 = the legacy trimming order. Default: the profile's")
     ap.add_argument("--max-llm-calls", type=int, default=Limits.max_llm_calls)
     ap.add_argument("--eps-per-alert", type=float, default=None,
                     help="E2 (privacy-detection curve): per-alert eps budget in Limits AND in the harness accountant "
@@ -483,8 +500,15 @@ def _main(argv: list[str] | None = None) -> int:
     conc_explicit = a.concurrency is not None
     for attr, key, fb in (("p0_variant", "p0_variant", None), ("evidence_view", "evidence_view", "amount_1hop"),
                           ("edge_scorer", "edge_scorer", None), ("k", "k", 40), ("backtest_mode", "backtest_mode", None),
-                          ("concurrency", "concurrency", 1), ("timing_sample", "timing_sample", 0)):
+                          ("concurrency", "concurrency", 1), ("timing_sample", "timing_sample", 0),
+                          ("max_prompt_tokens", "max_prompt_tokens", Limits.max_tokens), ("menu_top_k", "menu_top_k", "off"),
+                          ("evidence_min", "min_evidence_rows", 0)):
         _default(attr, key, fb)
+    if str(a.menu_top_k) not in ("off", "all") and not str(a.menu_top_k).isdigit():
+        ap.error("--menu-top-k: an integer, 'all' or 'off'")
+    menu_top_k = None if str(a.menu_top_k) == "off" else (math.inf if str(a.menu_top_k) == "all" else int(a.menu_top_k))
+    if menu_top_k == math.inf:
+        menu_top_k = 10**6
     if a.toolbox == "dev" and not conc_explicit:  # the dev toolbox draws from one shared random stream
         a.concurrency, a.timing_sample = 1, 0
     explicit_table = a.backtest is not None
@@ -533,9 +557,7 @@ def _main(argv: list[str] | None = None) -> int:
     if a.fusion_params is not None and bt is None:
         ap.error("--fusion-params needs --backtest (the fitted model reads the table's LRs and families)")
     if a.fusion_params is not None:
-        params = json.loads(a.fusion_params.read_text(encoding="utf-8"))
-        fusion = (ConditionalLR.from_json(a.fusion_params, bt.table) if params.get("kind") == "conditional_fusion"
-                  else FusedLR.from_params(params, bt.table))
+        fusion = load_fitted(a.fusion_params, bt.table)
     else:
         fusion = NaiveLRFusion(bt.table if bt else None)
         print(f"NOTE: fusion = NaiveLRFusion ({'--fusion naive: the named ablation' if a.fusion == 'naive' else 'profile none, legacy: no --fusion-params'}); "
@@ -553,6 +575,8 @@ def _main(argv: list[str] | None = None) -> int:
     batches = QuestionBatchWriter(out / "questions.jsonl", run_id=run_id, model=model, seed=a.seed)
     if a.system in ADAPTED_SYSTEMS and a.dspy_program is not None and a.system != "dspy_react_adapted":
         ap.error("--dspy-program applies to --system dspy_react or dspy_react_adapted only")
+    if a.no_exemplars and not a.system.startswith("finfre_rag"):
+        ap.error("--no-exemplars applies to finfre_rag only")
     if a.system != "planner" and a.system not in ADAPTED_SYSTEMS:
         a.pool_pos_frac = None if a.pool_pos_frac < 0 else a.pool_pos_frac
         a.memory_pos_frac = None if a.memory_pos_frac < 0 else a.memory_pos_frac
@@ -561,6 +585,8 @@ def _main(argv: list[str] | None = None) -> int:
         if a.dspy_program is not None and a.system != "dspy_react":
             ap.error("--dspy-program applies to --system dspy_react only")
         kw = {"program_path": str(a.dspy_program)} if a.dspy_program is not None else {}
+        if a.no_exemplars:
+            kw["use_exemplars"] = False
         if a.coinv_emit_unvalidated:
             if not a.system.startswith("co_investigator"):
                 ap.error("--coinv-emit-unvalidated applies to co_investigator only")
@@ -578,11 +604,12 @@ def _main(argv: list[str] | None = None) -> int:
         if a.system == "planner":
             return LLMPlanner(llm, mode=a.mode, batch_writer=batches, questions=menu,
                               question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c), seed=a.seed, extra=extra, fusion=fusion,
-                              use_library=a.library is not None, keep_prompts=a.keep_prompts,
-                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule, threshold=threshold, stop_cannot_cross=cannot_cross)
+                              use_library=a.library is not None, rules_mode=a.rules, keep_prompts=a.keep_prompts,
+                              max_output_tokens=a.max_output_tokens, batch_schedule=schedule, threshold=threshold, stop_cannot_cross=cannot_cross,
+                              menu_top_k=menu_top_k, min_evidence_rows=a.evidence_min)
         if a.system in ADAPTED_SYSTEMS:  # the agent's control strategy as a PlannerPolicy in the system graph; verdict = fused posterior
             return adapted_system(a.system, llm, menu=menu, fusion=fusion, seed=a.seed, extra=extra, use_library=a.library is not None,
-                                  program_path=a.dspy_program, threshold=threshold, stop_cannot_cross=cannot_cross,
+                                  rules_mode=a.rules, program_path=a.dspy_program, threshold=threshold, stop_cannot_cross=cannot_cross, menu_top_k=menu_top_k,
                                   question_filter=lambda q, c: applicable_to(q, ACCOUNT_SLOTS | set(c.summary.get("set_slots", ()))) and bank_routable(q, c))  # fmt: skip
         return {**GROUP_D, **GROUP_C}[a.system](llm, seed=a.seed, extra=extra, fusion=fusion,
                                                 **({"pool": pool} if a.system in GROUP_C else {}), **mem_kw, **kw)
@@ -636,6 +663,10 @@ def _main(argv: list[str] | None = None) -> int:
         library_hash = library.content_hash()
         tools = LibraryToolBox(tools, library)
         session_tools = lambda sess: LibraryToolBox(sess, library)  # noqa: E731
+    if a.rules != "alert" and a.system != "planner" and a.system not in ADAPTED_SYSTEMS:  # their own lookup_rules calls go through the mode
+        tools_inner, session_inner = tools, session_tools
+        tools = RulesModeToolBox(tools_inner, a.rules)
+        session_tools = lambda sess: RulesModeToolBox(session_inner(sess), a.rules)  # noqa: E731
     limits = Limits(eps_per_alert=eps_budget, max_tokens=a.max_prompt_tokens, max_llm_calls=a.max_llm_calls)
     base = {"run_id": run_id, "commit": git_commit(), "machine": a.machine, "system": system_name,
             "variant": written_variant(variant, a.variant_label), "seed": a.seed, "log_version": RUN_LOG_VERSION, "model": model,
@@ -698,6 +729,7 @@ def _main(argv: list[str] | None = None) -> int:
     df.write_parquet(out / "runlog.parquet")  # time-guard: not transactions
     summary = {"run_id": run_id, **base, "n_alerts": len(alerts), "alerts": a.alerts, "val_part": a.val_part, "data": a.data, "model": model,
                "serving_stack": a.serving_stack, "candidate": a.candidate, "thinking": a.thinking, "evidence_view": a.evidence_view, "edge_scorer": a.edge_scorer,
+               "rules_mode": a.rules, "prompt_cap": a.max_prompt_tokens, "menu_top_k": str(a.menu_top_k), "evidence_min": a.evidence_min, "exemplars": ("none" if a.no_exemplars else "retrieved") if a.system.startswith("finfre_rag") else None,
                "profile": a.profile, "decision": str(a.decision) if a.decision else None, "threshold": threshold, "stop_cannot_cross": cannot_cross,
                "p0_variant": a.p0_variant, "fusion_params": str(a.fusion_params) if a.fusion_params else None,
                "reasoning_effort": a.reasoning_effort, "batch_schedule": list(schedule) if schedule else None, "max_output_tokens": a.max_output_tokens,
