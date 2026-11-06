@@ -62,13 +62,13 @@ class BacktestConfig:
     min_per_bin: int = 20
     shrink: float = 2.0  # e-process bet shrinkage toward the null
     time_blocks: int = 1  # > 1: the e-process permutes labels within this many time blocks (drift), see evalue.py
+    ledger: str = "history"  # what a bank's ledger holds: "history" = earlier splits + this one (was "split": this split only); names the cache
     mode: str = "realistic"  # realistic | exact (labels and noise are decided by the caller; this names the cache)
 
     def namespace(self, alert_set_id: str, seed: int) -> str:
-        fields = asdict(self)
-        if fields["time_blocks"] == 1:  # the default is not part of the name, so caches built before the option stay valid
-            del fields["time_blocks"]
-        blob = json.dumps({**fields, "alerts": alert_set_id, "seed": seed}, sort_keys=True)
+        # time_blocks is always part of the name: a K=1 and a K=4 table must never share a cache (caches built before the
+        # option existed are read by path, not by recomputing their namespace)
+        blob = json.dumps({**asdict(self), "alerts": alert_set_id, "seed": seed}, sort_keys=True)
         return hashlib.blake2b(blob.encode(), digest_size=6).hexdigest()
 
 
@@ -106,6 +106,22 @@ class BacktestCache:
         tmp.write_text(json.dumps(entry))
         os.replace(tmp, p)  # atomic: a reader never sees half a file
 
+    def put_rows(self, canon: str, eps: float, rows: list[dict]) -> None:
+        """The per-alert rows behind an entry (alert_id, canonical, eps, bank, answer, answer_bin, label), next to the cache."""
+        d = self.dir / "rows"
+        d.mkdir(exist_ok=True)
+        p = d / self._path(canon, eps).name
+        tmp = p.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(rows))
+        os.replace(tmp, p)
+
+    def alert_rows(self) -> list[dict]:
+        """Every recorded per-alert row of this namespace (ineligible questions included; filter on the LR table)."""
+        out: list[dict] = []
+        for p in sorted((self.dir / "rows").glob("*.json")) if (self.dir / "rows").exists() else []:
+            out += json.loads(p.read_text())
+        return out
+
     def entries(self) -> list[dict]:
         # entries are <20 hex digits>.json; report.json and the other files written next to them are not entries
         keyed = (p for p in self.dir.glob("*.json") if len(p.stem) == 20 and all(c in "0123456789abcdef" for c in p.stem))
@@ -131,8 +147,13 @@ class Backtester:
     def collect(self, node: Node, eps: float) -> tuple[list, list[bool], int]:
         """Put `node` to every eligible alert. Returns (answers, labels) of the replies, in alert-time order, and
         the number of alerts that were eligible."""
+        rows, eligible = self._ask_all(node, eps)
+        return [r[2] for r in rows], [r[3] for r in rows], eligible
+
+    def _ask_all(self, node: Node, eps: float) -> tuple[list[tuple], int]:
+        """(alert_id, bank, answer, label) of every reply, in alert-time order, and the number of eligible alerts."""
         canon = canonical(node)
-        answers, labels, eligible = [], [], 0
+        rows, eligible = [], 0
         for a in self.alerts:
             bank = asked_bank(node, a.binding)
             if bank is None or bank not in self.banks:
@@ -142,9 +163,8 @@ class Backtester:
             if isinstance(r, Reply):
                 if self.accountant is not None and not is_exact(eps):
                     self.accountant.spend_cal(bank, eps, charge_keys(node, a.binding, bank))
-                answers.append(r.value)
-                labels.append(a.label)
-        return answers, labels, eligible
+                rows.append((a.alert_id, bank, r.value, a.label))
+        return rows, eligible
 
     def run_question(self, program: str, eps: float, use_cache: bool = True) -> dict:
         node = parse(program)
@@ -158,17 +178,24 @@ class Backtester:
 
     def _evaluate(self, node: Node, canon: str, eps: float) -> dict:
         cfg, kind = self.config, node.prim.kind
-        answers, labels, eligible = self.collect(node, eps)
+        rows, eligible = self._ask_all(node, eps)
+        answers, labels = [r[2] for r in rows], [r[3] for r in rows]
         n, n_l = len(answers), sum(labels)
         entry = {
             "program_canonical": canon, "eps": eps, "family": family(node), "kind": kind, "mode": cfg.mode,
             "n_eligible": eligible, "n_answers": n, "n_launder": n_l, "n_clean": n - n_l,
             "eligible": n >= cfg.min_answers and min(n_l, n - n_l) >= cfg.min_per_class,
-            "bins": [], "lr": {}, "ceiling": None, "log_e": 0.0, "e_value": 1.0, "accepted": False,
-        }  # fmt: skip
+            "bins": [], "lr": {}, "ceiling": None, "log_e": 0.0, "e_value": 1.0,
+        }  # fmt: skip  (no `accepted`: it is decided over the whole batch by `accept`, never per entry)
+        bins = choose_bins(answers, cfg.max_bins, cfg.min_per_bin) if entry["eligible"] and kind in ("count", "set_count") else ()
+        if self.cache is not None:
+            cells = cells_for(kind, answers, bins) if entry["eligible"] or kind not in ("count", "set_count") else [None] * n
+            self.cache.put_rows(canon, eps, [
+                {"alert_id": r[0], "canonical": canon, "eps": eps, "bank": r[1], "answer": r[2], "answer_bin": c, "label": r[3]}
+                for r, c in zip(rows, cells, strict=True)
+            ])  # fmt: skip
         if not entry["eligible"]:
             return entry
-        bins = choose_bins(answers, cfg.max_bins, cfg.min_per_bin) if kind in ("count", "set_count") else ()
         est = estimate_lr(kind, answers, labels, eps, sensitivity(node), arity(node), cfg.alpha, bins)
         log_e = log_evalue(cells_for(kind, answers, bins), labels, cfg.shrink, cfg.time_blocks)
         entry.update(bins=list(bins), lr=est.lr, ceiling=est.ceiling, log_e=log_e,
@@ -202,6 +229,21 @@ def assemble(cache: BacktestCache, fdr: float = 0.10) -> list[dict]:
     return accept(cache.entries(), fdr)
 
 
+def write_alert_rows(cache: BacktestCache, path: str | Path | None = None) -> Path:
+    """Parquet of the per-alert rows of every back-tested (question, eps): alert_id, canonical, eps, bank, answer (float;
+    bool as 0/1), answer_bin (the LR-table cell, null if the question was not eligible), label. Join p0 by alert_id to fit
+    a p0-conditional fusion (`ftm.fusion.conditional`)."""
+    import polars as pl
+
+    rows = cache.alert_rows()
+    schema = {"alert_id": pl.String, "canonical": pl.String, "eps": pl.Float64, "bank": pl.Int64, "answer": pl.Float64,
+              "answer_bin": pl.String, "label": pl.Boolean}  # fmt: skip
+    df = pl.DataFrame([{**r, "answer": None if r["answer"] is None else float(r["answer"])} for r in rows], schema=schema)
+    path = Path(path) if path else cache.dir / "alert_rows.parquet"
+    df.write_parquet(path)
+    return path
+
+
 def lr_table_rows(entries: Iterable[dict]) -> list[dict]:
     """Rows in the format of T3's `LRTable.from_rows` (hand-off #9): program_canonical, eps, accepted, lr, family, bins.
 
@@ -213,7 +255,7 @@ def lr_table_rows(entries: Iterable[dict]) -> list[dict]:
             continue
         p_cell = {k: [c[0] / max(e["n_clean"], 1), c[1] / max(e["n_launder"], 1)] for k, c in e["cells"].items()}
         rows.append(
-            {"program_canonical": e["program_canonical"], "eps": e["eps"], "accepted": bool(e["accepted"]),
+            {"program_canonical": e["program_canonical"], "eps": e["eps"], "accepted": bool(e.get("accepted")),
              "lr": e["lr"], "family": e["family"], "bins": e["bins"] or None, "kind": e["kind"],
              "p_cell": p_cell}  # fmt: skip
         )

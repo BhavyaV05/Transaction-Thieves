@@ -215,4 +215,4 @@ def test_the_two_shipped_configs_load_and_agree_with_the_gate():
     cfg = BankConfig.load()
     assert (cfg.timeout_days, cfg.typical_max_days, cfg.tail_max_days) == (5.0, 1.0, 4.0)
     assert 0 < cfg.p_decline < 0.2 and 0 <= cfg.p_timeout < 0.1
-    assert sensitivity(parse("n_repeated(ALERT.receiver, window=around(24))")) == 2
+    assert sensitivity(parse("n_repeated(ALERT.receiver, window=around(24))")) == 4

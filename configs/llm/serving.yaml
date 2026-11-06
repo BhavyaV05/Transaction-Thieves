@@ -53,9 +53,11 @@ models:
     revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
     licence: apache-2.0
     max_model_len: 8192
-    gpu_memory_utilization: 0.84           # was 0.88: OOM in a thinking-arm prefill (26 Oct, 15.8 GB peak beside the desktop); KV cache only
+    gpu_memory_utilization: 0.86           # was 0.88 (OOM in a thinking-arm prefill, 26 Oct), then 0.84; 0.86 = vLLM 0.31's own advice to keep the pre-0.21 KV size
     reasoning_parser: gemma4               # added for the E18 thinking arm (26 Oct); a no-op with thinking off (stages 1-2 ran with null)
-    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']   # text only: no vision/audio encoder memory
+    # text only: no vision/audio encoder memory. fp8 KV (2 Nov): at bf16 KV the cache held 13,974 tokens = 1.7 requests of 8,192, so concurrency 4
+    # ran ~2 at a time; fp8 roughly doubles it (planner prompts share a ~3k-token cached prefix). Same setting as the dual-serve profile.
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}', --kv-cache-dtype, fp8, --max-num-seqs, "8"]
   qwen3-8b-lora:                           # E16 (planner QLoRA): the AWQ Qwen3-8B above with LoRA enabled. Served alone it is the "same model
     repo: Qwen/Qwen3-8B-AWQ                #  prompted" arm; the adapters (trained as QLoRA on the bf16 base) are addressed by name in `model`.
     revision: 4da05a8edb55c6046cce958586c33b61da07bb79   # vLLM 0.31.0 has no bitsandbytes quantisation, so the bf16 base cannot be served 4-bit
@@ -68,6 +70,18 @@ models:
       planner-sft-s0: models/planner_sft/seed=0/adapter
       planner-sft-s1: models/planner_sft/seed=1/adapter
       planner-sft-s2: models/planner_sft/seed=2/adapter
+  qwen3-8b-lora-v3:                        # E16 rerun (scripts/t3_rerun.sh student-e16): the same AWQ Qwen3-8B, adapters of the v3 distilled set (teacher_v2)
+    repo: Qwen/Qwen3-8B-AWQ
+    revision: 4da05a8edb55c6046cce958586c33b61da07bb79
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85
+    reasoning_parser: qwen3
+    max_lora_rank: 16
+    lora_modules:                          # trained by scripts/train_planner.py with configs/llm/sft_planner_v3.yaml (gitignored, models/)
+      planner-sft-v3-s0: models/planner_sft_v3/seed=0/adapter
+      planner-sft-v3-s1: models/planner_sft_v3/seed=1/adapter
+      planner-sft-v3-s2: models/planner_sft_v3/seed=2/adapter
   qwen3-4b-lora:                           # E10 (fast model): AWQ Qwen3-4B with LoRA enabled: the untuned base and the tuned adapters
     repo: Qwen/Qwen3-4B-AWQ
     revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
@@ -80,6 +94,39 @@ models:
       fast-s0: models/fast_4b/seed=0/adapter
       fast-s1: models/fast_4b/seed=1/adapter
       fast-s2: models/fast_4b/seed=2/adapter
+  # --- System 1 dual serving (wave 4): Gemma 4 12B (planner + large tier) and the fast model on ONE 16 GB card, two vLLM processes ------
+  # Budget (docs/t3_system1.md section "Memory"): card 16.3 GB, desktop ~0.9-1.3 GB -> 15.0-15.4 GB usable.
+  #   gemma4-12b-dual   weights 9.6 GB + ~1.2 GB activations/context + KV 1.5 GB (fp8 KV, hybrid sliding-window cache, 2 seqs of 7k) = 12.3 GB -> 0.76
+  #   qwen3-4b-fast     weights 2.5 GB + ~0.3 GB (eager: no CUDA graphs) + KV 0.5 GB (fp8, 2048 tokens x 8 seqs) = 3.3 GB  -> 0.21
+  # Sum 0.97 of the card = 15.8 GB > 15.0-15.4 GB: it does NOT fit with a safe margin; the smoke test decides (OOM -> see the fallback).
+  # Start order matters (vLLM sizes itself from the free memory at start-up): scripts/serve_llm.py --dual system1.
+  gemma4-12b-dual:
+    repo: google/gemma-4-12B-it-qat-w4a16-ct
+    revision: 1d2c2d7f2466070e69d6fb3fd5ce9a7d75f2f6ee
+    licence: apache-2.0
+    max_model_len: 7680                    # prompt cap 6000 + evidence trim headroom + the answer; below the 8192 of the solo profile
+    gpu_memory_utilization: 0.76
+    reasoning_parser: gemma4
+    port: 8000
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}', --kv-cache-dtype, fp8, --max-num-seqs, "4"]
+  qwen3-4b-fast:                           # System 1 fast tier: AWQ Qwen3-4B + the wave-4 LoRA adapters (decisions are short: 2048 tokens)
+    repo: Qwen/Qwen3-4B-AWQ
+    revision: 74d4bd2bd4bff9cafc9345221320bffb08b406a3
+    licence: apache-2.0
+    role: decision                         # one-token decisions: a short context is enough (tests/test_serving.py)
+    max_model_len: 2048
+    gpu_memory_utilization: 0.21
+    reasoning_parser: qwen3
+    port: 8001
+    max_lora_rank: 16
+    lora_modules:
+      fast3-s0: models/fast_4b_s1v1/seed=0/adapter
+      fast3-s1: models/fast_4b_s1v1/seed=1/adapter
+      fast3-s2: models/fast_4b_s1v1/seed=2/adapter
+      fast3soft-s0: models/fast_4b_s1v1_soft/seed=0/adapter   # calibration-as-objective arm (configs/llm/sft_fast_soft.yaml)
+      fast3soft-s1: models/fast_4b_s1v1_soft/seed=1/adapter
+      fast3soft-s2: models/fast_4b_s1v1_soft/seed=2/adapter
+    extra_args: [--enforce-eager, --kv-cache-dtype, fp8, --max-num-seqs, "8", --attention-backend, TRITON_ATTN]   # fp8 KV picks FlashInfer, whose arch check fails on sm_120 (2 Nov); Gemma 4 already runs TRITON_ATTN
   qwen3-1.7b:                              # E10 small general-LLM baseline (untuned, bf16: small enough not to need a quantised build)
     repo: Qwen/Qwen3-1.7B
     revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
@@ -87,3 +134,41 @@ models:
     max_model_len: 8192
     gpu_memory_utilization: 0.45
     reasoning_parser: qwen3
+
+  # ---- E18 refresh candidates (2 Nov, docs/t3_e18.md "E18 refresh (2 Nov)"). Revisions checked on Hugging Face 2026-11-02; all load in vLLM 0.31.0
+  # by architecture (checked against its model registry); none has been downloaded or load-tested yet (download -> load -> run -> delete per candidate).
+  qwen35-9b:                               # Qwen3.5 9B (hybrid Gated-DeltaNet, multimodal wrapper); community AWQ 4-bit in compressed-tensors format
+    repo: cyankiwi/Qwen3.5-9B-AWQ-4bit     # fallback: RedHatAI/Qwen3.5-9B-quantized.w4a16 (a398088c4228b0ae0c8c78df88fd1e4bf445f068, 11.4 GB)
+    revision: e4d2d39cede8c5d1716d824cd843e2889c648083
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85           # 9.1 GB of weights incl. the (unquantised) vision tower; only 8 of 32 layers keep a KV cache
+    reasoning_parser: qwen3                # thinking OFF via chat_template_kwargs enable_thinking=false (the template honours it)
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "video": 0}']
+  qwen35-4b:                               # Qwen3.5 4B, same family at half the size
+    repo: cyankiwi/Qwen3.5-4B-AWQ-4bit     # fallback: RedHatAI/Qwen3.5-4B-quantized.w4a16 (7a613872f394578b0b52b683ff4ac47516b4bcaf, 5.5 GB)
+    revision: d3e78b50c727b1f34802f440ca84b25781625352
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.60           # 4.0 GB of weights
+    reasoning_parser: qwen3
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "video": 0}']
+  gemma4-e4b:                              # Gemma 4 "E4B" (4B effective parameters, ~8B with the per-layer embeddings); Google's own QAT W4A16 build
+    repo: google/gemma-4-E4B-it-qat-w4a16-ct
+    revision: 6cd26aaa2357fb2bad8c51699a7558a4d1a965bb
+    licence: apache-2.0
+    max_model_len: 8192
+    gpu_memory_utilization: 0.84           # 11.5 GB of weights (embeddings are most of it)
+    reasoning_parser: gemma4
+    extra_args: [--limit-mm-per-prompt, '{"image": 0, "audio": 0}']
+  phi4-14b:                                # optional (CANDIDATES env of scripts/t3_e18_refresh.sh): Phi-4 14B (Dec 2024), no thinking mode, 16k context
+    repo: stelterlab/phi-4-AWQ
+    revision: 075b93fe5ab0d2e86004a5d68c7575ec3bb5a88b
+    licence: mit
+    max_model_len: 8192
+    gpu_memory_utilization: 0.85           # 9.1 GB of AWQ weights
+    reasoning_parser: null
+
+# Profiles served together as two processes (scripts/serve_llm.py --dual NAME); order = start order.
+dual:
+  system1: [gemma4-12b-dual, qwen3-4b-fast]

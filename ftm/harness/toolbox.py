@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from ftm.backtest.engine import asked_bank
 from ftm.banks.binding import AlertBinding
 from ftm.banks.partner import PartnerBank, Question, _seed
 from ftm.compliance.gate import BudgetRefused, Gate, GateBlocked
@@ -113,6 +114,7 @@ class HarnessToolBox:
         self._log: list[QuestionLogEntry] = []
         self._eps_spent = 0.0
         self._elapsed = 0.0
+        self._asked: set[tuple[str, float, int]] = set()  # (canonical, eps, bank) already put in this session
         self._t0: datetime | None = None
         self.last_elapsed_days = 0.0  # simulated days the last closed session took
 
@@ -122,6 +124,7 @@ class HarnessToolBox:
         self._binding = self._h.bindings.get(alert.alert_id)
         self._t0 = self._binding.t0 if self._binding else datetime.fromisoformat(alert.as_of)
         self._log, self._eps_spent, self._elapsed = [], 0.0, 0.0
+        self._asked = set()
 
     def end(self) -> list[QuestionLogEntry]:
         log = list(self._log)
@@ -161,6 +164,12 @@ class HarnessToolBox:
         alert, _ = self._need()
         self._allow("lookup_rules", alert)
         return self._h.gate.lookup_rules(query, self._h.gate.jurisdiction(alert.home_bank))
+
+    def all_rules(self) -> list[dict]:
+        """The whole rule + red-flag corpus of the home bank's jurisdiction (the `--rules whole` arm); gated like `lookup_rules`."""
+        alert, _ = self._need()
+        self._allow("lookup_rules", alert)
+        return self._h.gate.whole_corpus(self._h.gate.jurisdiction(alert.home_bank))
 
     def search_library(self, shape: dict) -> list[dict]:
         alert, _ = self._need()
@@ -228,6 +237,14 @@ class HarnessToolBox:
         bank_obj = h.banks.get(int(bank))
         if bank_obj is None:
             refuse("blocked", f"bank {bank} is not a partner bank", GateBlocked)
+        bd = self._binding
+        if bd is not None and bd.sender_bank is not None and bd.receiver_bank is not None and asked_bank(node, bd) != int(bank):
+            # the subject of the question is not in this bank's ledger: a real bank has nothing to say, and the back-test only
+            # ever measured the bank that holds it
+            refuse("blocked", f"bank {bank} does not hold the subject of this question", GateBlocked)
+        ask_key = (_canon_or_raw(program), float(eps), int(bank))
+        if ask_key in self._asked:  # the same reply again would carry no new information and cost more
+            refuse("blocked", "this question was already asked of this bank at this eps", GateBlocked)
         if self._binding is None and getattr(bank_obj, "needs_binding", True):
             entry.gate_decision = "blocked"
             raise SessionError(f"no real-id binding for alert {alert.alert_id}: cannot ask a bank with a ledger")
@@ -239,6 +256,7 @@ class HarnessToolBox:
         if not exact and not h.accountant.can_spend(alert.alert_id, int(bank), eps, keys):
             refuse("over_budget", "privacy accountant refused", BudgetRefused)
 
+        self._asked.add(ask_key)
         as_of = self._t0 + timedelta(days=start)
         binding = self._binding
         response, wait = bank_obj.respond(Question(program, math.inf if exact else eps, binding), as_of)

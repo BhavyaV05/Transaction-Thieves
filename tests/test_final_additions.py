@@ -162,7 +162,7 @@ def test_review_capacity_table_and_fixed_on_val(run):
     rows = list(csv.DictReader((run["out"] / "review_capacity.csv").open()))
     ob = rows[0]
     assert ob["system"] == "one bank (p0)" and int(ob["reviewed (K)"]) == 90  # 10% of 900
-    ours = next(r for r in rows if r["system"].startswith("ours_compose/harness/ported/full_test"))
+    ours = next(r for r in rows if r["system"].startswith("ours_compose/compose/ported/full_test"))
     assert float(ours["precision"]) > float(ob["precision"]) and float(ours["recall minus one bank"]) > 0  # planted skill 1.6
     assert float(ours["recall"]) < 0.4  # 90 reviewed of 251 positives: recall cannot pass K / positives
     assert run["status"]["review_capacity"]["status"] == "ok" and run["status"]["review_capacity"]["capacity"]["fraction"] == 0.10

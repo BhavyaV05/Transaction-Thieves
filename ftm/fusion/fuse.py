@@ -149,6 +149,10 @@ class Fusion:
         p0, X = self._check(p0, X)
         return sigmoid(self.a * logit(p0) + X @ self._weights(X.shape[1]) + self.c)
 
+    def max_weight(self) -> float:
+        """The largest |weight| any family's evidence gets (1 for naive or unfitted): the `max_weight` of the stop rule."""
+        return 1.0 if self.mode == "naive" or not self.fitted else float(np.max(np.abs(self.w), initial=0.0))
+
     def params(self) -> dict:
         w = [1.0] if self.mode == "naive" or not self.fitted else self.w.tolist()
         return {"mode": self.mode, "families": list(self.families), "a": self.a, "w": w, "c": self.c,

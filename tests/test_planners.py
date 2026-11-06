@@ -330,3 +330,19 @@ def test_run_experiment_cli_synthetic(tmp_path):
     assert log.columns == list(RUN_LOG_COLUMNS) and set(log["variant"]) == {"synthetic"}
     assert json.loads((run / "summary.json").read_text())["alerts"] == summary["alerts"]
     assert np.isfinite(summary["brier_final"])
+
+
+def test_the_cannot_cross_bounds_are_derived_from_the_pool_and_the_fusion_when_a_threshold_is_given():
+    from ftm.fusion.fuse import Fusion
+    from ftm.planners.session import PlanSession
+
+    w, val, pool = make_env()
+    p = build_planner("eig", pool, threshold=0.3)
+    exp = max(max(abs(math.log(v)) for v in c.lr.values()) / c.eps for c in pool)
+    assert p.max_delta == pytest.approx(exp) and p.max_weight == 1.0
+    assert build_planner("eig", pool).max_delta is None  # no threshold, no cannot_cross, nothing to derive
+    heavy = Fusion("shared", w=np.array([2.5]), fitted=True)
+    assert build_planner("eig", pool, threshold=0.3, fusion=heavy).max_weight == 2.5
+    s = PlanSession(alert_context(val[0].binding, 0.2), None, Limits(), threshold=0.3)
+    with pytest.raises(ValueError, match="stop_bounds"):
+        s.stop()

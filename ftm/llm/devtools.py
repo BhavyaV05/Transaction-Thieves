@@ -59,6 +59,9 @@ class DevRandomToolBox:
     def lookup_rules(self, query: str) -> list[dict]:
         return list(DEV_RULES)
 
+    def all_rules(self) -> list[dict]:
+        return list(DEV_RULES)
+
     def search_library(self, shape: dict) -> list[dict]:
         return []
 

@@ -263,3 +263,18 @@ def test_dev_responders_run_both_ports_end_to_end():
                  ff.FinfreRag(MockLLM(responder=ff.dev_responder), ff.ExemplarPool(rows(60)), mode="ported")):  # fmt: skip
         v = sys_.investigate(alert(), RuleTools(), Limits())
         assert v.probability is not None and v.llm_calls <= 10
+
+
+def test_unvalidated_draft_is_emitted_with_a_flag_only_when_asked_and_both_views_are_recorded():
+    plan = json.dumps({"agents": [], "reason": "none"})
+    bad = narrative(0.9, "A huge 777,777 transfer [E5]")
+    script = [plan, bad, JUDGE_OK, bad, JUDGE_OK]
+    c = ci.CoInvestigator(MockLLM(script=list(script)))
+    assert c.investigate(alert(), RuleTools(), Limits()).probability is None  # prereg: no verdict
+    assert c.last_views["validated"] == 0 and c.last_views["p_draft"] == pytest.approx(0.9)
+    c2 = ci.CoInvestigator(MockLLM(script=list(script)), emit_unvalidated=True)
+    assert c2.investigate(alert(), RuleTools(), Limits()).probability == pytest.approx(0.9)
+    assert c2.last_views["validated"] == 0
+    c3 = ci.CoInvestigator(MockLLM(script=[plan, narrative(0.6), JUDGE_OK]), emit_unvalidated=True)
+    c3.investigate(alert(), RuleTools(), Limits())
+    assert c3.last_views == {"validated": 1, "p_draft": pytest.approx(0.6)}

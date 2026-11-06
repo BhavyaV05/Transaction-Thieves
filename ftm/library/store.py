@@ -4,7 +4,8 @@ Owner: T3 (Akshat).  Spec: plan.md 6.13, tracks.md 5.5.  SCHEMA AND KEYING FROZE
 
 Two keyings:
   - "shape" (the system): strategies are filed by SituationShape.key(); search = exact key, then the same
-    typology (or any) nearest by bucket distance.
+    typology (or any) nearest by bucket distance, but only within `max_dist` of the query shape: a shape too far
+    from every stored one gets no strategies rather than the least bad ones.
   - "account" (E11 ablation only): filed by the receiver's alias. It exists to show that an account-keyed
     memory memorises known criminals; never use it in the main system.
 A frozen library refuses `add`, and its hash goes in the run log so the test run provably used the frozen one.
@@ -23,6 +24,8 @@ from ftm.library.shape import ANY, SHAPE_SCHEMA_VERSION, SituationShape
 
 LIBRARY_SCHEMA_VERSION = 1
 Keying = Literal["shape", "account"]
+DEFAULT_K = 3  # strategies returned per search (planner and toolbox share it)
+DEFAULT_MAX_DIST = 2.0  # L1 distance between bucket-ordinal shape vectors (6 axes): about two buckets off in total
 
 
 @dataclass(frozen=True)
@@ -74,8 +77,9 @@ class StrategyLibrary:
         return hashlib.sha256(blob).hexdigest()[:16]
 
     # -- search ---------------------------------------------------------------------------------------
-    def search(self, shape: SituationShape | dict | None = None, *, account: str | None = None, k: int = 3) -> list[Strategy]:
-        """Successes first, then failures; exact key, then nearest same-typology shape."""
+    def search(self, shape: SituationShape | dict | None = None, *, account: str | None = None, k: int = DEFAULT_K,
+               max_dist: float = DEFAULT_MAX_DIST) -> list[Strategy]:
+        """Exact key, then exact typology, then nearest within `max_dist`; successes before failures. [] if none is near."""
         if self.keying == "account":
             hits = [s for s in self._items if account is not None and s.account == account]
             return sorted(hits, key=lambda s: (s.kind != "success", -s.mean_gain))[:k]
@@ -90,15 +94,18 @@ class StrategyLibrary:
                 return (math.inf,)
             exact = other.key() == shape.key()
             dist = sum(abs(a - b) for a, b in zip(shape.vector(), other.vector(), strict=True))
-            return (0 if exact else 1, dist, s.kind != "success", -s.mean_gain)
+            if not exact and dist > max_dist:
+                return (math.inf,)
+            typ = shape.typology != ANY and other.typology == shape.typology
+            return (0 if exact else 1, 0 if typ else 1, dist, s.kind != "success", -s.mean_gain)
 
         ranked = sorted((score(s), i, s) for i, s in enumerate(self._items))
         return [s for sc, _, s in ranked if sc[0] != math.inf][:k]
 
-    def search_dicts(self, shape: dict, k: int = 3) -> list[dict]:
+    def search_dicts(self, shape: dict, k: int = DEFAULT_K, max_dist: float = DEFAULT_MAX_DIST) -> list[dict]:
         """What ToolBox.search_library returns to an investigator: text plus provenance."""
         return [{"text": s.text, "strategy_id": s.strategy_id, "kind": s.kind, "question": s.question}
-                for s in self.search(shape, k=k)]  # fmt: skip
+                for s in self.search(shape, k=k, max_dist=max_dist)]  # fmt: skip
 
     # -- persistence ------------------------------------------------------------------------------------
     def save(self, path: str | Path) -> str:
@@ -129,8 +136,8 @@ class LibraryToolBox:
     Account keying (E11) needs the receiver alias, which the wrapper takes from the shape dict's `receiver` key.
     """
 
-    def __init__(self, tools, library: StrategyLibrary, k: int = 3):
-        self._tools, self.library, self.k = tools, library, k
+    def __init__(self, tools, library: StrategyLibrary, k: int = DEFAULT_K, max_dist: float = DEFAULT_MAX_DIST):
+        self._tools, self.library, self.k, self.max_dist = tools, library, k, max_dist
 
     def __getattr__(self, name):
         return getattr(self._tools, name)
@@ -148,4 +155,4 @@ class LibraryToolBox:
         if self.library.keying == "account":
             return [{"text": s.text, "strategy_id": s.strategy_id, "kind": s.kind, "question": s.question}
                     for s in self.library.search(account=shape.get("receiver"), k=self.k)]  # fmt: skip
-        return self.library.search_dicts(shape, k=self.k)
+        return self.library.search_dicts(shape, k=self.k, max_dist=self.max_dist)

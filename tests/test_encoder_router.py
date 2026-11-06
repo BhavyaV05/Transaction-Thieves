@@ -75,7 +75,7 @@ def test_the_learned_router_scores_confident_answers_higher_and_the_threshold_se
 
 
 def test_the_router_never_returns_the_safe_default_and_calls_the_large_tier_only_when_it_defers():
-    r = ConfidenceRouter("maxprob").fit(["stop"], [np.array([0.5, 0.5])], [True])
+    r = ConfidenceRouter("maxprob").fit(["worth_asking"], [np.array([0.5, 0.5])], [True])
     r.threshold = 0.9
     calls = []
 
@@ -83,9 +83,9 @@ def test_the_router_never_returns_the_safe_default_and_calls_the_large_tier_only
         calls.append(1)
         return {"yes": 0.1, "no": 0.9}
 
-    sure = r.decide("stop", {"yes": 0.97, "no": 0.03}, large)
+    sure = r.decide("worth_asking", {"yes": 0.97, "no": 0.03}, large)
     assert (sure.answer, sure.source, calls) == ("yes", "fast", [])
-    unsure = r.decide("stop", {"yes": 0.6, "no": 0.4}, large)
+    unsure = r.decide("worth_asking", {"yes": 0.6, "no": 0.4}, large)
     assert (unsure.answer, unsure.source, len(calls)) == ("no", "large", 1)
 
 
@@ -153,11 +153,11 @@ def test_tfidf_floor_learns_the_toy_rule_and_keeps_unseen_labels_at_the_floor():
     assert acc > 0.85
     p = m.predict_proba(test[0])
     assert set(p) == {"yes", "no"} and sum(p.values()) == pytest.approx(1.0)
-    typ = [DecisionExample("typology", f"fan {i % 3}", "fan_in" if i % 2 else "cycle", "A", "train") for i in range(40)]
+    typ = [DecisionExample("typology", f"fan {i % 3}", "fan" if i % 2 else "cycle", "A", "train") for i in range(40)]
     lp = TfidfDecisionModel().fit(typ).logps_batch("typology", ["fan 1"])[0]
-    assert lp.shape == (9,) and (lp == FLOOR_LOGP).sum() == 7  # seven of nine typologies never seen
+    assert lp.shape == (6,) and (lp == FLOOR_LOGP).sum() == 4  # four of six typologies never seen
     with pytest.raises(KeyError):
-        m.raw_logps(DecisionExample("stop", "x", "yes"))
+        m.raw_logps(DecisionExample("typology", "x", "none"))
 
 
 # --- ModernBERT / DeBERTa code path on a tiny random encoder -----------------------------------------------------------
@@ -198,7 +198,7 @@ def test_the_encoder_trains_scores_saves_and_loads(tiny, tmp_path):
     back = EncoderDecisionModel.load(tmp_path / "enc", device="cpu")
     assert np.allclose(back.logps_batch("worth_asking", [e.context for e in test]), lp, atol=1e-5)
     with pytest.raises(KeyError, match="no classifier"):
-        m.logps_batch("stop", ["x"])
+        m.logps_batch("typology", ["x"])
 
 
 def test_training_rejects_labels_outside_the_decision_and_empty_sets(tiny):
@@ -209,7 +209,7 @@ def test_training_rejects_labels_outside_the_decision_and_empty_sets(tiny):
     with pytest.raises(ValueError, match="not in"):
         train_decision_encoder([DecisionExample("worth_asking", "x", "maybe")], "worth_asking", EncoderConfig(), tok, model, "cpu")
     with pytest.raises(ValueError, match="no training rows"):
-        train_decision_encoder([DecisionExample("stop", "x", "yes")], "worth_asking", EncoderConfig(), tok, model, "cpu")
+        train_decision_encoder([DecisionExample("typology", "x", "none")], "worth_asking", EncoderConfig(), tok, model, "cpu")
 
 
 # --- the script ------------------------------------------------------------------------------------------------------------
@@ -257,7 +257,7 @@ def test_script_tfidf_then_route_with_the_format_of_t3s_scorer(tmp_path):
     t3 = load_script("score_fast_baseline")
     out = tmp_path / "t3.json"
     assert t3.main(["--decisions", str(tmp_path / "val.jsonl"), "--alerts", str(tmp_path / "val.parquet"), "report",
-                    "--fast", str(tmp_path / "fast.jsonl"), "--large", str(tmp_path / "large.jsonl"), "--out", str(out)]) == 0  # fmt: skip
+                    "--fast", str(tmp_path / "fast.jsonl"), "--large", str(tmp_path / "large.jsonl"), "--large-kind", "json", "--out", str(out)]) == 0  # fmt: skip
     assert "worth_asking" in json.loads(out.read_text())["decisions"]
 
 

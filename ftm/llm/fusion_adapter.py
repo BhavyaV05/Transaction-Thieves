@@ -14,11 +14,14 @@ does not set it); a family in the log that the model does not know raises rather
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 
 from ftm.fusion import fuse
+from ftm.fusion.conditional import ConditionalFusion
 from ftm.llm.investigation import LRTable, NaiveLRFusion
 from ftm.types import QuestionLogEntry
 
@@ -51,3 +54,35 @@ class FusedLR(NaiveLRFusion):
         X, _ = fuse.answer_features(["a"], ["a"] * len(used), [self._family(e) for e, _ in used],
                                     [math.log(lr) for _, lr in used], families=fams)  # fmt: skip
         return float(self.model.predict([p0], X)[0])
+
+
+class ConditionalLR(NaiveLRFusion):
+    """The p0-conditional fusion (`ftm.fusion.conditional`) behind the `Fusion` protocol of ftm.llm.investigation:
+    logit P = a + b*logit(p0) + shrink * sum_f w_f * x_f, x_f the summed log-LR of the accepted answers of family f in the
+    log.  `uses()` is NaiveLRFusion's (an allowed reply with an accepted back-test LR).  A family the fit never saw gets the
+    ridge-prior weight `default_w` (1).  Load the fitted file with `ConditionalLR.from_json(path, table)`."""
+
+    def __init__(self, model: ConditionalFusion, table: LRTable | None = None):
+        super().__init__(table)
+        self.model = model
+
+    @classmethod
+    def from_json(cls, path, table: LRTable | None = None) -> ConditionalLR:
+        return cls(ConditionalFusion.from_json(path), table)
+
+    def posterior(self, p0: float, log: list[QuestionLogEntry]) -> float:
+        x = 0.0
+        for e in log:
+            lr = self._lr(e)
+            if lr is not None and lr > 0:
+                fam = self.table.get(e.program, e.eps).family or UNKNOWN_FAMILY
+                x += self.model.weight(fam) * math.log(lr)
+        z = float(self.model.logit_base([p0])[0]) + self.model.shrink * x
+        return float(fuse.sigmoid(z))
+
+
+def load_fitted(path: str | Path, table: LRTable | None = None) -> NaiveLRFusion:
+    """The one loader for `--fusion-params`: ConditionalLR for a ConditionalFusion.to_json file (kind conditional_fusion, the
+    frozen headroom_v1), FusedLR for a Fusion.params() file."""
+    params = json.loads(Path(path).read_text(encoding="utf-8"))
+    return ConditionalLR.from_json(path, table) if params.get("kind") == "conditional_fusion" else FusedLR.from_params(params, table)

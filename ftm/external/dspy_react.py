@@ -133,11 +133,12 @@ class DspyReact:
 
 
 def brier_metric(example, pred, trace=None) -> float:
-    """DSPy metric (higher is better): 1 - Brier. A missing or invalid probability scores as 0.5."""
+    """DSPy metric (higher is better): 1 - Brier. A missing or invalid probability scores as the alert's p0, as in the
+    evaluation (no verdict = p0); 0.5 only for an example that carries no p0."""
     try:
         p = float(pred.probability)
     except (TypeError, ValueError, AttributeError):
-        p = 0.5
+        p = float(getattr(example, "p0", 0.5))
     p = min(max(p, 0.0), 1.0)
     return 1.0 - (p - float(example.label)) ** 2
 
@@ -203,7 +204,7 @@ def optimize(llm: ChatClient, examples: list, *, limits: Limits | None = None, a
     dsl = V0Dsl()
     trainset = [dspy.Example(case=case_text(e["alert"], str(e["alert"].summary.get("evidence", ""))),
                              tools_help=tools_doc(dsl, list(e["alert"].summary.get("partner_banks", [])), limits.eps_per_alert),
-                             alert_id=e["alert"].alert_id, label=e["label"]).with_inputs("case", "tools_help", "alert_id")
+                             alert_id=e["alert"].alert_id, label=e["label"], p0=float(e["alert"].p0)).with_inputs("case", "tools_help", "alert_id")
                 for e in examples]  # fmt: skip
 
     class Bound(dspy.Module):

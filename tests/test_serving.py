@@ -31,7 +31,8 @@ def test_every_profile_is_pinned(cfg):
     assert cfg["docker_image"].endswith(f"v{cfg['vllm_version']}")
     for name, m in cfg["models"].items():
         assert len(m["revision"]) == 40, name  # a full commit hash, not a branch
-        assert m["max_model_len"] >= 6000 + 512, name  # fits Limits.max_tokens plus an answer
+        # fits Limits.max_tokens plus an answer; the System 1 fast server only sees one-token decisions (<= 700 tokens)
+        assert m["max_model_len"] >= (1024 if m.get("role") == "decision" else 6000 + 512), name
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "100.101.102.103", "192.168.1.20"])

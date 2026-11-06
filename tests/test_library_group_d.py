@@ -106,7 +106,7 @@ def test_build_successes_failures_and_min_support():
     lib = build_library(recs, n_min=20)
     kinds = {s.question.split("(")[0]: s.kind for s in lib.strategies}
     # Q_FAN and the out-direction at_least question share the "at_least" prefix; the latter has 5 alerts < n_min
-    assert kinds == {"passed_on": "success", "at_least": "failure", "n_tx": "failure"}
+    assert kinds == {"passed_on": "success", "at_least": "failure"}  # a not-accepted question gets no (tautological) note
     assert all("A0" not in s.text and "R" not in s.text.split("`")[0][:3] for s in lib.strategies)
     hits = lib.search(sh, k=3)
     assert hits[0].kind == "success" and hits[0].question == Q_PASS

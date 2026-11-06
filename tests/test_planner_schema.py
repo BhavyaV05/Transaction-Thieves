@@ -172,8 +172,8 @@ def test_prompt_sections_and_untrusted_notes():
 def test_prompt_is_trimmed_to_cap_keeping_newest_evidence():
     big = "\n".join(f"row {i:04d} | A{i:07x} -> A01bc22d | {i},000.00 US Dollar | ACH | bank 1 -> bank 2" for i in range(800))
     s = state(evidence_text=big)
-    msgs = build_messages(Mode.COMPOSE, s, DSL, 3000)
-    assert estimate_messages(msgs) <= 3000
+    msgs = build_messages(Mode.COMPOSE, s, DSL, 3300)
+    assert estimate_messages(msgs) <= 3300
     user = msgs[1]["content"]
     assert "row 0799" in user and "row 0000" not in user and "omitted to fit" in user
     with pytest.raises(PlannerParseError):

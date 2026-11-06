@@ -6,7 +6,7 @@
 #   library build and freeze (shape + account keying) from the teacher runs (train) + those fit/cal runs  -> outputs/t3_library/frozen
 #   dspy    MIPROv2 on val `fit` (scripts/optimize_dspy.py)                                              -> outputs/t3_dspy/react_miprov2.json
 #   e10large  latency per decision of the large tier (Gemma JSON decisions, one request at a time, 300 rows) -> outputs/e10/large/latency.json
-#   eval    every system on the 160 val `eval` askable alerts (seed 0, harness, realistic back-test table, thinking off)
+#   eval    every system on the 160 val `eval` askable alerts (seed 0, harness, `--profile tuned`, thinking off)
 # Outputs: outputs/t3_val/fitcal/{fit,cal}/c###, outputs/t3_val/eval/<spec>/c### (a chunk is done when its summary.json exists).
 # The table: scripts/val_runs_table.py -> docs/t3_val_runs.md.
 #
@@ -19,7 +19,8 @@ export FTM_LLM_ENDPOINT=http://127.0.0.1:8000/v1
 PY=${PY:-.venv/bin/python}
 MODEL=gemma4-12b
 OUT=${T3_VAL_OUT:-outputs/t3_val}
-BT=data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl
+PROFILE="--profile tuned"   # the production components (configs/llm/tuned.yaml): p0 v2, scorer-v2 evidence view, headroom_v1 table + fusion, decision threshold, concurrency 4
+BT=configs/fusion/headroom_v1_table.jsonl   # build_library.py reads the same table
 LIBDIR=outputs/t3_library/frozen
 SHAPE=$LIBDIR/shape_gemma.json; ACCOUNT=$LIBDIR/account_gemma.json
 DSPY=outputs/t3_dspy/react_miprov2.json
@@ -49,7 +50,7 @@ run_chunks() {
     rm -rf "${dir:?}/$c"
     $PY scripts/run_llm_agent.py --alerts val --val-part "$part" --data hi_medium --n "$chunk" --offset "$off" \
         --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --machine t3-5070ti --seed 0 \
-        --backtest "$BT" --run-id "$c" --run-dir "$dir/$c" "$@" > "$dir/$c.log" 2>&1
+        $PROFILE --run-id "$c" --run-dir "$dir/$c" "$@" > "$dir/$c.log" 2>&1
     echo "$(date -Is) $dir/$c (offset $off): exit $?"
   done
 }
@@ -63,7 +64,7 @@ for st in $stages; do
                torres_ported co_investigator_native co_investigator_ported finfre_rag_native finfre_rag_ported; do
       d=$OUT/smoke/overflow_$sys; [[ -f $d/summary.json ]] && continue
       $PY scripts/run_llm_agent.py --system "$sys" --alerts train --data hi_medium --n 6 --alert-ids "$OUT/overflow_ids.txt" \
-          --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --machine t3-5070ti --seed 0 --backtest "$BT" \
+          --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --machine t3-5070ti --seed 0 $PROFILE \
           --run-id "overflow_$sys" --run-dir "$d" > "$d.log" 2>&1
       echo "$(date -Is) smoke overflow $sys: exit $? ($(grep -c '^PromptTooLong' "$d.log") PromptTooLong lines, $(grep -c '^PromptRefit' "$d.log") refits)"
     done
@@ -71,7 +72,7 @@ for st in $stages; do
       d=$OUT/smoke/${arm%%|*}; [[ -f $d/summary.json ]] && continue
       # shellcheck disable=SC2086
       $PY scripts/run_llm_agent.py --system planner --mode compose --alerts val --val-part eval --data hi_medium --n 10 \
-          --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --machine t3-5070ti --seed 0 --backtest "$BT" \
+          --llm endpoint --toolbox harness --model "$MODEL" --serving-stack vllm --machine t3-5070ti --seed 0 $PROFILE \
           --run-id "${arm%%|*}" --run-dir "$d" ${arm#*|} > "$d.log" 2>&1
       echo "$(date -Is) smoke ${arm%%|*}: exit $?"
     done ;;

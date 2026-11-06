@@ -37,6 +37,22 @@ def thresholds(cal: pl.DataFrame, a_l: float, a_c: float, cfg: dict) -> dict:
     return {"t_launder": tl, "t_clean": tc, "scrc_lambda": lam, "t_alert": t_alert, "cleared_risk_ub": ub["upper_bound"]}
 
 
+def part_day_frac(val: pl.DataFrame, part: str, mode: str = "volume") -> float:
+    """Share of the val time span a part stands for in the alerts/day projection.
+
+    "time": 0.25 for cal and eval (the old rule). "volume": the part's share of val rows, so Monday's part (twice the weekend's rows) counts for more days
+    and a rate per day is not inflated by a quiet part (projection only; alert sets and thresholds never use it)."""
+    if mode == "time":
+        return 0.25
+    return val.filter(pl.col("val_part") == part).height / max(val.height, 1)
+
+
+def check_disjoint(conformal_part: str, calibrator_parts) -> None:
+    """The conformal thresholds must be chosen on rows the p0 calibrator did not see."""
+    if conformal_part in set(calibrator_parts or ()):
+        raise SystemExit(f"conformal_part {conformal_part!r} overlaps the p0 calibrator's fit parts {sorted(calibrator_parts)}: choose rows disjoint from the calibrator's")
+
+
 def summarize(df: pl.DataFrame, t_alert: float, days: float) -> dict:
     p, y = df["p0"].to_numpy(), df["label"].cast(pl.Int8).to_numpy()
     a = p >= t_alert
@@ -103,6 +119,9 @@ def main() -> None:
     ap.add_argument("--data", default="hi_small")
     ap.add_argument("--config", default="configs/intake/conformal.yaml")
     ap.add_argument("--alpha-launder", type=float, default=None)
+    ap.add_argument("--p0-file", default="p0_one_bank.parquet", help="file under data/scores/<ds>/ (a p0 v2 file also needs --out-suffix)")
+    ap.add_argument("--conformal-part", default=None, help="override the config's conformal_part (a p0 v2 file is calibrated on cal: use fit)")
+    ap.add_argument("--out-suffix", default="", help="e.g. _v2: write data/runs/alerts_<ds><suffix>.json only; the frozen alert parquets are NOT rewritten")
     ap.add_argument("--final", action="store_true", help="week 14: the test alert set from the frozen val threshold (needs FTM_FINAL_RUN=1)")
     a = ap.parse_args()
     cfg = yaml.safe_load(Path(a.config).read_text())
@@ -112,7 +131,7 @@ def main() -> None:
     a_c = cfg["alpha_clean"]
     dcfg = io.load_config(a.data)
     pq = dcfg["parquet_dir"]
-    p0 = pl.read_parquet(Path("data/scores") / a.data / "p0_one_bank.parquet").filter(pl.col("p0").is_not_null() & pl.col("p0").is_not_nan())
+    p0 = pl.read_parquet(Path("data/scores") / a.data / a.p0_file).filter(pl.col("p0").is_not_null() & pl.col("p0").is_not_nan())
     tx = io.scan_transactions(pq, split=["train", "val"], columns=["tx_id", "timestamp", "day", "from_bank", "to_bank"]).collect()
     p0 = p0.join(tx, on="tx_id")
     pat = io.scan_patterns(pq, split=["train", "val"]).select("tx_id", "attempt_id", "typology").collect()
@@ -124,9 +143,14 @@ def main() -> None:
     val = p0.filter(pl.col("split") == "val")
     cal = val.filter(pl.col("val_part") == "cal")
     ev = val.filter(pl.col("val_part") == "eval")
-    day_frac = 0.25  # share of the val time span covered by each of cal and eval
+    cpart = a.conformal_part or cfg.get("conformal_part", "cal")
+    meta = Path("data/scores") / a.data / (Path(a.p0_file).stem + ".json")  # p0 v2 files declare the parts their calibrator was fit on
+    check_disjoint(cpart, json.loads(meta.read_text()).get("calibrator_parts") if meta.exists() else None)
+    cal = val.filter(pl.col("val_part") == cpart)
+    dfm = cfg.get("day_frac", "time")
+    fr_cal, fr_ev = part_day_frac(val, cpart, dfm), part_day_frac(val, "eval", dfm)
     out: dict = {"dataset": a.data, "config": cfg, "alpha_launder_used": a_l, "n_cal": cal.height,
-                 "n_cal_pos": int(cal["label"].sum()), "n_eval": ev.height, "n_eval_pos": int(ev["label"].sum())}  # fmt: skip
+                 "n_cal_pos": int(cal["label"].sum()), "n_eval": ev.height, "n_eval_pos": int(ev["label"].sum()), "day_frac": {"mode": dfm, "cal": fr_cal, "eval": fr_ev}}  # fmt: skip
 
     th = thresholds(cal, a_l, a_c, cfg)
     miss = cf.achieved_miss_rates(ev["p0"].to_numpy(), ev["label"].cast(pl.Int8).to_numpy(), th["t_launder"], th["t_clean"])
@@ -156,7 +180,7 @@ def main() -> None:
         "n_auto_cleared_eval": cleared.height,
     }  # fmt: skip
     # eval-part summary and the fixed-window ablation on the same rows
-    days_eval = n_val_days * day_frac
+    days_eval = n_val_days * fr_ev
     out["eval_conformal"] = summarize(ev, th["t_alert"], days_eval)
     fw = cfg["fixed_window"]
     fa = cf.fixed_window(ev["p0"].to_numpy(), *fw)
@@ -168,7 +192,7 @@ def main() -> None:
     ce = pl.concat([cal, ev])
     for al_ in sorted({0.05, 0.2, 0.4, 0.5, 0.55, 0.6, 0.62, 0.64, 0.66, 0.7, 0.8, 0.9, 0.95, a_l}):
         t = thresholds(cal, al_, a_c, cfg)
-        s = summarize(ce, t["t_alert"], n_val_days * 2 * day_frac)
+        s = summarize(ce, t["t_alert"], n_val_days * (fr_cal + fr_ev))
         tr = summarize(p0.filter(pl.col("split") == "train"), t["t_alert"], 1.0)
         sweep.append({"alpha_launder": al_, "t_alert": t["t_alert"], "cleared_risk_ub": t["cleared_risk_ub"], "val_recall": s["recall"], "val_precision": s["precision"],
                       "proj_test_alerts": al.project_test_count(s["alerts_per_day"], test_bulk_days),
@@ -184,7 +208,7 @@ def main() -> None:
     cols = ["alert_id", "tx_id", "bank", "timestamp", "p0", "label", "attempt_id", "typology", "split", "val_part",
             "spans_split", "direction", "counterparty_bank"]  # fmt: skip
     counts = {}
-    for split in ("train", "val"):
+    for split in () if a.out_suffix else ("train", "val"):
         d = p0.filter((pl.col("split") == split) & (pl.col("p0") >= th["t_alert"])).join(pat, on="tx_id", how="left")
         d = d.sort(["timestamp", "tx_id", "bank"]).with_columns(
             (pl.lit(split[0].upper()) + pl.int_range(pl.len()).cast(pl.Utf8).str.zfill(6)).alias("alert_id"))  # fmt: skip
@@ -200,7 +224,7 @@ def main() -> None:
                          "unique_tx": d["tx_id"].n_unique(), "attempts_in_split_views": att_all, "attempts_with_alert": att_hit}  # fmt: skip
     out["alert_sets"] = counts
     Path("data/runs").mkdir(parents=True, exist_ok=True)
-    Path(f"data/runs/alerts_{a.data}.json").write_text(json.dumps(out, indent=1, default=str))
+    Path(f"data/runs/alerts_{a.data}{a.out_suffix}.json").write_text(json.dumps(out, indent=1, default=str))
     print(json.dumps({k: out[k] for k in ("thresholds", "val_parts", "set_types_eval", "achieved_vs_target", "eval_conformal", "eval_fixed_window", "alert_sets")}, indent=1, default=str))
     for s in sweep:
         print({k: (round(v, 4) if isinstance(v, float) else v) for k, v in s.items()})

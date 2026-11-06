@@ -24,14 +24,14 @@ llm:
   endpoint: null                          # null: --endpoint on the command line, else FTM_LLM_ENDPOINT
   model: null                             # served model name; null: the chosen E18 candidate's served_model (gemma4-12b)
   serving_stack: null                     # vllm | llama.cpp, recorded in summary.json
-  # Extra scripts/run_llm_agent.py arguments for EVERY LLM job (T3, filled 28 Oct): the realistic HI-Medium back-test table
-  # (data/backtest/hi_medium/7df6bad5337d, T2) and the frozen shape-keyed strategy library (C12, docs/t3_library_draft.md).
-  # FUSION is the naive summed default until the team decides G2: if it adopts the fitted fusion, add the two arguments
-  #   "--fusion-params", "outputs/fusion/params.json"
-  # to this list (path of the Fusion.params() JSON fitted on val `fit` by T4) and nothing else (the same fusion for every system).
+  # Extra scripts/run_llm_agent.py arguments for EVERY LLM job. `--profile tuned` (configs/llm/tuned.yaml) is the production set: p0 v2,
+  # edge scorer v2 + the evidence view picked on val fit+cal, the realistic headroom_v1 table, the fitted ConditionalLR of
+  # configs/fusion/headroom_v1.json (the same fusion for every system), the decision threshold of configs/decision/headroom_v1.yaml
+  # (planner prompt + cannot_cross stop), concurrency 4 with a timing sample. NaiveLRFusion is a named ablation (`--fusion naive`) only.
+  # The frozen shape-keyed strategy library (C12, docs/t3_library_draft.md) is on top.
   common_args:
-    - "--backtest"
-    - "data/backtest/hi_medium/7df6bad5337d/lr_table.jsonl"
+    - "--profile"
+    - "tuned"
     - "--library"
     - "outputs/t3_library/frozen/shape_gemma.json"
   # seconds per alert on the reference machine (estimates for scheduling only; replace with the val-run medians)
@@ -51,6 +51,9 @@ llm:
     sharma: 6.2
     co_investigator: 23.3
     finfre_rag: 4.0
+  # The MIPROv2 program every dspy_react job loads (plan.py adds `--dspy-program <this>`); hashed into prereg/FREEZE.json
+  # (ftm/final/freeze.py EXTRA_UNTRACKED) and checked by the preflight. sha256 0697b613... on 1 Nov.
+  dspy_program: outputs/t3_dspy/react_miprov2.json
   pin_gpu_s3: ["ours.compose.*"]          # job ids (fnmatch) that must run on the reference machine; the rest is balanced
 
 ours:
@@ -91,6 +94,15 @@ ours:
     student_s2: e16_qwen3_8b
     prompted_qwen3_8b: e16_qwen3_8b
 
+# E15 prompt-injection tests (scripts/run_injection_tests.py on the frozen subset, per alert one clean run and one run per planted item, in
+# every arm), one external_cmd job per system so they sit under the freeze. They call the served model: gpu_s3. `--n` alerts per system.
+injection:
+  systems: [planner, react]
+  alerts: subset
+  machine_class: gpu_s3
+  est_hours: {planner: 2.5, react: 3.5}   # n 50 x 4 arms x 6 runs x 7.5-9.9 s
+  default_est_hours: 2.0
+
 # T1: the command that writes data/alerts/{data}/test.parquet (alert-set schema of ftm/intake/README.md, split=test).
 # Needed only if the file does not exist yet. It runs with FTM_FINAL_RUN=1, after the preflight.
 test_alerts:
@@ -103,6 +115,7 @@ external_cmd:
     detection: python scripts/final_detection.py --system {system} --variant {variant} --data {data} --seed {seed} --alert-ids {alert_ids} --out {out} --run-id {run_id} --commit {commit} --machine {machine}  # T1: Groups A/B run logs from data/scores/<ds>/final/ (docs/t1_final_run.md)
     # T2: the non-LLM planners and ablation arms (variant = the arm name in configs/experiments/ablations_nonllm.yaml); settings,
     # question tables and the fit on validation: configs/final/non_llm.yaml, docs/t2_final_run.md
+    injection: "python scripts/run_injection_tests.py --system {variant} --alerts test --data {data} --alert-ids {alert_ids} --n 50 --llm endpoint --endpoint {endpoint} --model {model} --backtest configs/fusion/headroom_v1_table.jsonl --fusion-params configs/fusion/headroom_v1.json --seed {seed} --machine {machine} --run-id {run_id}.{job_id} --out {out}/e15 --runlog-out {out}/runlog.parquet"
     non_llm_arm: "python scripts/final_non_llm.py --arm {variant} --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"
   commands: {}                            # {"multi_gnn.see_everything": "python scripts/...", "nonllm.eig.subset": "..."}
   machine_class: {}                       # overrides: {"fraudgt.see_everything": gpu_s3}
@@ -239,14 +252,36 @@ extra_jobs:
      cmd: "python scripts/final_non_llm.py --arm raw_share --alert-ids {alert_ids} --out {out} --data {data} --seed {seed} --run-id {run_id} --commit {commit} --machine {machine}"}
   # E10 (T3): the frozen fast model + conformal cascade on the small-decision rows of the full test set, blind (scripts/e10_final.py,
   # docs/t3_e10.md). Three phases, each when its model is the served one (T4 swaps servers like for E16): fast_tier needs the `qwen3-4b-lora`
-  # server (adapter fast-s0), large_tier the Gemma server, cascade is CPU. The frozen thresholds are outputs/e10/fast.json (sha256 in docs/t3_e10.md).
+  # server (adapter fast-s2, the arm chosen on cal), large_tier the Gemma server, cascade is CPU. The frozen thresholds are outputs/e10/fast_v2.json (sha256 in docs/t3_e10.md).
   - {system: fast_model, variant: fast_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
-     cmd: ".venv/bin/python scripts/e10_final.py --phase fast --model fast-s0 --alert-ids {alert_ids} --out {out}"}
+     cmd: ".venv/bin/python scripts/e10_final.py --phase fast --model fast-s2 --alert-ids {alert_ids} --out {out}"}
   - {system: fast_model, variant: large_tier, alerts: [full_test], machine_class: gpu_s3, est_hours: 0.4, owner: T3, tier: secondary,
      depends_on: [fast_model.fast_tier.full_test],
      cmd: ".venv/bin/python scripts/e10_final.py --phase large --model gemma4-12b --alert-ids {alert_ids} --out {out} --fast-dir {run_dir}/fast_model.fast_tier.full_test"}
   - {system: fast_model, variant: cascade, alerts: [full_test], machine_class: cpu, est_hours: 0.1, owner: T3, tier: secondary,
      depends_on: [fast_model.large_tier.full_test],
      cmd: ".venv/bin/python scripts/e10_final.py --phase cascade --alert-ids {alert_ids} --out {out} --fast-dir {run_dir}/fast_model.fast_tier.full_test --large-dir {run_dir}/fast_model.large_tier.full_test"}
+  # NEW ARMS (LangGraph rewrite, wave 2; docs/rewrite_prereg_proposal.md): ADAPTED Group D agents = the agent's control strategy as a
+  # PlannerPolicy in the system graph, verdict = fused posterior. Subset only; not in the preregistered system list until T4 decides.
+  - {system: react_adapted, variant: react_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system react_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label react_adapted --blind"}
+  - {system: reflexion_adapted, variant: reflexion_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system reflexion_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label reflexion_adapted --blind"}
+  - {system: rewoo_adapted, variant: rewoo_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system rewoo_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label rewoo_adapted --blind"}
+  - {system: lats_adapted, variant: lats_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system lats_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label lats_adapted --blind"}
+  - {system: llmcompiler_adapted, variant: llmcompiler_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system llmcompiler_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label llmcompiler_adapted --blind"}
+  - {system: dspy_react_adapted, variant: dspy_react_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system dspy_react_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label dspy_react_adapted --blind --dspy-program outputs/t3_dspy/react_miprov2.json"}
+  - {system: debate_adapted, variant: debate_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system debate_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label debate_adapted --blind"}
+  - {system: uot_adapted, variant: uot_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system uot_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label uot_adapted --blind"}
+  - {system: bed_llm_adapted, variant: bed_llm_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system bed_llm_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label bed_llm_adapted --blind"}
+  - {system: mediq_adapted, variant: mediq_adapted, alerts: [subset], machine_class: gpu_s3, est_hours: 3.0, owner: T3, tier: secondary,
+     cmd: "python scripts/run_llm_agent.py --system mediq_adapted --alerts test --data {data} --alert-ids {alert_ids} --llm endpoint --endpoint {endpoint} --model {model} --toolbox harness --profile tuned --seed {seed} --machine {machine} --run-id {run_id} --run-dir {out} --variant-label mediq_adapted --blind"}
 #  - {system: gfp, variant: one_bank, alerts: [subset, full_test], machine_class: cpu, est_hours: 0.3, owner: T1, tier: core,
 #     cmd: "python scripts/...", depends_on: []}

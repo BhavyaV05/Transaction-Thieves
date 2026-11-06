@@ -24,6 +24,9 @@ FREEZE_VERSION = 1
 # T2's non-LLM arm settings and the question tables they read (asked by T2 in PR #76, 28 Oct). Missing files are skipped here and
 # reported by scripts/freeze_prereg.py.
 EXTRA_FROZEN = ("configs/final/non_llm.yaml", "configs/experiments/ablations_nonllm.yaml")
+# Hashed like EXTRA_FROZEN but not tracked by git (outputs/ is ignored): the DSPy MIPROv2 program the dspy_react jobs load
+# (--dspy-program in configs/final/jobs.yaml). The preflight compares its hash with FREEZE.json instead of `git show`.
+EXTRA_UNTRACKED = ("outputs/t3_dspy/react_miprov2.json",)
 _SUBSET_HASH_LINE = re.compile(r"^\s*#?\s*subset_sha256\s*:.*$")
 
 
@@ -50,11 +53,15 @@ def missing_extra(prereg_dir: Path) -> list[str]:
     return [n for n in EXTRA_FROZEN if not frozen_path(prereg_dir, n).exists()]
 
 
+def missing_untracked(prereg_dir: Path) -> list[str]:
+    return [n for n in EXTRA_UNTRACKED if not frozen_path(prereg_dir, n).exists()]
+
+
 def frozen_names(prereg_dir: Path) -> list[str]:
     names = sorted(p.name for p in Path(prereg_dir).glob("*.yaml"))
     if (Path(prereg_dir) / SUBSET_MANIFEST).exists():
         names.append(SUBSET_MANIFEST)
-    return names + [n for n in EXTRA_FROZEN if frozen_path(prereg_dir, n).exists()]
+    return names + [n for n in (*EXTRA_FROZEN, *EXTRA_UNTRACKED) if frozen_path(prereg_dir, n).exists()]
 
 
 def hash_files(prereg_dir: Path) -> dict[str, str]:

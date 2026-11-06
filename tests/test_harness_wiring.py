@@ -90,7 +90,7 @@ def test_t2_row_format_feeds_lrtable(tmp_path):
 # -- run script on the harness toolbox ------------------------------------------------------------------------------
 def _run(mod, tmp_path, *extra, system="planner", n="6"):
     out = tmp_path / f"out_{len(list(tmp_path.glob('out_*')))}"
-    assert mod.main(["--system", system, "--n", n, "--toolbox", "harness", "--out", str(out), "--synthetic-labels",
+    assert mod.main(["--profile", "none", "--system", system, "--n", n, "--toolbox", "harness", "--out", str(out), "--synthetic-labels",
                      *extra]) == 0  # fmt: skip
     return next(out.iterdir())
 
@@ -144,7 +144,7 @@ def test_exact_table_refused_by_run_script(tmp_path):
     mod = _script()
     d = _table_dir(tmp_path, [_row()], mode="exact")
     with pytest.raises(SystemExit, match="exact"):
-        mod.main(["--toolbox", "harness", "--backtest", str(d), "--n", "1", "--out", str(tmp_path / "o")])
+        mod.main(["--profile", "none", "--toolbox", "harness", "--backtest", str(d), "--n", "1", "--out", str(tmp_path / "o")])
 
 
 def test_fusion_params_need_a_table(tmp_path):

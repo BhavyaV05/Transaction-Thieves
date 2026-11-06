@@ -94,7 +94,7 @@ def load_exact_world(data: str, split: str = "train", n_pos: int = 2000, neg_rat
     that exist, and a `RealWorld` whose alerts are the stratified sample."""
     from pathlib import Path
 
-    from ftm.backtest.world import LEDGER_COLUMNS, RealWorld, _digest
+    from ftm.backtest.world import LEDGER_COLUMNS, RealWorld, _digest, history_splits
     from ftm.banks.partner import BankConfig, PartnerBank
     from ftm.data import io
 
@@ -105,7 +105,7 @@ def load_exact_world(data: str, split: str = "train", n_pos: int = 2000, neg_rat
     pq, views = root / cfg["parquet_dir"], root / cfg["views_dir"]
     banks_tbl = io.read_banks(views)
     bank_ids = [int(b) for b in banks_tbl["bank"].to_list()][:max_banks]
-    ledgers = {b: io.scan_view(views, b, split=split, columns=LEDGER_COLUMNS).collect() for b in bank_ids}
+    ledgers = {b: io.scan_view(views, b, split=history_splits(split), columns=LEDGER_COLUMNS).collect() for b in bank_ids}
     tx = io.scan_transactions(pq, split=split, columns=[*TX_COLUMNS, "is_laundering"]).collect()
     alerts = exact_alerts(tx.select(TX_COLUMNS), tx["is_laundering"], ledgers, n_pos, neg_ratio, seed, split)
     partners = {a.binding.partner_bank for a in alerts}

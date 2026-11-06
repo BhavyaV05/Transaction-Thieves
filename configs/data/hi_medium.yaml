@@ -3,6 +3,7 @@ raw_dir: data/raw/hi_medium
 parquet_dir: data/parquet/hi_medium
 views_dir: data/views/hi_medium
 alerts_dir: data/alerts/hi_medium
+alerts_dir_v2: data/alerts/hi_medium_v2   # same alert rows, p0 recalibrated (scripts/recal_p0.py); select with ftm.data.io.alerts_dir(cfg, p0="v2") or FTM_P0_VARIANT=v2
 n_banks: 30
 split_days:             # 1-indexed, inclusive. 16 bulk days; days 17-28 are a sparse tail (6,987 rows)
   train: [1, 9]

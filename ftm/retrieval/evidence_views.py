@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -30,6 +31,7 @@ from ftm import guards
 from ftm.data import alias, io
 from ftm.retrieval import explainers, pcst
 from ftm.retrieval import views as stub_views
+from ftm.types import NO_EVIDENCE_TEXT
 
 K = 40
 WINDOW_HOURS = 72
@@ -63,12 +65,26 @@ def candidates(cfg: dict, bank: int, as_of, window_hours: float = WINDOW_HOURS, 
     return lf.filter(pl.col("timestamp") >= as_of - timedelta(hours=window_hours)).sort(["timestamp", "tx_id"]).collect()
 
 
-def prizes(cand: pl.DataFrame, scores: pl.DataFrame | None) -> np.ndarray:
-    """Edge scorer score in [0, 1]; without scores, log amount scaled to [0, 1] (the fallback)."""
+def prizes(cand: pl.DataFrame, scores: pl.DataFrame | None, bank: int | None = None) -> np.ndarray:
+    """Edge scorer score in [0, 1]; without scores, log amount scaled to [0, 1] (the fallback).
+
+    Scores with a `bank` column (scorer v2, per home bank) are looked up for the home `bank` only."""
     if scores is None:
         a = np.log1p(cand["amount_paid"].to_numpy())
         return a / max(a.max(), 1e-9)
+    if "bank" in scores.columns:
+        if bank is None:
+            raise ValueError("per-home-bank edge scores (scorer v2) need the home bank")
+        scores = scores.filter(pl.col("bank") == bank)
     return cand.join(scores.select("tx_id", "score"), on="tx_id", how="left")["score"].fill_null(0.0).to_numpy()
+
+
+def scorer_version(v: str | None = None) -> str:
+    """"v1" (global features, in-sample train scores, `edge_scores.parquet`) or "v2" (per-home-bank features, OOF train scores); None reads FTM_EDGE_SCORER (default v1)."""
+    v = v or os.environ.get("FTM_EDGE_SCORER", "v1")
+    if v not in ("v1", "v2"):
+        raise ValueError(f"edge scorer version is v1 or v2, not {v!r}")
+    return v
 
 
 def _top(order_key: np.ndarray, tx: np.ndarray, alert: int, k: int, pool: np.ndarray | None = None) -> np.ndarray:
@@ -163,7 +179,18 @@ class EvidenceView:
 
 
 @lru_cache(maxsize=4)
-def _scores(ds: str, final: bool = False) -> pl.DataFrame:
+def _scores(ds: str, final: bool = False, version: str = "v1") -> pl.DataFrame:
+    if version == "v2":
+        f = Path("data/retrieval") / ds / "edge_scores_home_v2.parquet"
+        if not f.exists():
+            raise FileNotFoundError(f"{f}: python -m ftm.retrieval.edge_scorer_home --data {ds}")
+        out = pl.read_parquet(f, columns=["tx_id", "bank", "score"])  # time-guard: not transactions
+        if final:
+            t = Path("data/retrieval") / ds / "final" / "edge_scores_home_v2_test.parquet"
+            if not t.exists():
+                raise FileNotFoundError(f"{t}: run `python -m ftm.retrieval.edge_scorer_home --data {ds} --final` first")
+            out = pl.concat([out, pl.read_parquet(t, columns=["tx_id", "bank", "score"])])  # time-guard: not transactions
+        return out
     f = Path("data/retrieval") / ds / "edge_scores.parquet"
     if not f.exists():
         raise FileNotFoundError(f"{f}: train the edge scorer first (python -m ftm.retrieval.edge_scorer --data {ds} --train)")
@@ -234,7 +261,7 @@ def resolve_alert(alert, ds: str, final: bool = False) -> tuple[int, int, dateti
 
 
 def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small", alias_seed: int = 0,
-         max_evidence_tokens: int = EVIDENCE_TOKENS) -> EvidenceView:  # fmt: skip
+         max_evidence_tokens: int = EVIDENCE_TOKENS, scorer: str | None = None) -> EvidenceView:  # fmt: skip
     """The evidence of one alert under one view (the stable API for T3, E8 / H6).
 
     name: `amount` (top-k by amount over the whole window), `scorer` (top-k by edge-scorer score), `scorer_pcst` (the scorer's
@@ -245,9 +272,12 @@ def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small"
     `ftm.retrieval.explainers`). The candidates are the home bank's edges in [as_of - 72 h, as_of], read through `ftm.data.io` (time
     guard, train/val only); nothing later than the alert is read, scored or returned. Accounts are aliased with
     `alias_seed` (the run seed). Raises FileNotFoundError for the scorer views when the scorer has not been trained.
+    `scorer`: "v1" (default) or "v2" (per-home-bank features, out-of-fold train scores; FTM_EDGE_SCORER=v2 sets it globally).
     """
+    if name == "none":  # the WITHOUT arm: the alert summary only, nothing is read
+        return EvidenceView("none", NO_EVIDENCE_TEXT, [], 0, 0)
     if name not in NAMES:
-        raise ValueError(f"unknown view {name!r}; choose one of {NAMES}")
+        raise ValueError(f"unknown view {name!r}; choose one of {NAMES}, or none")
     cfg = io.load_config(data)
     final = is_final_alert(alert)  # a test alert (week 14): its evidence may also come from test days up to its time
     tx_id, bank, as_of = resolve_alert(alert, data, final)
@@ -256,7 +286,7 @@ def view(alert, name: str = "scorer_pcst", k: int = K, *, data: str = "hi_small"
     if not len(hit):
         raise ValueError(f"alerted transaction {tx_id} is not in view({bank}) up to {as_of}")
     i = int(hit[0])
-    pr = prizes(cand, _scores(data, final)) if name.startswith("scorer") else prizes(cand, None)
+    pr = prizes(cand, _scores(data, final, scorer_version(scorer)), bank) if name.startswith("scorer") else prizes(cand, None)
     explain = {name: explainer_scores(data, name, bank, tx_id, as_of, cand, final)} if name in EXPLAINER_VIEWS else None
     mask = select_views(cand, i, pr, k, home_bank=bank, max_tokens=max_evidence_tokens, only=(name,), explain=explain)[name]
     sel = cand.filter(pl.Series(mask)).sort(["timestamp", "tx_id"])
@@ -343,7 +373,7 @@ def _h6_block(wide: pl.DataFrame, n_boot: int, seed: int) -> dict:
 
 
 def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: str = "scorer", k: int = K, limit: int | None = None,
-             explainer_views: tuple[str, ...] = (), final: bool = False) -> dict:  # fmt: skip
+             explainer_views: tuple[str, ...] = (), final: bool = False, scorer: str | None = None) -> dict:  # fmt: skip
     """Pattern-edge recall among the K and trail checks over the val alerts of `parts` (data/alerts/<ds>/val.parquet).
 
     `explainer_views` (names from `EXPLAINER_VIEWS`) adds the explainer comparisons; their scores come from the cache of
@@ -361,14 +391,14 @@ def evaluate(ds: str, parts=("eval",), edge_cost: float = 0.05, prize_source: st
         al = pl.read_parquet(Path(cfg["alerts_dir"]) / "val.parquet").filter(pl.col("val_part").is_in(list(parts)))  # time-guard: not transactions
     if limit:
         al = al.head(limit)
-    scores = _scores(ds, final) if prize_source == "scorer" else None
+    scores = _scores(ds, final, scorer_version(scorer)) if prize_source == "scorer" else None
     pat = io.scan_patterns(pq, split=splits_for(final)).select("tx_id", "attempt_id").collect()
     by_att = {a: set(g["tx_id"].to_list()) for (a,), g in pat.group_by("attempt_id")}
     rows, t0 = [], time.time()
     for r in al.iter_rows(named=True):
         cand = candidates(cfg, r["bank"], r["timestamp"], final=final)
         i = int(np.flatnonzero(cand["tx_id"].to_numpy() == r["tx_id"])[0])
-        pr = prizes(cand, scores)
+        pr = prizes(cand, scores, int(r["bank"]))
         explain = {n: explainer_scores(ds, n, int(r["bank"]), int(r["tx_id"]), r["timestamp"], cand, final) for n in explainer_views} or None
         masks = select_views(cand, i, pr, k, edge_cost, home_bank=int(r["bank"]), explain=explain)
         tx, src, dst = cand["tx_id"].to_numpy(), cand["src_id"].to_numpy(), cand["dst_id"].to_numpy()
@@ -411,12 +441,13 @@ if __name__ == "__main__":
     ap.add_argument("--edge-cost", type=float, default=0.05)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--explainers", nargs="*", choices=EXPLAINER_VIEWS, default=[], help="add gnnexplainer / pgexplainer (cache of scripts/run_explainers.py)")
+    ap.add_argument("--scorer", choices=["v1", "v2"], default=None, help="edge scorer: v1 (global features) or v2 (per home bank, OOF train scores); default FTM_EDGE_SCORER or v1")
     ap.add_argument("--final", action="store_true", help="week 14: the TEST alert set (needs FTM_FINAL_RUN=1, edge_scorer --final and the final explainer cache)")
     a = ap.parse_args()
-    res = evaluate(a.data, tuple(a.parts), a.edge_cost, a.prize, limit=a.limit, explainer_views=tuple(a.explainers), final=a.final)
+    res = evaluate(a.data, tuple(a.parts), a.edge_cost, a.prize, limit=a.limit, explainer_views=tuple(a.explainers), final=a.final, scorer=a.scorer)
     df = res.pop("_per_alert")
     res["h6"] = h6_report(df)
-    tag = f"{a.data}_{a.prize}_{'_'.join(a.parts)}" + ("_explainers" if a.explainers else "") + ("_FINAL" if a.final else "")
+    tag = f"{a.data}_{a.prize}_{'_'.join(a.parts)}" + ("_scorerv2" if scorer_version(a.scorer) == "v2" else "") + ("_explainers" if a.explainers else "") + ("_FINAL" if a.final else "")
     Path("data/runs").mkdir(exist_ok=True)
     df.write_parquet(f"data/runs/evidence_views_{tag}.parquet")
     Path(f"data/runs/evidence_views_{tag}.json").write_text(json.dumps(res, indent=1))

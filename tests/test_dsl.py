@@ -34,6 +34,8 @@ def test_expert_sensitivity_matches_specs_except_chain_length():
         s = check(p["program"]).sensitivity
         if p["family"] == "internal_chain":
             assert s == 3
+        elif p["family"] == "repeated_amounts":
+            assert s == 4  # the spec draft says 2; one added transfer can pair itself and two mutually non-matching others
         else:
             assert s == p["sensitivity"], p["program"]
 

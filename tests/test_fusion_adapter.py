@@ -1,10 +1,13 @@
 """T3: adapter from our Fusion protocol to T4's ftm.fusion (PR #7 review)."""
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from ftm.fusion.fuse import Fusion, answer_features
-from ftm.llm.fusion_adapter import FusedLR
+from ftm.llm.fusion_adapter import ConditionalLR, FusedLR, load_fitted
 from ftm.llm.investigation import LREntry, LRTable, NaiveLRFusion
 from ftm.types import Decline, QuestionLogEntry, Reply
 
@@ -71,3 +74,12 @@ def test_fitted_model_refuses_unknown_family_and_unnamed_per_family():
         FusedLR(m, TABLE).posterior(0.3, [entry(1, "prog_g")])  # family g is not in the model
     with pytest.raises(ValueError):
         FusedLR(Fusion("per_family", [], 1.0, np.array([1.0]), 0.0, 1.0, True), TABLE)
+
+
+def test_load_fitted_reads_both_formats(tmp_path):
+    frozen = load_fitted(Path(__file__).parents[1] / "configs/fusion/headroom_v1.json", TABLE)  # the production file; distill crashed on it
+    assert isinstance(frozen, ConditionalLR) and 0.0 < frozen.posterior(0.3, []) < 1.0
+    params = tmp_path / "fusion.json"
+    params.write_text(json.dumps(Fusion("naive").params()))
+    assert isinstance(load_fitted(params, TABLE), FusedLR)
+

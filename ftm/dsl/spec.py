@@ -113,7 +113,7 @@ _add(Prim("n_round", "count", "account", {"window": _W_ANY, "unit": P("float", 1
 _add(Prim("n_format", "count", "account", {"window": _W_ANY, "format": P("enum", choices=PAYMENT_FORMATS)}, 1,
           "Number of SUBJECT's transfers in the window that used the given payment format.",
           "n_format(ALERT.receiver, window=around(72), format=cash)"))
-_add(Prim("n_repeated", "count", "account", {"window": _W_ANY}, 2,
+_add(Prim("n_repeated", "count", "account", {"window": _W_ANY}, 4,  # one added transfer can pair itself and up to two mutually non-matching others (3); 4 is the safe bound
           "Number of SUBJECT's transfers in the window that repeat another of its transfers within 1% in amount.",
           "n_repeated(ALERT.receiver, window=around(72))"))
 _add(Prim("n_same_entity", "count", "account", {"window": _W_ANY}, 1,

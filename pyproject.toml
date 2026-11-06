@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "langgraph==1.2.19", "rich"]
 # T1: one-bank models and SOTA GNNs. snapml is installed separately if the licence allows (plan section 4.1).
 gbt = ["lightgbm", "xgboost", "scikit-learn"]
 # T2: fine-tuned ModernBERT/DeBERTa classifiers for the small decisions (install a CUDA build of torch first for the GPU)
@@ -33,7 +33,7 @@ enc = ["torch", "transformers", "scikit-learn"]
 gnn = ["torch", "torch_geometric", "pcst_fast"]
 fed = ["flwr", "opacus"]
 # T3 (and T4 for ports): LLM client side. vLLM/Unsloth run on the serving machine only, see docs/hardware.md.
-llm = ["openai", "dspy[optuna]>=3.4,<3.5", "ag2"]  # dspy 3.5 drops the BaseLM.forward API ftm/external/dspy_react.py uses
+llm = ["openai", "dspy[optuna]>=3.4,<3.5", "ag2", "langgraph==1.2.19"]  # dspy 3.5 drops the BaseLM.forward API ftm/external/dspy_react.py uses
 serve = ["vllm", "unsloth"]
 rag = ["rank-bm25", "sentence-transformers"]
 

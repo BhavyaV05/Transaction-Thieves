@@ -9,7 +9,11 @@
 #
 # How the names are produced today (read off the code, 2026-10-25):
 #   ours / LLM ablations   scripts/run_llm_agent.py --system planner --mode <m>: system = ours_<m>
-#                          (ours_compose, ours_fixed_list, ours_act_only, ours_no_backtest, ours_llm_decides), variant = harness
+#                          (ours_compose, ours_fixed_list, ours_act_only, ours_no_backtest, ours_llm_decides). The final run writes
+#                          variant = the plan job's variant (--variant-label: compose, fixed_list, act_only, no_backtest, llm_decides,
+#                          eps_0.5 ... library_account, batched_2_1, student_s0..2, prompted_qwen3_8b); val runs write variant = harness.
+#                          So the arms of one system stay separate rows (score_runs keys on system/variant/mode/alert_set and load_run
+#                          fails if two jobs write the same key). Externals: variant = native | ported (the job's variant).
 #   non-LLM planners       ftm/orchestrator/ablations.py: system = random | fixed | eig | learned | enumerator, variant = the arm
 #                          name of configs/experiments/ablations_nonllm.yaml (random, fixed_order, eig, learned_policy, enumerator,
 #                          eig_eps_0.5, eig_batched_2_1, ...)
@@ -22,11 +26,11 @@ version: 1
 
 roles:
   # ---- ours and its LLM-side ablations (Table 5b, H1-H4, H7)
-  ours_compose:   {system: ours_compose,     variant: [harness]}
-  llm_fixed_list: {system: ours_fixed_list,  variant: [harness]}
-  llm_act_only:   {system: ours_act_only,    variant: [harness]}
-  no_backtest:    {system: ours_no_backtest, variant: [harness]}
-  llm_decides:    {system: ours_llm_decides, variant: [harness]}
+  ours_compose:   {system: ours_compose,     variant: [compose, harness]}
+  llm_fixed_list: {system: ours_fixed_list,  variant: [fixed_list, harness]}
+  llm_act_only:   {system: ours_act_only,    variant: [act_only, harness]}
+  no_backtest:    {system: ours_no_backtest, variant: [no_backtest, harness]}
+  llm_decides:    {system: ours_llm_decides, variant: [llm_decides, harness]}
   # ---- non-LLM planners (H3)
   random:         {system: random,     variant: [random, harness]}
   fixed_order:    {system: fixed,      variant: [fixed_order, harness]}
@@ -42,7 +46,7 @@ roles:
   # ---- E13 (H8), E8 (H6): arms of the same planner
   async_sequential: {system: eig, variant: [eig]}
   async_batched:    {system: eig, variant: [eig_batched_2_1]}
-  evidence_scorer_pcst: {system: ours_compose, variant: [harness_view_scorer_pcst]}   # ASSUMED
+  evidence_scorer_pcst: {system: ours_compose, variant: [harness_view_scorer_pcst]}   # ASSUMED (no final job writes it)
   evidence_top40:       {system: ours_compose, variant: [harness_view_top40]}         # ASSUMED
 
 # the simple planners; best_simple_planner is the best of these on validation (fixed in fixed_on_val.json), random excluded:
@@ -69,11 +73,13 @@ table_5b:
   - {group: backtest,  label: "Realistic vs exact back-test LRs",   select: {system: eig, variant: [eig_exact_label_lrs]}}
   - {group: views,     label: "Evidence view: top 40 by amount",    role: evidence_top40}
   - {group: views,     label: "Evidence view: scorer + PCST",       role: evidence_scorer_pcst}
-  - {group: e16,       label: "Fine-tuned planner (E16)",           select: {system: ours_compose, variant: [harness_finetuned]}}          # ASSUMED
-  - {group: e16,       label: "Same model prompted (E16)",          select: {system: ours_compose, variant: [harness_prompted_student]}}   # ASSUMED
+  - {group: e16,       label: "Fine-tuned planner, seed 0 (E16)",   select: {system: ours_compose, variant: [student_s0]}}
+  - {group: e16,       label: "Fine-tuned planner, seed 1 (E16)",   select: {system: ours_compose, variant: [student_s1]}}
+  - {group: e16,       label: "Fine-tuned planner, seed 2 (E16)",   select: {system: ours_compose, variant: [student_s2]}}
+  - {group: e16,       label: "Same model prompted (E16)",          select: {system: ours_compose, variant: [prompted_qwen3_8b]}}
   - {group: e16,       label: "Teacher (E16)",                      select: {system: ours_compose, variant: [harness_teacher]}}            # ASSUMED
-  - {group: e11,       label: "Library by shape, frozen",           select: {system: ours_compose, variant: [harness_lib_shape_frozen]}}   # ASSUMED
-  - {group: e11,       label: "Library by account",                select: {system: ours_compose, variant: [harness_lib_account]}}        # ASSUMED
+  - {group: e11,       label: "Library by shape, frozen",           role: ours_compose}   # the common --library is the frozen shape library
+  - {group: e11,       label: "Library by account",                select: {system: ours_compose, variant: [library_account]}}
   - {group: e11,       label: "Library by shape, continual",        select: {system: ours_compose, variant: [harness_lib_shape_continual]}}  # ASSUMED
   - {group: fusion,    label: "Summed log-LRs (naive fusion)",      select: {system: eig, variant: [eig]}}
   - {group: fusion,    label: "Fitted fusion, shared weight",       select: {system: eig, variant: [eig_fusion_shared]}}
@@ -88,14 +94,13 @@ table_5b:
   - {group: switches,  label: "20% timeouts",                       select: {system: eig, variant: [eig_timeout_20]}}
 
 # E2: the privacy-detection curve. One list per arm; `eps` is the per-alert budget (inf = no noise).
-# ASSUMED names for the LLM system's eps variants.
 eps_curve:
   ours:
-    - {eps: 0.5, select: {system: ours_compose, variant: [harness_eps0.5]}}
-    - {eps: 1.0, select: {system: ours_compose, variant: [harness_eps1]}}
+    - {eps: 0.5, select: {system: ours_compose, variant: [eps_0.5]}}
+    - {eps: 1.0, select: {system: ours_compose, variant: [eps_1]}}
     - {eps: 2.0, role: ours_compose}
-    - {eps: 4.0, select: {system: ours_compose, variant: [harness_eps4]}}
-    - {eps: inf, select: {system: ours_compose, variant: [harness_eps_inf]}}
+    - {eps: 4.0, select: {system: ours_compose, variant: [eps_4]}}
+    - {eps: inf, select: {system: ours_compose, variant: [eps_inf]}}
   eig:
     - {eps: 0.5, select: {system: eig, variant: [eig_eps_0.5]}}
     - {eps: 1.0, select: {system: eig, variant: [eig_eps_1]}}
@@ -119,6 +124,17 @@ externals:
   debate_autogen:  {group: D, tier: secondary, ported: {system: debate}}
   uot:             {group: D, tier: secondary, ported: {system: uot}}
   bed_llm:         {group: D, tier: secondary, ported: {system: bed_llm}}
+  # NEW ARMS (rewrite wave 2): adapted Group D agents (PlannerPolicy in the system graph; verdict = fused posterior)
+  react_adapted:          {group: D, tier: new_arm, ported: {system: react_adapted}}
+  reflexion_adapted:      {group: D, tier: new_arm, ported: {system: reflexion_adapted}}
+  rewoo_adapted:          {group: D, tier: new_arm, ported: {system: rewoo_adapted}}
+  lats_adapted:           {group: D, tier: new_arm, ported: {system: lats_adapted}}
+  llmcompiler_adapted:    {group: D, tier: new_arm, ported: {system: llmcompiler_adapted}}
+  dspy_react_adapted:     {group: D, tier: new_arm, ported: {system: dspy_react_adapted}}
+  debate_adapted:         {group: D, tier: new_arm, ported: {system: debate_adapted}}
+  uot_adapted:            {group: D, tier: new_arm, ported: {system: uot_adapted}}
+  bed_llm_adapted:        {group: D, tier: new_arm, ported: {system: bed_llm_adapted}}
+  mediq_adapted:          {group: D, tier: new_arm, ported: {system: mediq_adapted}}
 
 # Variants that are never results (devtools = random answers, harness_mock = mock banks): refused on --split test.
 never_results: [devtools, harness_mock, synthetic]

@@ -20,7 +20,7 @@ def _write(tmp_path, n_alerts=30):
     alerts.write_parquet(tmp_path / "val.parquet")
     with (tmp_path / "d.jsonl").open("w") as f:
         for i in range(n_alerts):
-            for dec in ("worth_asking", "stop"):
+            for dec in ("worth_asking", "rule_applies"):
                 f.write(json.dumps({"alert_id": f"V{i}", "split": "val", "decision": dec, "context": "c",
                                     "label": "yes" if i % 2 else "no"}) + "\n")
     return tmp_path / "d.jsonl", tmp_path / "val.parquet"

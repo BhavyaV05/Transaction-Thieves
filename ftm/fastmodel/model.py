@@ -6,6 +6,8 @@ Owner: T3 (Akshat).  Spec: plan.md 6.14, tracks.md 5.6.
                      logprobs of the first token, keep the label tokens, renormalise, apply temperature T.
   JsonDecisionModel  the baseline: the 8B writes {"label": ..., "confidence": ...}; the stated confidence is the
                      probability of that label, the rest is spread evenly over the other labels.
+LogprobFastModel is also the LARGE tier of the cascade (E10 v3): the same single-token read of a bigger served model (Gemma 4 12B
+through the OpenAI-compatible `logprobs` / `top_logprobs`), not its stated confidence, which was too coarse to ever settle.
 Both return label -> probability. Latency is recorded per call (timing counts only on the reference machine).
 """
 
@@ -30,16 +32,33 @@ class FastModel(Protocol):
     def predict_proba(self, ex: DecisionExample) -> dict[str, float]: ...
 
 
-def label_logps(top_logprobs: list[dict], decision: str) -> np.ndarray:
-    """Label log-probs (in DECISIONS order) from one token's top logprobs [{token, logprob}, ...]."""
+def label_variants(top_logprobs: list[dict], decision: str) -> list[list[float]]:
+    """Per label (DECISIONS order), the log-prob of EVERY token variant seen in the top logprobs (" yes", "yes", "Yes" ...).
+    This is what the score files store, so the logsumexp over variants can be recomputed offline (E10 kept only one number)."""
     d = DECISIONS[decision]
     t2l = {t.lower(): i for i, t in enumerate(d.tokens)}
-    out = np.full(len(d.labels), FLOOR_LOGP)
+    seen: list[list[float]] = [[] for _ in d.labels]
     for item in top_logprobs:
         i = t2l.get(item["token"].strip().lower())
         if i is not None:
-            out[i] = max(out[i], item["logprob"])  # " yes" and "yes" both count; keep the larger
+            seen[i].append(float(item["logprob"]))
+    return seen
+
+
+def logps_from_variants(variants: list[list[float]]) -> np.ndarray:
+    """Label log-probs: logsumexp over a label's token variants (their probabilities add); a label with no variant in the
+    top logprobs gets FLOOR_LOGP."""
+    out = np.full(len(variants), FLOOR_LOGP)
+    for i, lp in enumerate(variants):
+        if lp:
+            m = max(lp)
+            out[i] = m + math.log(sum(math.exp(x - m) for x in lp))
     return out
+
+
+def label_logps(top_logprobs: list[dict], decision: str) -> np.ndarray:
+    """Label log-probs (in DECISIONS order) from one token's top logprobs [{token, logprob}, ...]."""
+    return logps_from_variants(label_variants(top_logprobs, decision))
 
 
 @dataclass
@@ -50,7 +69,8 @@ class LogprobFastModel:
     extra: dict = field(default_factory=lambda: {"chat_template_kwargs": {"enable_thinking": False}})
     latencies: list[float] = field(default_factory=list)
 
-    def raw_logps(self, ex: DecisionExample) -> np.ndarray:
+    def raw_scores(self, ex: DecisionExample) -> tuple[np.ndarray, list[list[float]]]:
+        """(label log-probs, per-label token-variant log-probs): one forward pass, max_tokens=1."""
         r = self.client.chat(messages(ex), max_tokens=1, temperature=0.0,
                              extra={**self.extra, "logprobs": True, "top_logprobs": self.top_logprobs})  # fmt: skip
         self.latencies.append(r.latency_s)
@@ -58,7 +78,11 @@ class LogprobFastModel:
             top = r.raw["choices"][0]["logprobs"]["content"][0]["top_logprobs"]
         except (KeyError, IndexError, TypeError):
             top = []  # server without logprobs: every label at the floor -> uniform
-        return label_logps(top, ex.decision)
+        variants = label_variants(top, ex.decision)
+        return logps_from_variants(variants), variants
+
+    def raw_logps(self, ex: DecisionExample) -> np.ndarray:
+        return self.raw_scores(ex)[0]
 
     def predict_proba(self, ex: DecisionExample) -> dict[str, float]:
         p = softmax_t(self.raw_logps(ex)[None, :], self.temperature)[0]

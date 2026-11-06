@@ -155,6 +155,15 @@ def test_dspy_react_runs_through_our_budget_and_tools(tmp_path):
 
     assert brier_metric(E(), P()) == pytest.approx(1 - 0.75**2)
 
+    class Missing:
+        probability = None
+
+    class E2:
+        label = 1
+        p0 = 0.3
+
+    assert brier_metric(E2(), Missing()) == pytest.approx(1 - 0.7**2)  # a missing p scores as p0, like the evaluation
+
 
 def test_dspy_unparseable_model_output_is_a_failed_alert_not_a_crash():
     pytest.importorskip("dspy")

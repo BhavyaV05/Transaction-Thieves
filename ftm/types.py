@@ -78,6 +78,7 @@ class QuestionLogEntry:
     response: BankResponse | None = None
     gate_decision: Literal["allowed", "blocked", "over_budget"] = "allowed"
     posterior_after: float | None = None
+    expected_bank: str | None = None  # the only bank whose answer has a back-tested LR (ftm.llm.routing.expected_bank); "none" = no partner holds the subject; None = unknown
 
 
 @dataclass
@@ -93,3 +94,6 @@ class Verdict:
     llm_calls: int = 0
     gpu_seconds: float = 0.0
     trials: int | None = None  # Reflexion: trials run on this alert; None for systems without trials
+
+
+NO_EVIDENCE_TEXT = "(no evidence trail given)"  # evidence view "none" (RAG bench WITHOUT arm): the one line every system prints for the trail

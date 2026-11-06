@@ -1,8 +1,12 @@
-"""Evidence views for the planner (C11). This is the week-2 STUB: top-K edges by amount around the alert.
+"""Shared plumbing of the evidence views (C11): alias-safe trail formatting, the alert summary, and the 1-hop top-K-by-amount
+selection. The planner's evidence is NOT this module's selection any more: `scripts/run_llm_agent.py` takes it from
+`ftm.retrieval.evidence_views.view` (the real C11 views, edge scorer v2; the name is the `--evidence-view` choice, default in
+configs/llm/tuned.yaml). `top_k_by_amount_view` stays as the named ablation `amount_1hop` (the week-2 definition, byte-identical text,
+tests/test_evidence_api.py) and `stamp_home` / `alert_summary` / `format_trail` are used by every view.
 
 Owner: T3 (Akshat) until week 4, then T1 (Abhishek) owns it (hand-off #11).  Spec: plan.md 6.12, tracks.md 3.8.
 
-View "top-40 by amount" (the RQ4 baseline view and the default training view for the fine-tuned planner):
+View "top-40 by amount, 1 hop" (`amount_1hop`, the week-2 definition):
   1. the home bank's view up to `as_of` (the alert time), read ONLY through ftm.data.io (time guard + test lock);
   2. edges that touch the alert's sender or receiver (1 hop), inside [as_of - window_hours, as_of];
   3. the K largest by amount_paid (ties: lower tx_id first), always including the alerted transaction;
@@ -134,6 +138,13 @@ def _base_summary(alert_row: dict, amap: dict) -> dict:
     }
 
 
+def stamp_home(alert_row: dict, bank: int, views_dir: str | Path) -> None:
+    """Record `home_bank` and `alerts_dir` on `alert_row`, which `alert_summary` reads (direction, counterparty_bank, top_features).
+    Every evidence view needs this before `alert_summary`, whichever selection produced the trail."""
+    alert_row["home_bank"] = int(bank)
+    alert_row["alerts_dir"] = str(Path(views_dir).parent.parent / "alerts" / Path(views_dir).name)
+
+
 def top_k_by_amount_view(
     views_dir: str | Path,
     bank: int,
@@ -149,8 +160,7 @@ def top_k_by_amount_view(
     `alert_row` so that the `alert_summary(alert_row, ...)` called next knows the home bank.
     """
     as_of = alert_row["timestamp"]
-    alert_row["home_bank"] = int(bank)  # read by alert_summary (direction, counterparty_bank, top_features)
-    alert_row["alerts_dir"] = str(Path(views_dir).parent.parent / "alerts" / Path(views_dir).name)
+    stamp_home(alert_row, bank, views_dir)
     view = io.scan_view(views_dir, bank, as_of=as_of, columns=TRAIL_COLS)
     rows = select_top_k_by_amount(view, [alert_row["src_id"], alert_row["dst_id"]], as_of, k=k,
                                   window_hours=window_hours, alert_tx_id=alert_row["tx_id"])  # fmt: skip

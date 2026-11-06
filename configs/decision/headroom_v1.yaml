@@ -1,0 +1,17 @@
+# Decision layer tuned for the headroom_v1 fusion (scripts/t3_headroom.py select); values fitted on HI-Medium val fit+cal only.
+# Same keys as default.yaml; load with the same code.  Written before the val eval part was scored.
+objective: f1                # f1 | cost | capacity; the thresholds of the other objectives are listed below
+threshold: 0.322699      # posterior >= threshold -> escalate (f1 objective, val fit+cal)
+thresholds_fitcal:
+  f1: 0.322699
+  cost_1_1: 0.322699
+  capacity_top10pct: 0.915551
+capacity_per_day: null
+cost_fn: null
+cost_fp: null
+stop:
+  min_eps: 0.25
+  max_delta: 2.000000      # largest |log LR| per unit eps over the hypotheses the fusion uses (stop_bounds)
+  max_weight: 0.756230     # largest |w_f| times the shrink
+fusion_params: configs/fusion/headroom_v1.json
+fusion_decisions: configs/fusion/headroom_v1_decisions.json
