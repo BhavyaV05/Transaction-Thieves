@@ -7,7 +7,7 @@ exec > >(tee -a $D/task.log) 2>&1
 setsid $PY scripts/serve_llm.py --model gemma4-12b --turing --tp 2 --gpu-util 0.88 --port $PORT > $SERVELOG 2>&1 &
 pid=$!; trap 'kill -- -$pid 2>/dev/null' EXIT
 wait_server gemma4-12b $pid || fail "gemma tp2 did not serve (see $SERVELOG)"
-cd $HOME/tt/tt-main; export PYTHONPATH=$PWD FTM_P0_VARIANT=v2 FTM_EDGE_SCORER=v2
+cd $HOME/tt/tt-main-git; export PYTHONPATH=$PWD FTM_P0_VARIANT=v2 FTM_EDGE_SCORER=v2
 OUT=outputs/injection_v3; mkdir -p $OUT outputs/t3_val_v3; SET=data/safety/injection_val_diverse.jsonl
 [ -f $SET ] || $PY -c "from ftm.safety import injection as inj; inj.write_jsonl(inj.generate_diverse(400, 400, 0, 'val'), '$SET')"
 if [ $SYS = planner ]; then N=${E15_N_PLANNER:-60}; ARMS=nogate,gate,gate+camel_flow,gate+camel_full,gate+screen; else N=${E15_N_REACT:-40}; ARMS=nogate,gate,gate+screen; fi
