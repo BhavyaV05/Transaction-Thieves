@@ -186,3 +186,65 @@ Published rows were measured by their authors with the official evaluator; Jev i
 Caveats that matter: the bekko card states its training data includes dataset families in the evaluation (so its Choice number is not an unseen-task result); laya and GLiNER2.5 are
 reported by their cards to be weak zero-shot on typed-decisions style questions, and the table agrees.  Our System 1 was fine-tuned only on AML decisions; its S1MB numbers will measure how much of
 the typed-decision format transfers, not a trained-for-S1MB score.
+
+---
+# Results (7 Nov 2026; sections 1-8 above are unchanged)
+
+All numbers below are produced by `scripts/s1bench_report.py` and `scripts/s1bench_partb.py select|eval` from the outputs of the ada runs (`docs/t3_ada.md`; RTX 2080 Ti, vLLM, fp16, Qwen3-4B-AWQ + LoRA adapters; S1MB / public tasks scored with the validated scorer of section 7) and from the earlier CPU runs of the open models. Where something has not been run it says PENDING.
+
+## 9. Part A: our System 1 on the public benchmarks (qwen3-4b base, `system1` = fast3-s0, `system1_soft` = fast3soft-s0)
+
+The adapters were fine-tuned only on AML decisions; the numbers measure transfer of the typed-decision format, not a trained-for-the-benchmark score. Prompts that exceed the 2,048-token serving context are not truncated: 1,198 judgments are unscored for every model alike, 12 of the 137 S1MB benchmarks are therefore incomplete, and the S1MB comparison is on the 125 complete ones (same covered set as section 8).
+
+| S1MB English v1 (covered 125 of 137) | Choice | Noul | Score | Task Avg |
+|---|---|---|---|---|
+| Jev 1.13 (published, section 8) | 0.682 | 0.661 | 0.501 | 0.615 |
+| bekko-system-one-v0-400m (published) | 0.615 | 0.525 | 0.417 | 0.519 |
+| qwen3-4b base (this work) | 0.287 | 0.211 | 0.068 | **0.189** |
+| system1 (fast3-s0) | 0.272 | 0.191 | 0.019 | **0.160** |
+| system1_soft (fast3soft-s0) | 0.285 | 0.176 | 0.017 | **0.159** |
+
+Public tasks (test split, raw probabilities; `Brier (T)` / `ECE (T)` are after one temperature fitted on the task's own calibration split; order-bias columns exist only for tasks with at most 26 options; full table `outputs/s1bench/report_ada/ext.md/report.md`):
+
+| task | model | accuracy | macro-F1 | Brier | ECE | ECE (T) | median ms |
+|---|---|---|---|---|---|---|---|
+| banking77 (77-way) | qwen3-4b | 0.295 | 0.238 | 1.241 | 0.577 | 0.054 | 417 |
+| | system1 | 0.386 | 0.409 | 0.831 | 0.218 | 0.148 | 581 |
+| | system1_soft | 0.526 | 0.511 | 0.810 | 0.361 | 0.200 | 617 |
+| clinc150_oos (151-way) | qwen3-4b | 0.138 | 0.117 | 1.467 | 0.678 | 0.061 | 740 |
+| | system1 | 0.246 | 0.263 | 0.892 | 0.120 | 0.040 | 1079 |
+| | system1_soft | 0.218 | 0.188 | 0.898 | 0.115 | 0.073 | 1056 |
+| hwu64 (64-way) | qwen3-4b | 0.270 | 0.244 | 1.194 | 0.526 | 0.087 | 411 |
+| | system1 | 0.325 | 0.349 | 0.867 | 0.207 | 0.153 | 627 |
+| | system1_soft | 0.456 | 0.496 | 0.857 | 0.334 | 0.071 | 570 |
+| sst2 | qwen3-4b | 0.905 | 0.905 | 0.180 | 0.085 | 0.045 | 126 |
+| | system1 | 0.904 | 0.903 | 0.175 | 0.105 | 0.031 | 138 |
+| | system1_soft | 0.885 | 0.885 | 0.202 | 0.136 | 0.030 | 145 |
+| toxicchat (toxic F1 / AUROC) | qwen3-4b | 0.924 (F1 0.093, AUROC 0.438) | 0.527 | 0.141 | 0.071 | 0.082 | 125 |
+| | system1 | 0.951 (F1 0.570, AUROC 0.914) | 0.772 | 0.083 | 0.026 | 0.009 | 140 |
+| | system1_soft | 0.949 (F1 0.549, AUROC 0.906) | 0.761 | 0.088 | 0.051 | 0.014 | 142 |
+| unfair_tos (8 yes/no per clause; micro-F1 / macro-F1) | qwen3-4b | micro 0.275, macro 0.351 | | 0.112 | 0.048 | 0.008 | 122 |
+| | system1 | micro 0.076, macro 0.081 | | 0.520 | 0.199 | 0.025 | 153 |
+| | system1_soft | micro 0.068, macro 0.075 | | 0.446 | 0.023 | 0.032 | 143 |
+
+Reading: the fast adapters keep what they were trained for and transfer where the task looks like one of ours (toxicchat: AUROC 0.438 to 0.914; many-class intents: accuracy up and Brier down by about 0.4 to 0.6, with the 150-way tasks still far from usable), do not move on sst2, and lose on unfair_tos, where the base model's "no" prior is right and the fine-tuned yes/no heads over-call (micro-F1 0.076 against 0.275). On S1MB both are below the base model (Task Avg 0.160 and 0.159 against 0.189) and far below the published open System One models; the claim "System-One-style" refers to the mechanism (one forward pass, typed distribution, calibration, cascade), not to S1MB competence. Latencies are 2080 Ti vLLM wall times with 32 workers for the throughput runs and one request at a time for `ms`. The `system1_listed` variant (two-stage with every label listed in stage 1) was run on banking77, clinc150_oos and hwu64 (`outputs/s1bench/ext/system1_listed`); its comparison with the production two-stage mechanism is PENDING (not tabulated here). **Gemma 4 12B on Part A (`s1_gemma_partA`, needs two GPUs) has not been run: PENDING.**
+
+## 10. Part B: head-to-head on our decisions (selection rule of section 4, run once)
+
+Candidates scored on all rows: system1 `fast3-s0` (`system1_tuned_s0`), `fast3soft-s0`, untuned Qwen3-4B, JevK5, Tev1-4B (GPU); on the 500-per-decision subsample of the CPU runs (`--cap 500`, the same subsample for everyone in the selection): bekko-system-one-v0-400m, GLiNER2.5-Decide, laya-typed-decisions. **Not in the table: `laya` base (1,600 rows, incomplete) and the fine-tuned GLiNER (100 rows, the fine-tune did not finish): PENDING; Open-Jev-9B was never loaded (section 3: needs a build under 15 GB).**
+
+Selection on `fit` + `cal` only (300 alert clusters, 2,000 resamples), `outputs/s1bench/selection.json`: macro Brier over the decisions that have a candidate with skill: **system1_tuned_s0 0.1384 (selected)**, system1_soft_s0 0.1765, untuned Qwen3-4B 0.3279, Tev1-4B 0.3762, JevK5 0.4120; bekko, GLiNER2.5-Decide and laya-typed-decisions are ineligible (collapsed on at least one decision). `typology` is excluded from the macro criterion: no candidate beats the fit-majority baseline there (accuracy 0.679 for the majority label and for system1). Brier differences to the best are significant for every other candidate (paired cluster bootstrap, all CI above 0). The tie steps (ECE, latency) did not matter: the best candidate was not tied on Brier.
+
+Eval, scored once (`outputs/s1bench/partb_eval_once/`), 158-159 alert clusters, Brier of each candidate minus Brier of the selected system1 (positive = system1 better), 95 % paired-bootstrap CI, `*` = Holm-significant within the family (candidates x 4 decisions):
+
+| candidate | worth_asking | typology | rule_applies | injection_present |
+|---|---|---|---|---|
+| system1_soft_s0 | +0.019 [+0.006, +0.037]* | +0.007 [-0.010, +0.022] | +0.045 [+0.024, +0.063]* | +0.064 [+0.037, +0.092]* |
+| qwen3-4b_untuned | +0.176 [+0.145, +0.209]* | -0.083 [-0.105, -0.063]* | +0.225 [+0.187, +0.261]* | +0.188 [+0.151, +0.227]* |
+| bekko-400m | +0.430 [+0.399, +0.458]* | +0.321 [+0.273, +0.366]* | +0.115 [+0.050, +0.170]* | +0.276 [+0.220, +0.334]* |
+| gliner25-decide | +0.428 [+0.364, +0.489]* | +0.334 [+0.284, +0.383]* | +0.412 [+0.368, +0.450]* | +0.272 [+0.228, +0.315]* |
+| laya-typed-decisions | +0.496 [+0.463, +0.522]* | +0.293 [+0.246, +0.338]* | +0.296 [+0.261, +0.327]* | +0.328 [+0.289, +0.368]* |
+| jevk5 | +0.342 [+0.304, +0.377]* | +0.371 [+0.316, +0.424]* | +0.254 [+0.196, +0.307]* | +0.247 [+0.196, +0.302]* |
+| tev1-4b | +0.231 [+0.207, +0.249]* | +0.020 [-0.046, +0.085] | +0.312 [+0.249, +0.370]* | +0.198 [+0.156, +0.242]* |
+
+Eval Brier of the selected system1: worth_asking 0.056 (accuracy 0.960 against the fit majority 0.728), typology 0.659 (0.679 against 0.679), rule_applies 0.215 (0.856 against 0.500), injection_present 0.116 (0.928 against 0.474). Reading: on three of the four decisions the System 1 adapters beat every open System One model by a wide margin, as expected for models trained on these decisions against models used zero-shot; the open models' typology Brier (0.95-1.03 for bekko, GLiNER, laya, JevK5) is worse than guessing the majority label. On `typology` nothing beats the majority baseline and the untuned Qwen3-4B is significantly better than the tuned System 1 on Brier (-0.083): the cascade should keep retiring the fast tier for that decision. `system1_soft_s0` (calibration-as-objective) is worse than the selected hard-label adapter on the three decisions with skill. Caveats: the System 1 latencies in the selection come from the PC's 5070 Ti (vLLM, one request at a time) and the open models' from a CPU or the 2080 Ti, so the latency step is across hardware; the open models were run on a 500-row-per-decision subsample while system1 was scored on that same subsample for the selection and the eval contrast (`--cap 500`).
