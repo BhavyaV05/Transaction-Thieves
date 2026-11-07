@@ -21,6 +21,10 @@ def _repo(tmp_path, tables="data/backtest/x/lr_table.jsonl"):
     (repo / "configs/final/non_llm.yaml").write_text(f"data: hi_medium\ntables: {{realistic: {tables}}}\n")
     (repo / "configs/experiments/ablations_nonllm.yaml").write_text("arms: {eig: {}}\n")
     (repo / "configs/final/top_external.json").write_text('{"systems": ["a", "b"], "selected_on": "val"}\n')
+    for name in fz.EXTRA_FROZEN:  # every other frozen file exists too (content is irrelevant here)
+        if not (repo / name).exists():
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text("{}\n")
     _git(repo, "init", "-q")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "c")
@@ -83,3 +87,15 @@ def test_the_dspy_program_and_the_frozen_library_are_hashed_when_present_and_a_c
     h = fz.combined_hash(fz.hash_files(pre))
     (repo / fz.EXTRA_UNTRACKED[1]).write_text('{"v": 2}')
     assert fz.combined_hash(fz.hash_files(pre)) != h
+
+
+def test_the_fitted_pieces_of_the_final_run_are_frozen_and_exist_in_the_repo():
+    """The LR table, fusion parameters, decision threshold, tuned profile and p0 map that were fixed before test are in the freeze (and tracked, so `git show` can check them)."""
+    import subprocess
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    want = {"configs/fusion/headroom_v1.json", "configs/fusion/headroom_v1_table.jsonl", "configs/decision/headroom_v1.yaml", "configs/llm/tuned.yaml", "configs/t1_final/p0_recal_hi_medium.json"}
+    assert want <= set(fz.EXTRA_FROZEN)
+    tracked = set(subprocess.check_output(["git", "ls-files", *fz.EXTRA_FROZEN], cwd=root, text=True).split())
+    assert tracked == set(fz.EXTRA_FROZEN), sorted(set(fz.EXTRA_FROZEN) - tracked)

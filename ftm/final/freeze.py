@@ -23,7 +23,14 @@ FREEZE_VERSION = 1
 # Files outside prereg/ that the hash also covers (repo-relative, always with a "/", so a name never clashes with a prereg file):
 # T2's non-LLM arm settings and the question tables they read (asked by T2 in PR #76, 28 Oct). Missing files are skipped here and
 # reported by scripts/freeze_prereg.py.
-EXTRA_FROZEN = ("configs/final/non_llm.yaml", "configs/experiments/ablations_nonllm.yaml", "configs/final/top_external.json")  # the last: the G4 pick, chosen on validation
+EXTRA_FROZEN = (
+    "configs/final/non_llm.yaml", "configs/experiments/ablations_nonllm.yaml",
+    "configs/final/top_external.json",  # the G4 pick, chosen on validation
+    # the pieces fitted on train / val fit+cal before test existed (headroom_v1, docs/t3_headroom.md) and the p0 map: a change after the freeze changes the hash
+    "configs/llm/tuned.yaml", "configs/fusion/headroom_v1.json", "configs/fusion/headroom_v1_table.jsonl", "configs/fusion/headroom_v1_decisions.json",
+    "configs/fusion/headroom_v1_accepted.json", "configs/fusion/headroom_v1_accepted_table.jsonl", "configs/decision/headroom_v1.yaml",
+    "configs/t1_final/p0_recal_hi_medium.json",
+)  # fmt: skip
 # Hashed like EXTRA_FROZEN but not tracked by git (outputs/ is ignored): the DSPy MIPROv2 program the dspy_react jobs load
 # (--dspy-program in configs/final/jobs.yaml). The preflight compares its hash with FREEZE.json instead of `git show`.
 def _common_library() -> tuple[str, ...]:
