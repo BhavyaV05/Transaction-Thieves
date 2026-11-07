@@ -19,16 +19,24 @@ hyper:
   iter_per_epoch: 256
   seed: 42
 val_result:
-  status: partial
-  epochs_run: 111
-  best_val_epoch: 95
-  val_f1: 0.648
-  note: 3 h on the 3070 Ti, val numbers only; no predictions were saved, so there is no Brier or calibrated F1 on val
-status: blocked_compute
+  status: val_done
+  best_epoch: 291
+  best_val_f1_random_subset: 0.68597
+  commit: f25a6bb
+  dump: data/fraudgt/val_run
+  unscored_share: 0.002526089460230921
+  calibration: isotonic
+  val_eval:
+    n: 234572
+    n_pos: 304
+    brier: 0.0006728482743706411
+    pr_auc: 0.5893568642209006
+    f1: 0.6627218934911243
+status: val_done
 external_command: T1_OUT=<dir> T1_METRICS=<dir>/metrics.jsonl T1_BUDGET_S=86400 python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml
   --repeat 1 out_dir <dir> dataset.dir <data> wandb.use False
 final_entry:
-  status: needs_val_run
+  status: ready
   commands:
   - python scripts/fraudgt_final.py
   external_final_command: T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml
@@ -37,3 +45,4 @@ final_entry:
     asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects
     every test evaluation to val unless it is set. `commands` is the wrapper: it runs that command with T1_DUMP_ONLY=1 in the checkout, then scripts/fraudgt_scores.py
     --final (stored calibrator, p0 file). The val side: python scripts/fraudgt_scores.py --data hi_small --dump <val run dir>'
+scores_file: data/scores/hi_small/p0_fraudgt.parquet
