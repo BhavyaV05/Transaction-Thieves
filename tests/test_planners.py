@@ -71,6 +71,25 @@ def test_eig_grows_with_separation_and_a_calibrated_question_is_a_martingale():
     assert expected_brier_gain(0.3, replace(strong, p_cell=None)) == 0.0  # no measured cell probabilities: no estimate
 
 
+def test_a_cell_without_an_lr_keeps_its_mass_and_does_not_inflate_the_gain():
+    # T4 review of PR #28: a cell with no LR used to be skipped, dropping its mass from the "after" term (gain overstated)
+    full = cand([0.4286, 2.3333], [0.7, 0.3], [0.3, 0.7])
+    gappy = replace(full, lr={"c1": 2.3333})  # c0 has no LR: it leaves the posterior where it is
+    p = 0.2
+    pa0, pa1 = p * 0.3 + (1 - p) * 0.7, p * 0.7 + (1 - p) * 0.3
+    q1 = 1 / (1 + math.exp(-(math.log(p / (1 - p)) + math.log(2.3333))))
+    expected = p * (1 - p) - (pa0 * p * (1 - p) + pa1 * q1 * (1 - q1))
+    assert expected_brier_gain(p, gappy) == pytest.approx(expected, rel=1e-9)
+    assert expected_brier_gain(p, gappy) < expected_brier_gain(p, full)  # knowing less cannot gain more
+    assert expected_brier_gain(p, replace(full, lr={})) == pytest.approx(0.0, abs=1e-12)  # no LR anywhere: nothing learnt
+
+
+def test_cell_probabilities_that_do_not_sum_to_one_are_normalised():
+    full = cand([0.4286, 2.3333], [0.7, 0.3], [0.3, 0.7])
+    shrunk = replace(full, p_cell={c: (a * 0.9, b * 0.9) for c, (a, b) in full.p_cell.items()})  # 10% declined
+    assert expected_brier_gain(0.2, shrunk) == pytest.approx(expected_brier_gain(0.2, full), rel=1e-9)
+
+
 # --- the pool ------------------------------------------------------------------------------------------------------
 def rows():
     base = {"eps": 1.0, "family": "n_counterparties:in", "bins": [2.0], "lr": {"b0": 0.5, "b1": 2.0},

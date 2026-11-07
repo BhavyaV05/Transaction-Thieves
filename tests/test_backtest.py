@@ -345,6 +345,20 @@ def test_lr_table_rows_have_the_format_t3s_lrtable_reads(world):
     assert set(pc) == set(rows[0]["lr"]) and all(abs(sum(v[i] for v in pc.values()) - 1) < 1e-9 for i in (0, 1))
 
 
+def test_a_count_question_with_no_bin_edges_is_left_out_of_the_lr_table():
+    # T4 review of PR #24: bins=() would come back as bins=None and the b0 cell could not be looked up
+    entry = {"program_canonical": "q", "eps": 1.0, "accepted": False, "lr": {"b0": 1.0}, "family": "f", "bins": [],
+             "kind": "count", "eligible": True, "n_clean": 10, "n_launder": 10, "cells": {"b0": [10, 10]}}
+    assert lr_table_rows([entry]) == []
+    assert len(lr_table_rows([{**entry, "kind": "bool", "bins": [], "lr": {"true": 1.0}, "cells": {"true": [10, 10]}}])) == 1
+
+
+def test_the_e_value_overflow_rule_is_shared():
+    from ftm.backtest.evalue import exp_or_inf
+
+    assert exp_or_inf(0.0) == 1.0 and exp_or_inf(699.0) == math.exp(699.0) and exp_or_inf(700.0) == math.inf
+
+
 def test_online_acceptor_decides_each_new_question_once(world):
     bt = Backtester(world.banks, world.alerts, CFG)
     oa = OnlineAcceptor(bt)

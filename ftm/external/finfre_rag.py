@@ -21,8 +21,9 @@ Our adaptation (fixed before any run, prereg/external_list.yaml fixed_choices.fi
   - RF importance needs scikit-learn; without it the importance is the univariate |AUC - 0.5| of each feature
     (`importance_method` is logged in the trace, never silent);
   - the 1-5 score becomes a probability with a fixed table {1: 0.05, 2: 0.2, 3: 0.5, 4: 0.8, 5: 0.95} (the paper uses only the
-    >= 4 threshold, also logged); `fit_score_map` may replace it with empirical rates on TRAIN-only data before G3;
-  - sampling follows the fairness protocol (temperature 0), not the paper's 0.6, so every system is sampled alike;
+    >= 4 threshold, also logged); this table is the one rule (prereg, 7 Nov 2026), so
+    `fit_score_map` stays in the module but is not used in the final run;
+  - sampling is temperature 0 for our reimplementations (Torres, Co-Investigator, FinFRE-RAG), not the paper's 0.6;
   - ported mode (ours; the paper has no partner banks): one question round before scoring, up to 3 questions through the
     shared Investigation layer, the answers appended to the current case.
 LLM calls per alert: question round 1 + scoring 1 + one repair if the "Score:" line is missing = at most 3.
