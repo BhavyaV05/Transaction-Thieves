@@ -98,9 +98,13 @@ def log_evalue(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float 
     return path[-1] if path else 0.0
 
 
+def exp_or_inf(log_e: float) -> float:
+    """e^log_e, infinity past the float range (one rule for the engine and `evalue`, so they cannot diverge)."""
+    return math.exp(log_e) if log_e < 700 else math.inf
+
+
 def evalue(cells: Sequence[Hashable], labels: Sequence[bool], shrink: float = 2.0, blocks: int = 1) -> float:
-    le = log_evalue(cells, labels, shrink, blocks)
-    return math.exp(le) if le < 700 else math.inf
+    return exp_or_inf(log_evalue(cells, labels, shrink, blocks))
 
 
 def e_bh(evalues: Sequence[float], alpha: float = 0.1) -> list[bool]:

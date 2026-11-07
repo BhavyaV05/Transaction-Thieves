@@ -38,19 +38,23 @@ def expected_brier_gain(p: float, c: Candidate) -> float:
     answers) and moves the posterior to p'(a) = sigmoid(logit p + log LR(a)), the same shift fusion applies. A
     calibrated posterior q has expected Brier q (1 - q), so the gain is
         p (1 - p)  -  sum_a P(a) p'(a) (1 - p'(a)).
+    A cell with no usable LR does not move the posterior (p' = p) and keeps its probability mass: skipping it would drop
+    that mass from the "after" term and overstate the gain (T4 review of PR #28). The cell probabilities are normalised,
+    since smoothing and declines can leave them not summing to 1.
     """
     if not c.p_cell or not (0.0 < p < 1.0):
         return 0.0  # no measured cell probabilities, or nothing left to learn
     z = float(logit(p))
-    after = 0.0
+    after = total = 0.0
     for cell, (p_clean, p_launder) in c.p_cell.items():
         lr = c.lr.get(cell)
-        if lr is None or lr <= 0:
-            continue
         pa = p * p_launder + (1 - p) * p_clean
-        q = float(sigmoid(z + math.log(lr)))
+        q = p if (lr is None or lr <= 0) else float(sigmoid(z + math.log(lr)))
+        total += pa
         after += pa * q * (1 - q)
-    return p * (1 - p) - after
+    if total <= 0.0:
+        return 0.0
+    return p * (1 - p) - after / total
 
 
 def fusion_max_weight(fusion) -> float:

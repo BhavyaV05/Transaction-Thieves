@@ -23,13 +23,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from ftm.backtest.evalue import ELond, e_bh, log_evalue
+from ftm.backtest.evalue import ELond, e_bh, exp_or_inf, log_evalue
 from ftm.backtest.lr import cells_for, choose_bins, estimate_lr
 from ftm.banks.binding import AlertBinding
 from ftm.banks.partner import PartnerBank, Question
@@ -199,7 +198,7 @@ class Backtester:
         est = estimate_lr(kind, answers, labels, eps, sensitivity(node), arity(node), cfg.alpha, bins)
         log_e = log_evalue(cells_for(kind, answers, bins), labels, cfg.shrink, cfg.time_blocks)
         entry.update(bins=list(bins), lr=est.lr, ceiling=est.ceiling, log_e=log_e,
-                     e_value=math.exp(log_e) if log_e < 700 else math.inf,
+                     e_value=exp_or_inf(log_e),
                      cells={k: list(v) for k, v in est.counts.items()})  # fmt: skip
         return entry
 
@@ -248,10 +247,14 @@ def lr_table_rows(entries: Iterable[dict]) -> list[dict]:
     """Rows in the format of T3's `LRTable.from_rows` (hand-off #9): program_canonical, eps, accepted, lr, family, bins.
 
     Extra keys (ignored by `from_rows`): `kind`, `p_cell` = {cell: [P(cell | clean), P(cell | launder)]} measured on the
-    noisy back-test answers, which the non-LLM planners' expected-information-gain needs."""
+    noisy back-test answers, which the non-LLM planners' expected-information-gain needs.
+
+    A count / set-count question whose pooled answers all took one value has no bin edges (`choose_bins` returns `()`):
+    it has one cell, LR 1, and can never be accepted. It is left out, because `LRTable.from_rows` would read `bins=None`
+    and key the cell by the raw value instead of `b0`, so a lookup would miss."""
     rows = []
     for e in entries:
-        if not e["eligible"]:
+        if not e["eligible"] or (e["kind"] in ("count", "set_count") and not e["bins"]):
             continue
         p_cell = {k: [c[0] / max(e["n_clean"], 1), c[1] / max(e["n_launder"], 1)] for k, c in e["cells"].items()}
         rows.append(
