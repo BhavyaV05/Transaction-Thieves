@@ -1060,3 +1060,19 @@ def test_dspy_program_preflight(world, tmp_path):
     j.extra_args = []
     f.write_text("{}")
     assert any("does not pass --dspy-program" in x for x in pf.check_dspy_program(paths, jobs))
+
+
+def test_ta_waiver_is_recorded_checked_and_must_equal_the_files(world):
+    paths, h = world
+    fr = fz.read_freeze(paths.prereg)
+    fr["ta_ack_hash"] = None
+    (paths.prereg / fz.FREEZE_FILE).write_text(json.dumps(fr))
+    assert any("--record-no-ta" in x for x in pf.check_ta_ack(paths))  # the empty case now names the waiver option
+    with pytest.raises(RuntimeError):
+        fz.record_ta_waiver(paths.prereg, "0" * 64)
+    out = fz.record_ta_waiver(paths.prereg, h)
+    assert out["ta_waived_hash"] == h and "not sent to any TA" in out["ta_waived_note"]
+    assert pf.check_ta_ack(paths) == []
+    out["ta_waived_hash"] = "2" * 64
+    (paths.prereg / fz.FREEZE_FILE).write_text(json.dumps(out))
+    assert any("ta_waived_hash" in x and "differs" in x for x in pf.check_ta_ack(paths))

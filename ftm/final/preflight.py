@@ -145,9 +145,12 @@ def check_ta_ack(p: Paths) -> list[str]:
         fr = fz.read_freeze(p.prereg)
     except (ValueError, OSError):
         return ["cannot check the TA hash without FREEZE.json"]
+    waived = fr.get("ta_waived_hash")
+    if waived:  # explicit, recorded decision not to send the hash anywhere: the freeze rests on the git commit alone
+        return [] if waived == fr.get("combined_sha256") else [f"ta_waived_hash {waived} differs from the combined hash {fr.get('combined_sha256')}"]
     ack = fr.get("ta_ack_hash")
     if not ack:
-        return ["ta_ack_hash is empty: send the combined hash to the TA, then run scripts/freeze_prereg.py --record-ta-sent <hash>"]
+        return ["ta_ack_hash is empty: send the combined hash to the TA and run scripts/freeze_prereg.py --record-ta-sent <hash>, or record the decision not to with --record-no-ta <hash>"]
     if ack != fr.get("combined_sha256"):
         return [f"ta_ack_hash {ack} differs from the combined hash {fr.get('combined_sha256')}"]
     return []
