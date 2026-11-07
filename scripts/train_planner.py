@@ -182,6 +182,10 @@ def train(cfg: dict, rows: list[dict], seed: int, max_steps: int = -1) -> Path: 
     model = AutoModelForCausalLM.from_pretrained(cfg["base_model"], revision=cfg["revision"], quantization_config=bnb,
                                                  dtype=torch.bfloat16, device_map={"": 0})  # fmt: skip
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    # prepare_model_for_kbit_training casts every unquantized weight to fp32. The embeddings and lm_head are frozen and about 5 GB that way:
+    # back to the checkpoint's bf16, or the longest v3 examples run out of memory on 16 GB.
+    for layer in (model.get_input_embeddings(), model.get_output_embeddings()):
+        layer.to(torch.bfloat16)
     lo = cfg["lora"]
     model = get_peft_model(model, LoraConfig(r=lo["r"], lora_alpha=lo["alpha"], lora_dropout=lo["dropout"], bias="none",
                                              target_modules=lo["target_modules"], task_type="CAUSAL_LM"))  # fmt: skip
