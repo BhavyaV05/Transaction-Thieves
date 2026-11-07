@@ -33,7 +33,7 @@ llm:
     - "--profile"
     - "tuned"
     - "--library"
-    - "outputs/t3_library/frozen/shape_gemma.json"
+    - "outputs/t3_library/frozen_v3/shape_gemma.json"
   # seconds per alert on the reference machine (estimates for scheduling only; replace with the val-run medians)
   s_per_alert:                            # median s/alert on the 160 val eval alerts, Gemma 4 12B (scripts/t3_fill_s_per_alert.py, 1 Nov); `default` is the Qwen3-8B first-run number (no val run for systems not listed)
     default: 7.5                          # docs/t3_first_runs.md, Qwen3-8B
