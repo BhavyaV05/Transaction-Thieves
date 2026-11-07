@@ -100,6 +100,7 @@ final_entry:
   status: ready
   commands:
   - python -m ftm.retrieval.edge_scorer --data <ds> --final
+  - python -m ftm.retrieval.edge_scorer_home --data <ds> --final   # v2 (per-home-bank) scorer: the LLM planner's evidence view reads its test scores (added 7 Nov by T4)
   - python scripts/run_explainers.py --data <ds> --final
   - python -m ftm.retrieval.evidence_views --data <ds> --final --explainers gnnexplainer pgexplainer
   note: run under scripts/run_final.py, the only place that sets FTM_FINAL_RUN; each `--final` refuses to run without it and checks that the val-time

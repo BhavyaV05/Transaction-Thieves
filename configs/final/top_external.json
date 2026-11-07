@@ -1,0 +1,11 @@
+{
+  "systems": [
+    "bed_llm"
+  ],
+  "selected_on": "val",
+  "reduced_run": true,
+  "reason": "compute: the full plan is about 188 GPU hours on the 5070 Ti and about 77 hours are left before 10 Nov; one agent gets the full test set. plan.md asks for the top 2 to 3.",
+  "rule": "G4: ranked only if the verdict rate is >= 0.95 (the E18 validity threshold, fixed 1 Nov before the reruns), then by val Brier; bed_llm is the only ported agent that gives a verdict on every alert (val eval Brier 0.2165 on the rewritten pipeline, per T3, 7 Nov). co_investigator_ported scores 0.211 after calibration but gives verdicts on 28% of alerts: exploratory row only.",
+  "caveat": "the verdict-rate rule favours agents that stay close to p0; none of the agents beats p0 on val (p0 0.1896). The report says bed_llm 'won' under this rule, not that it is a strong baseline.",
+  "chosen": "2026-11-07"
+}

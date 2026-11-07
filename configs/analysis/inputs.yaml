@@ -20,16 +20,19 @@ alerts:
 # per-alert probabilities from outside the run logs
 scores:
   one_bank:                 {path: null, key: [alert_id], value: p0, filter: {}}   # null: the p0 column of the alert table
-  gfp_see_everything:       {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything, model: gfp_lgbm}}
-  best_sota_see_everything: {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}}   # e.g. T1's p0_multi_gnn.parquet
+  # An upper-limit slot needs `look_ahead: none | minor` (ftm.eval.final.check_upper_limit_specs, issue 127). GFP: minor (at most 127 later edges of its own batch).
+  # best_sota_see_everything may only be a TIME-RESPECTING score (a `_causal` file); the stored HI-Medium Multi-GNN / MEGA-GNN see-everything files use future edges
+  # (look_ahead: full) and belong in the multi_gnn_* / mega_gnn_* baseline rows below, never in an upper-limit slot.
+  gfp_see_everything:       {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything, model: gfp_lgbm}, look_ahead: minor}
+  best_sota_see_everything: {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, look_ahead: none}   # e.g. a p0_<model>_causal file
   dp_fedavg:                {path: null, key: [alert_id], value: p0, filter: {}, eps_label: null}         # T1; training-time eps, other unit than per-question eps
   # Group A detection models for Table 5a / tab_baselines (one-bank and see-everything of each); optional
   multi_gnn_one_bank:       {path: null, key: [tx_id, bank], value: p0, filter: {mode: one_bank},       group: A, label: "Multi-GNN, one bank"}
-  multi_gnn_see_everything: {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "Multi-GNN, see everything"}
+  multi_gnn_see_everything: {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "Multi-GNN, see everything", look_ahead: full}   # stored scores sample future edges (docs/t1_baselines_val.md); use the _causal file for a time-respecting row
   fraudgt_one_bank:         {path: null, key: [tx_id, bank], value: p0, filter: {mode: one_bank},       group: A, label: "FraudGT, one bank"}
   fraudgt_see_everything:   {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "FraudGT, see everything"}
   mega_gnn_one_bank:        {path: null, key: [tx_id, bank], value: p0, filter: {mode: one_bank},       group: A, label: "MEGA-GNN, one bank"}
-  mega_gnn_see_everything:  {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "MEGA-GNN, see everything"}
+  mega_gnn_see_everything:  {path: null, key: [tx_id, bank], value: p0, filter: {mode: see_everything}, group: A, label: "MEGA-GNN, see everything", look_ahead: full}
   layerwise_exchange:       {path: null, key: [alert_id], value: p0, filter: {}, group: B, label: "Layer-wise exchange (AML federated)"}
 
 # all rows of the headline period, for "end-to-end over all rows with the intake miss rate beside it".

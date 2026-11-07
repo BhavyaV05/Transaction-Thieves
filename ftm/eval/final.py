@@ -47,6 +47,21 @@ SECONDARY = ["H6", "H7", "H10"]
 EXPLORATORY = ["H5", "H8"]
 ALPHA = 0.05
 UPPERS = ("gfp_see_everything", "best_sota_see_everything")
+LOOK_AHEAD_OK = ("none", "minor")  # a score table that may be an upper limit: no future edge of the scored window in the model's input (GFP: at most 127 later edges of its own batch)
+
+
+def check_upper_limit_specs(scores_cfg: dict) -> None:
+    """An upper limit in gap_closed must be time-respecting (issue 127): the HI-Medium Multi-GNN / MEGA-GNN see-everything scores use future edges of the
+    validation window (docs/t1_baselines_val.md, 6 Nov), which inflates the denominator of every gap-closed number. A table that is given a path for an
+    upper-limit slot has to declare `look_ahead` as none or minor; anything else, or no declaration, is refused."""
+    for name in UPPERS:
+        spec = scores_cfg.get(name) or {}
+        if not spec.get("path"):
+            continue
+        la = str(spec.get("look_ahead", "undeclared")).lower()
+        if la not in LOOK_AHEAD_OK:
+            raise AnalysisInputError(f"scores.{name}: look_ahead is {la!r}; an upper limit must be time-respecting (look_ahead: none or minor). A model that sampled "
+                                     "future edges (Multi-GNN / MEGA-GNN as stored) is a baseline row, not an upper limit (issue 127)")
 MDE_MULTIPLIER = 2.80  # z(0.975) + z(0.80): two-sided alpha 0.05, power 0.8
 POWER_TARGET = 0.01  # the Brier difference of the G2 target (issue 86): alerts needed to detect it
 PROJECTED_TEST_ALERTS = 3475  # HI-Medium test projection from validation (docs/report/00_outline.md n_alerts); inputs.yaml power.projected_test_alerts overrides
@@ -745,6 +760,7 @@ def build_panel(run: Run, inputs: dict, systems: dict, fixed_path: str | Path | 
         raise AnalysisInputError("--split test needs the values fixed on validation (fixed_on_val.json from a --split val run): "
                                  "the best simple planner, the equivalence margins and the hub cap are not derived on test")
     sc = inputs.get("scores") or {}
+    check_upper_limit_specs(sc)
     y = alerts["label"].cast(pl.Float64).to_numpy()
     p0 = load_score(sc.get("one_bank") or {}, alerts, split) if (sc.get("one_bank") or {}).get("path") else None
     if p0 is None:

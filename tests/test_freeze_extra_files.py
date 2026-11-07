@@ -20,6 +20,7 @@ def _repo(tmp_path, tables="data/backtest/x/lr_table.jsonl"):
     (repo / "prereg/hypotheses.yaml").write_text("status: draft\n")
     (repo / "configs/final/non_llm.yaml").write_text(f"data: hi_medium\ntables: {{realistic: {tables}}}\n")
     (repo / "configs/experiments/ablations_nonllm.yaml").write_text("arms: {eig: {}}\n")
+    (repo / "configs/final/top_external.json").write_text('{"systems": ["a", "b"], "selected_on": "val"}\n')
     _git(repo, "init", "-q")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "c")
@@ -64,3 +65,21 @@ def test_unresolved_when_the_question_table_is_not_named(tmp_path):
     assert pf.unresolved_fields(repo / "prereg") == ["configs/final/non_llm.yaml:tables.realistic"]
     repo2 = _repo(tmp_path / "b")
     assert pf.unresolved_fields(repo2 / "prereg") == []
+
+
+def test_the_dspy_program_and_the_frozen_library_are_hashed_when_present_and_a_change_breaks_the_hash(tmp_path):
+    repo = _repo(tmp_path)
+    pre = repo / "prereg"
+    from ftm.final import plan as fp
+
+    lib = fp.load_jobs_config()["llm"]["common_args"]
+    lib = lib[lib.index("--library") + 1]
+    assert fz.EXTRA_UNTRACKED[0].endswith("react_miprov2.json") and fz.EXTRA_UNTRACKED[1:] == (lib,)  # the library the jobs load, read from jobs.yaml
+    assert set(fz.missing_untracked(pre)) == set(fz.EXTRA_UNTRACKED)  # absent: reported, not hashed
+    for name in fz.EXTRA_UNTRACKED:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text('{"v": 1}')
+    assert not fz.missing_untracked(pre) and set(fz.EXTRA_UNTRACKED) <= set(fz.frozen_names(pre))
+    h = fz.combined_hash(fz.hash_files(pre))
+    (repo / fz.EXTRA_UNTRACKED[1]).write_text('{"v": 2}')
+    assert fz.combined_hash(fz.hash_files(pre)) != h

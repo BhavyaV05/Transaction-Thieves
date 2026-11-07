@@ -30,7 +30,7 @@ statistics:
     consequence: "at these sample sizes non-inferiority within 0.01 is rarely shown (the CI half-width is about the margin); 'not shown' is reported as such, never as equivalence"
   gap_closed:
     formula: "(Brier(one bank) - Brier(system)) / (Brier(one bank) - Brier(upper))"
-    upper_limits: [gfp_see_everything, best_sota_see_everything]
+    upper_limits: [gfp_see_everything, best_sota_see_everything]   # time-respecting scores only (issue 127): a see-everything model whose input holds future edges of the scored window is a baseline row, never an upper limit; the analysis refuses it
     min_denominator: 1.0e-5          # below it, report raw Brier differences (ftm.eval.metrics.MIN_GAP_DENOMINATOR)
   missing_verdict: "scored as p0; no-verdict rate reported per system"   # agreed with T3, PR #7
   evaluation_set:
@@ -82,7 +82,13 @@ hypotheses:
     claim: "At eps = 2, our system closes at least as much of the gap as the best ported external agent on the same backbone."
     statistic: "gap_closed(ours) - gap_closed(best_ported_external)"       # best chosen on validation at G4, not on test
     reject_null_if: "95% CI lower bound > -margin_gap"
-    margin_gap: fix_on_val
+    # CHANGED before the freeze (7 Nov 2026): a rule with a cross-checked value. The rule determines the number completely and uses validation only (never test).
+    # `final_analysis.py --split val` recomputes it and writes it to fixed_on_val.json; `--split test` refuses without that file.
+    margin_gap:
+      rule: "equivalence_margin / (Brier(one bank) - Brier(gfp_see_everything)) on ALL 806 val eval alerts (not only the 160 askable ones: the test subset holds both), one bank = p0 v2, the p0 the final run uses (configs/t1_final/p0_recal_hi_medium.json applied to the v1 calibrated p0); time-respecting upper limit only (issue 127)"
+      value_check: 0.166   # 0.01 / 0.0602; Brier(p0 v2) 0.1612, Brier(GFP see-everything, val eval scores of T3/T1, 1,404,258 rows) 0.1010. Cross-checked 7 Nov by T1 (v1 and 160-alert variants: 0.1425, 0.1291, 0.1460) and by T4 (same 0.1425 on v1; 0.1660 on v2)
+      source: fixed_on_val.json
+      undefined_if: "denominator < gap_closed.min_denominator, or no time-respecting upper limit: H9 is reported as not run, with the reason (never with a substitute margin)"
     scores: [end_to_end, questions_only]                                   # end_to_end is the test; questions_only is reported
     eval_set: frozen_1000_subset_and_full_test_for_top_2_3
     experiment: E5

@@ -23,10 +23,23 @@ FREEZE_VERSION = 1
 # Files outside prereg/ that the hash also covers (repo-relative, always with a "/", so a name never clashes with a prereg file):
 # T2's non-LLM arm settings and the question tables they read (asked by T2 in PR #76, 28 Oct). Missing files are skipped here and
 # reported by scripts/freeze_prereg.py.
-EXTRA_FROZEN = ("configs/final/non_llm.yaml", "configs/experiments/ablations_nonllm.yaml")
+EXTRA_FROZEN = ("configs/final/non_llm.yaml", "configs/experiments/ablations_nonllm.yaml", "configs/final/top_external.json")  # the last: the G4 pick, chosen on validation
 # Hashed like EXTRA_FROZEN but not tracked by git (outputs/ is ignored): the DSPy MIPROv2 program the dspy_react jobs load
 # (--dspy-program in configs/final/jobs.yaml). The preflight compares its hash with FREEZE.json instead of `git show`.
-EXTRA_UNTRACKED = ("outputs/t3_dspy/react_miprov2.json",)
+def _common_library() -> tuple[str, ...]:
+    """The strategy library every LLM job loads: the `--library` of `llm.common_args` in configs/final/jobs.yaml, read from there so the freeze and the jobs cannot disagree
+    (and so this file does not name a library path of its own)."""
+    import yaml
+
+    try:
+        args = (yaml.safe_load((Path(__file__).resolve().parents[2] / "configs" / "final" / "jobs.yaml").read_text()).get("llm") or {}).get("common_args") or []
+        return (str(args[args.index("--library") + 1]),) if "--library" in args else ()
+    except (OSError, ValueError, IndexError, AttributeError):
+        return ()
+
+
+# [0] must stay the DSPy program (preflight.check_dspy_program); the frozen strategy library of the jobs' common args follows.
+EXTRA_UNTRACKED = ("outputs/t3_dspy/react_miprov2.json", *_common_library())
 _SUBSET_HASH_LINE = re.compile(r"^\s*#?\s*subset_sha256\s*:.*$")
 
 

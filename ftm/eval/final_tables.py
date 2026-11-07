@@ -497,15 +497,17 @@ def baselines_table(panel: Panel, inputs: dict, w: Writer) -> list[dict]:
         if label:
             items.append((label, s.p_e2e, name))
     y = panel.y
-    for label, p, _ in items:
+    for label, p, name in items:
         m = np.isfinite(p)
         if not m.any():
             continue
         d = mt.detection_summary(y[m], p[m])
-        rows.append({"model": label, "n": d["n"], "positives": d["n_pos"], "brier": d["brier"], "brier skill": d["brier_skill"], "pr_auc": d["pr_auc"], "ece": d["ece"]})
+        la = str((scs.get(name) or {}).get("look_ahead", "undeclared")) if name else "none"
+        rows.append({"model": label, "n": d["n"], "positives": d["n_pos"], "brier": d["brier"], "brier skill": d["brier_skill"], "pr_auc": d["pr_auc"], "ece": d["ece"],
+                     "look-ahead": la + (" (uses future edges: a baseline row, not an upper limit)" if la == "full" else "")})  # fmt: skip
     if len(rows) < 2:
         raise Missing("no detection-model score table provided besides the one-bank score (inputs.yaml scores.*.path)")
-    w.table("table_baselines", rows, ["model", "n", "positives", "brier", "brier skill", "pr_auc", "ece"],
+    w.table("table_baselines", rows, ["model", "n", "positives", "brier", "brier skill", "pr_auc", "ece", "look-ahead"],
             "Detection models on the headline alerts (reproduction checks: T1's baselines_val_table.py)")
     return rows
 

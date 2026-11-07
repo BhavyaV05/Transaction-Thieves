@@ -10,6 +10,8 @@ Four people, four machines (`docs/hardware.md`). The **reference machine** is T3
 
 Every serving machine uses the same vLLM version (0.31.0), the same checkpoint revision and the same flags (`configs/llm/serving.yaml`: seed 0, the client sends the temperature, prefix caching on, context 8,192, loopback bind, key in the environment and shared over the private network only). The pinned profiles are in Table 11a. The chosen planner backbone is Gemma 4 12B (E18, stage 2: Brier 0.1741 on 460 validation alerts, the best of the three that reached stage 2, `docs/t3_e18.md`). Its 10.3 GB of weights do not fit the 3070 Ti, so the final run is on the reference machine alone.
 
+The client side pins `langgraph==1.2.19` (the orchestration of every LLM system, `pyproject.toml` extras `llm` and `dev`) and `dspy>=3.4,<3.5`. A fresh environment without LangGraph fails the tests that build a system (`ModuleNotFoundError: langgraph`), which is how a stale environment shows up. The freeze also hashes the DSPy program and the frozen shape library that the compose arms load (`ftm/final/freeze.py`, `EXTRA_UNTRACKED`).
+
 **Table 11a.** Serving profiles (full 40-character revisions and licences in `configs/llm/serving.yaml`).
 
 | Profile | Checkpoint | Revision | Used for |

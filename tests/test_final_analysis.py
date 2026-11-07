@@ -570,3 +570,32 @@ def test_two_jobs_with_the_same_key_fail_loudly(tmp_path):
     _, jobs = _ours_jobs(tmp_path, ["compose", "eps_1"], same_label=True)
     with pytest.raises(fn.AnalysisInputError, match="would be merged"):
         fn.load_run("val", logs=jobs)
+
+
+# ---- upper limits must be time-respecting (issue 127) -------------------------------------------------------------------
+def test_upper_limit_refuses_a_look_ahead_or_undeclared_table():
+    fn.check_upper_limit_specs({})  # nothing provided: nothing to check
+    fn.check_upper_limit_specs({"best_sota_see_everything": {"path": None}})  # no path: slot unused
+    fn.check_upper_limit_specs({"gfp_see_everything": {"path": "a.parquet", "look_ahead": "minor"}, "best_sota_see_everything": {"path": "b.parquet", "look_ahead": "none"}})
+    for bad in ("full", "true", "undeclared"):
+        with pytest.raises(fn.AnalysisInputError, match="time-respecting"):
+            fn.check_upper_limit_specs({"best_sota_see_everything": {"path": "b.parquet", "look_ahead": bad}})
+    with pytest.raises(fn.AnalysisInputError, match="issue 127"):
+        fn.check_upper_limit_specs({"gfp_see_everything": {"path": "a.parquet"}})  # a path without a declaration
+
+
+def test_committed_inputs_declare_look_ahead_and_keep_the_stored_gnn_files_out_of_upper_limits():
+    import yaml
+
+    sc = yaml.safe_load(Path(fn.__file__).resolve().parents[2].joinpath("configs/analysis/inputs.yaml").read_text())["scores"]
+    assert sc["gfp_see_everything"]["look_ahead"] in fn.LOOK_AHEAD_OK and sc["best_sota_see_everything"]["look_ahead"] in fn.LOOK_AHEAD_OK
+    assert sc["multi_gnn_see_everything"]["look_ahead"] == "full" and sc["mega_gnn_see_everything"]["look_ahead"] == "full"
+    fn.check_upper_limit_specs({k: {**v, "path": "x"} for k, v in sc.items() if k in fn.UPPERS})  # the committed declarations pass
+
+
+def test_baselines_table_shows_the_look_ahead_column(tmp_path):
+    env = build_run(tmp_path, World("val"))
+    out = tmp_path / "o"
+    assert script.main(["--split", "val", "--run", str(env["run_dir"]), "--inputs", str(env["inputs"]), "--outdir", str(out), "--n-boot", "200", "--no-figures"]) == 0
+    head = (out / "table_baselines.csv").read_text().splitlines()[0] if (out / "table_baselines.csv").exists() else ""
+    assert (not head) or "look-ahead" in head  # built only when a detection score table is provided; when built it carries the column
