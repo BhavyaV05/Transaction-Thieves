@@ -5,7 +5,7 @@ Owner: T1 (Abhishek).  Run by `scripts/run_final.py` (step `t1.fraudgt`: FTM_FIN
   python scripts/fraudgt_final.py                 # [--dump DIR] [--checkout DIR] [--data-dir DIR]; defaults from configs/t1_final/fraudgt.yaml
   python scripts/fraudgt_final.py --print         # show the two commands and their environment, run nothing
 
-1. in the FraudGT checkout, `T1_DUMP_ONLY=1 T1_OUT=<dump> python -m fraudGT.main ...`: loads `<dump>/best.pt` (the val run, 5070 Ti), rescores val,
+1. in the FraudGT checkout, `T1_DUMP_ONLY=1 T1_OUT=<dump> python -m fraudGT.main ...`: loads `<dump>/best.pt` (the val run, 3070 Ti laptop), rescores val,
    asserts the stored `pred_val.csv` reproduces (< 1e-3) and writes `<dump>/pred_test.csv`; nothing is trained;
 2. `python scripts/fraudgt_scores.py --final --data hi_small --dump <dump>`: stored calibrator on `pred_test.csv`, `data/scores/hi_small/final/p0_fraudgt.parquet`.
 Each step's non-zero exit stops the wrapper (its test scores must not be used).
@@ -59,7 +59,7 @@ def main() -> None:
     for s in steps:
         missing = [str(p) for p in s["needs"] if not p.exists()]
         if missing:
-            raise SystemExit(f"missing {missing}: the val run's dump (5070 Ti, ftm/baselines/README.md) or the rescoring step did not write them")
+            raise SystemExit(f"missing {missing}: the val run's dump (3070 Ti laptop, ftm/baselines/README.md) or the rescoring step did not write them")
         rc = subprocess.run(s["argv"], cwd=s["cwd"], env={**os.environ, **s["env"]}).returncode
         if rc != 0:
             raise SystemExit(f"{' '.join(s['argv'][:3])} exited with {rc}: do not use FraudGT test scores")
