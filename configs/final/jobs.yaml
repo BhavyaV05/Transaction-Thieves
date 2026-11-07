@@ -162,6 +162,13 @@ t1_final:
       cmds:
         - python scripts/make_alerts.py --data hi_small --final
         - python scripts/make_alerts.py --data hi_medium --final
+    - id: gfp_see_everything_medium   # row 2 on HI-Medium: the upper limit of H1, H2 and H9 on the headline data (GFP, time-respecting: look_ahead minor). Required; it was in the optional row 12 until 7 Nov
+      row: 2
+      phase: post
+      machine_class: gpu_s3     # CPU-bound, needs >= 10 GB free RAM (1 h 04 min on the PC's CPU for the val run); the val model and p0 file are on the PC
+      est_hours: 1.5
+      cmds:
+        - python scripts/train_gfp.py --data hi_medium --mode see_everything --final
     - id: multi_gnn             # row 4: the val checkpoints re-scored, nothing trained
       row: 4
       phase: post
@@ -188,6 +195,13 @@ t1_final:
       cmds:
         - python -m ftm.retrieval.edge_scorer --data hi_small --final
         - python -m ftm.retrieval.edge_scorer --data hi_medium --final
+    - id: edge_scorer_home      # row 6 (v2): the LLM planner's evidence view (profile tuned, edge_scorer: v2) reads data/retrieval/hi_medium/final/edge_scores_home_v2_test.parquet (evidence_views.py)
+      row: 6
+      phase: post
+      machine_class: gpu_s3     # the v2 model (models/edge_scorer_home_hi_medium.pt) is on the 5070 Ti PC, next to the LLM jobs; CPU, about 3 min; needs the val scores edge_scores_home_v2.parquet there
+      est_hours: 0.1
+      cmds:
+        - python -m ftm.retrieval.edge_scorer_home --data hi_medium --final
     - id: explainers            # row 7 (CPU; GNNExplainer 1.4 s per alert)
       row: 7
       phase: post
@@ -233,15 +247,14 @@ t1_final:
       env: {T1_EVAL_TEST: "1"}  # per docs/t1_final_run.md: set by run_final.py only; the wrapper adds T1_DUMP_ONLY=1 and T1_OUT and refuses without this
       cmds:
         - python scripts/fraudgt_final.py   # needs best.pt + pred_val.csv of the val run in data/fraudgt/val_run (configs/t1_final/fraudgt.yaml: dump_dir)
-    - id: hi_medium_see_everything   # row 12: needs val runs first (BLOCKED-COMPUTE); optional until they exist
+    - id: hi_medium_see_everything   # row 12: the look-ahead GNN see-everything scores (baseline rows, issue 127); GFP moved to gfp_see_everything_medium
       row: 12
       phase: post
       machine_class: gpu_s3
       est_hours: 3
       required: false           # the val runs (Akshat, 5070 Ti) must exist first: p0_hi_medium_<model>_see_everything.json and models/ (docs/t1_final_run.md, "When Akshat's files arrive")
       cmds:
-        - python scripts/train_gfp.py --data hi_medium --mode see_everything --final
-        - python scripts/train_gnn.py --final --model multi_gnn --data hi_medium --mode see_everything
+        - python scripts/train_gnn.py --final --model multi_gnn --data hi_medium --mode see_everything   # look-ahead scores (issue 127): baseline rows only, never an upper limit
         - python scripts/train_gnn.py --final --model mega_gnn --data hi_medium --mode see_everything
 
 # Anything else that belongs in the final run (one bank only, GFP see-everything, raw sharing, ...):

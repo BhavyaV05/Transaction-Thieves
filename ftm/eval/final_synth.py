@@ -200,7 +200,7 @@ def build_run(root: Path, w: World | None = None, split: str = "val", drop_jobs:
     inputs = {
         "eps_sweep": {"path": str(inp / "eps_sweep.json")},
         "alerts": {"path": str(inp / "alerts.parquet"), "account_cols": ["src_id", "dst_id"], "headline": {}, "tail": {}},
-        "scores": {"one_bank": {"path": None}, **{n: {"path": p, "key": ["alert_id"], "value": "p0", "filter": {}} for n, p in paths.items()}},
+        "scores": {"one_bank": {"path": None}, **{n: {"path": p, "key": ["alert_id"], "value": "p0", "filter": {}, "look_ahead": "none"} for n, p in paths.items()}},  # the synthetic scores are time-respecting by construction
         "rows": {"path": str(inp / "rows.parquet")}, "fast_model": {"path": str(inp / "fast.json")},
         "evidence_edges": {"path": str(inp / "edges.parquet")}, "fixed_on_val": None,
     }

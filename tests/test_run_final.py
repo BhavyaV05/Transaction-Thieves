@@ -854,7 +854,7 @@ def py(code):
 
 def test_t1_steps_in_jobs_yaml_follow_the_t1_document():
     steps = t1.load_steps(fp.load_jobs_config())
-    assert [s.row for s in steps] == list(range(1, 13)) and [s.phase for s in steps][:3] == ["pre"] * 3 and {s.phase for s in steps[3:]} == {"post"}
+    assert sorted({s.row for s in steps}) == list(range(1, 13)) and [s.row for s in steps].count(6) == 2 and [s.phase for s in steps][:3] == ["pre"] * 3 and {s.phase for s in steps[3:]} == {"post"}
     by = {s.id: s for s in steps}
     # the alert set is built by GFP then the conformal intake, before the subset; everything else after it
     assert by["intake"].depends_on == ["gfp_one_bank"] and by["intake"].cmds[1] == "python scripts/make_alerts.py --data hi_medium --final"
@@ -1076,3 +1076,58 @@ def test_ta_waiver_is_recorded_checked_and_must_equal_the_files(world):
     out["ta_waived_hash"] = "2" * 64
     (paths.prereg / fz.FREEZE_FILE).write_text(json.dumps(out))
     assert any("ta_waived_hash" in x and "differs" in x for x in pf.check_ta_ack(paths))
+
+
+def test_edge_scorer_v2_final_step_is_in_the_plan_on_the_llm_machine():
+    """The tuned profile's evidence view reads edge_scores_home_v2_test.parquet; without this step the LLM jobs on test would have no scorer-v2 edges."""
+    import yaml
+
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs" / "final" / "jobs.yaml").read_text())
+    from ftm.final import t1
+
+    steps = {s.id: s for s in t1.load_steps(cfg)}
+    s = steps["edge_scorer_home"]
+    assert s.machine_class == "gpu_s3" and s.phase == "post" and s.required
+    assert s.cmds == ["python -m ftm.retrieval.edge_scorer_home --data hi_medium --final"]
+    root = Path(__file__).resolve().parents[1]
+    assert '"--final"' in (root / "ftm/retrieval/edge_scorer_home.py").read_text()  # the flag the step calls exists
+    assert "edge_scores_home_v2_test.parquet" in (root / "ftm/retrieval/evidence_views.py").read_text()  # and its output is what the views read
+    assert [x.id for x in t1.select_steps(list(steps.values()), ["t1.edge_scorer_home"], "gpu_s3")] == ["edge_scorer_home"]
+
+
+def test_top_external_reduced_run_may_name_one_agent_only_with_a_reason(world):
+    paths, _ = world
+    known = {"react", "rewoo", "bed_llm"}
+    f = paths.top_external
+    one = {"systems": ["bed_llm"], "selected_on": "val"}
+    f.write_text(json.dumps(one))
+    assert any("one is allowed only with reduced_run" in x for x in pf.load_top_external(f, known)[1])
+    f.write_text(json.dumps({**one, "reduced_run": True}))  # no reason
+    assert pf.load_top_external(f, known)[1]
+    f.write_text(json.dumps({**one, "reduced_run": True, "reason": "compute"}))
+    assert pf.load_top_external(f, known) == (["bed_llm"], [])
+    f.write_text(json.dumps({"systems": [], "selected_on": "val", "reduced_run": True, "reason": "compute"}))
+    assert pf.load_top_external(f, known)[1]  # zero is never allowed
+
+
+def test_committed_top_external_file_is_valid_frozen_and_the_default():
+    import json as _json
+
+    root = Path(__file__).resolve().parents[1]
+    f = root / "configs" / "final" / "top_external.json"
+    import yaml as _yaml
+
+    ext = _yaml.safe_load((root / "prereg" / "external_list.yaml").read_text())
+    systems, problems = pf.load_top_external(f, fp.external_agents(ext))
+    assert systems == ["bed_llm"] and problems == [] and _json.loads(f.read_text())["selected_on"] == "val"
+    assert "configs/final/top_external.json" in fz.EXTRA_FROZEN and pf.Paths().top_external == f
+
+
+def test_hi_medium_gfp_see_everything_is_required_and_the_look_ahead_gnns_stay_optional():
+    """H1, H2 and H9 need the HI-Medium upper limit on the headline data; it must not hide in the optional row with the look-ahead GNNs (issue 127)."""
+    steps = {s.id: s for s in t1.load_steps(fp.load_jobs_config())}
+    g = steps["gfp_see_everything_medium"]
+    assert g.required and g.phase == "post" and g.cmds == ["python scripts/train_gfp.py --data hi_medium --mode see_everything --final"]
+    opt = steps["hi_medium_see_everything"]
+    assert not opt.required and not any("train_gfp.py" in c for c in opt.cmds)
+    assert all("train_gnn.py" in c for c in opt.cmds)  # only the look-ahead GNNs remain there

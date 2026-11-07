@@ -96,7 +96,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--e18-dir", type=Path, default=ROOT / "outputs" / "e18")
     ap.add_argument("--e18-config", type=Path, default=ROOT / "configs" / "experiments" / "e18_backbone_sweep.yaml")
     ap.add_argument("--llm-config", type=Path, default=ROOT / "configs" / "llm" / "default.yaml")
-    ap.add_argument("--top-external", type=Path, default=ROOT / "outputs" / "g4" / "top_external.json")
+    ap.add_argument("--top-external", type=Path, default=ROOT / "configs" / "final" / "top_external.json")
     ap.add_argument("--out-root", type=Path, default=None, help="default: outputs/final (outputs/final_synthetic for --synthetic)")
     return ap.parse_args(argv)
 

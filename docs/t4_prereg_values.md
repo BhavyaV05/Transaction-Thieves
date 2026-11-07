@@ -44,3 +44,11 @@ H9 compares the gap closed by our system with the best ported external agent. `m
 - **`H9.margin_gap`:** still `fix_on_val`; it is `0.01 / (Brier(one bank) - Brier(upper))` and needs the see-everything alert scores and the G4 pick.
 - **T3's R2 (ten `*_adapted` arms):** exploratory, subset only, outside Table 5a and H9 (`exploratory_arms` in `external_list.yaml`). **R3 (E18 refresh):** an addendum to E18; the 26 Oct decision stays on the prereg row (`e18_decision.yaml`).
 - **Freeze:** after #113 merges (it changes `configs/final/non_llm.yaml` and `jobs.yaml`, which the freeze hashes) and `outputs/g4/top_external.json`, `outputs/e18/stage2/decision.json`, `H9.margin_gap` and T1's artefacts exist.
+
+## 6. Update of 7 Nov 2026 (before the freeze, still no TA)
+
+- **`H9.margin_gap` is a rule with a cross-checked value**: `0.01 / (Brier(p0 v2) - Brier(GFP see-everything))` on all 806 val eval alerts = 0.01 / (0.1612 - 0.1010) = **0.166** (`value_check`; T1's p0 v1 variant gives 0.1425). T1 sent the GFP val eval scores on 7 Nov; both of us recomputed 0.1425 on v1, and the v2 figure reproduces T1's published 0.1612. No `fix_on_val` string is left in `prereg/`.
+- **Upper limits** must be time-respecting (issue #127): the stored HI-Medium Multi-GNN and MEGA-GNN see-everything scores use future edges, so only GFP (declared `look_ahead: minor`) or a `_causal` score may fill an upper-limit slot; the analysis refuses anything else.
+- **G4 file** is `configs/final/top_external.json`, tracked and hashed by the freeze; one agent (`bed_llm`) with `reduced_run: true` and its reason.
+- **Freeze** needs `outputs/t3_dspy/react_miprov2.json` and `outputs/t3_library/frozen/shape_gemma.json` on the machine that runs it (both are hashed, neither is in git). `--record-no-ta <hash>` replaces the TA step. The arm list and the deviations are in `docs/t4_reduced_final.md`.
+

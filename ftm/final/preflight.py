@@ -29,7 +29,7 @@ class Paths:
     e18_dir: Path = ROOT / "outputs" / "e18"
     e18_config: Path = ROOT / "configs" / "experiments" / "e18_backbone_sweep.yaml"
     llm_config: Path = ROOT / "configs" / "llm" / "default.yaml"
-    top_external: Path = ROOT / "outputs" / "g4" / "top_external.json"
+    top_external: Path = ROOT / "configs" / "final" / "top_external.json"  # tracked and frozen (freeze.EXTRA_FROZEN): the same G4 pick on every machine
 
 
 # -- freeze manifest -----------------------------------------------------------------------------------------
@@ -244,7 +244,9 @@ def check_unresolved(p: Paths) -> list[str]:
 
 # -- G4 choice and the subset rule -----------------------------------------------------------------------
 def load_top_external(path: Path, known: set[str] | None = None) -> tuple[list[str], list[str]]:
-    """(systems, problems) from outputs/g4/top_external.json: {"systems": [2 or 3 names], "selected_on": "val"}."""
+    """(systems, problems) from configs/final/top_external.json: {"systems": [2 or 3 names], "selected_on": "val"}.
+
+    A reduced run (compute limit, 7 Nov 2026) may name one agent if the file says `"reduced_run": true` and gives a `reason`; the report states it."""
     if not Path(path).exists():
         return [], [f"{path} not found: T4/T3 write it at G4 (the top 2-3 external agents, chosen on validation)"]
     try:
@@ -255,8 +257,9 @@ def load_top_external(path: Path, known: set[str] | None = None) -> tuple[list[s
     if not isinstance(systems, list) or not all(isinstance(s, str) for s in systems):
         return [], [f"{path}: 'systems' must be a list of system names"]
     problems = []
-    if not 2 <= len(systems) <= 3:
-        problems.append(f"{path}: expected 2 or 3 systems, got {len(systems)}")
+    reduced = bool(d.get("reduced_run")) and bool(str(d.get("reason", "")).strip())
+    if not (1 if reduced else 2) <= len(systems) <= 3:
+        problems.append(f"{path}: expected 2 or 3 systems, got {len(systems)}" + ("" if reduced else " (one is allowed only with reduced_run: true and a reason)"))
     if len(set(systems)) != len(systems):
         problems.append(f"{path}: duplicate systems")
     if d.get("selected_on") != "val":
