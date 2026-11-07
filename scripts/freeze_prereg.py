@@ -6,6 +6,7 @@ Owner: T4 (Shreyas).  Spec: tracks.md 8, prereg/README.md, docs/t4_final_run.md 
     python scripts/freeze_prereg.py
     # 2. send the printed combined hash to the TA; when it has gone out, record that
     python scripts/freeze_prereg.py --record-ta-sent <combined hash>
+    python scripts/freeze_prereg.py --record-no-ta <combined hash>      # no TA: the freeze rests on the git commit of FREEZE.json
     # 3. commit prereg/FREEZE.json
     # check only (no write): do the files still match?
     python scripts/freeze_prereg.py --check
@@ -31,6 +32,7 @@ from ftm.final import preflight as pf  # noqa: E402
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--record-ta-sent", metavar="HASH", default=None, help="record the hash that was sent to the TA")
+    ap.add_argument("--record-no-ta", metavar="HASH", default=None, help="record that the hash is not sent to any TA (the freeze rests on the git commit)")
     ap.add_argument("--check", action="store_true", help="verify the files against FREEZE.json; write nothing")
     ap.add_argument("--repo", type=Path, default=ROOT)
     ap.add_argument("--prereg-dir", type=Path, default=ROOT / "prereg")
@@ -45,6 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     if a.record_ta_sent:
         fr = fz.record_ta_hash(a.prereg_dir, a.record_ta_sent)
         print(f"recorded: the TA was sent {fr['ta_ack_hash']}. Commit {a.prereg_dir.name}/{fz.FREEZE_FILE}.")
+        return 0
+    if a.record_no_ta:
+        fr = fz.record_ta_waiver(a.prereg_dir, a.record_no_ta)
+        print(f"recorded: {fr['ta_waived_hash']} is not sent to a TA. Commit {a.prereg_dir.name}/{fz.FREEZE_FILE}; say so in the report.")
         return 0
     fr = fz.write_freeze(a.repo, a.prereg_dir)
     unresolved = pf.unresolved_fields(a.prereg_dir)

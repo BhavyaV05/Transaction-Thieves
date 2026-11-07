@@ -140,6 +140,21 @@ def write_subset_sha(prereg_dir: Path, sha: str, note: str) -> bool:
     return True
 
 
+def record_ta_waiver(prereg_dir: Path, hash_: str) -> dict:
+    """Record that the hash is NOT sent to any TA (6 Nov 2026 decision): the freeze then rests on the git commit of FREEZE.json alone.
+
+    The report must say so; the hash must equal the current combined hash, as for record_ta_hash."""
+    fr = read_freeze(prereg_dir)
+    now = combined_hash(hash_files(prereg_dir))
+    if hash_ != now or hash_ != fr["combined_sha256"]:
+        raise RuntimeError(f"hash given ({hash_}) does not match the files ({now}) / FREEZE.json ({fr['combined_sha256']}); re-run freeze_prereg.py")
+    fr["ta_waived_hash"] = hash_
+    fr["ta_waived_recorded"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    fr["ta_waived_note"] = "not sent to any TA; the pre-registration is fixed by the git commit that holds this file"
+    (Path(prereg_dir) / FREEZE_FILE).write_text(json.dumps(fr, indent=2) + "\n", encoding="utf-8")
+    return fr
+
+
 def record_ta_hash(prereg_dir: Path, sent_hash: str) -> dict:
     """Record the hash that was sent to the TA. It must equal the current combined hash of the files."""
     fr = read_freeze(prereg_dir)
