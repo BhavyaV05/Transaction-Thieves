@@ -41,8 +41,9 @@ final_entry:
   - python scripts/fraudgt_final.py
   external_final_command: T1_DUMP_ONLY=1 T1_EVAL_TEST=1 T1_OUT=<val run dir> python -m fraudGT.main --cfg configs/AML-Small-HI/AML-Small-HI-SparseNodeGT+ports+Ego.yaml
     --repeat 1 out_dir <val run dir>/final dataset.dir <data> wandb.use False
-  note: '5070 Ti: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv; the final run only rescores with best.pt,
-    asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py only; the patch redirects
-    every test evaluation to val unless it is set. `commands` is the wrapper: it runs that command with T1_DUMP_ONLY=1 in the checkout, then scripts/fraudgt_scores.py
-    --final (stored calibrator, p0 file). The val side: python scripts/fraudgt_scores.py --data hi_small --dump <val run dir>'
+  note: '3070 Ti laptop (S1), where the val run ran: the val run (T1_OUT=<dir>, full 500 epochs) saves best.pt (best val F1) and pred_val.csv;
+    the final run only rescores with best.pt, asserts pred_val.csv reproduces (< 1e-3) and writes pred_test.csv. T1_EVAL_TEST=1 is set by scripts/run_final.py
+    only; the patch redirects every test evaluation to val unless it is set. `commands` is the wrapper: it runs that command with T1_DUMP_ONLY=1
+    in the checkout, then scripts/fraudgt_scores.py --final (stored calibrator, p0 file). The val side: python scripts/fraudgt_scores.py --data
+    hi_small --dump <val run dir>'
 scores_file: data/scores/hi_small/p0_fraudgt.parquet

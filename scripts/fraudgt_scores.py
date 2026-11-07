@@ -1,4 +1,4 @@
-"""FraudGT predictions (the 5070 Ti run, HI-Small) into T1's p0 pipeline: calibrate, score, compare.
+"""FraudGT predictions (the full val run, HI-Small) into T1's p0 pipeline: calibrate, score, compare.
 
 Owner: T1 (Abhishek).  FraudGT runs in its own checkout (`ftm/baselines/README.md`, FraudGT section); its patch leaves in `<dir>`
 `best.pt`, `pred_val.csv` (`tx_id,label,score`, uncalibrated sigmoid), `pred_meta.json`, and in the final run `pred_test.csv`.

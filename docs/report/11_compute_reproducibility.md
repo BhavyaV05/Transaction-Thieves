@@ -32,7 +32,7 @@ The plan's budget is 250 reference-hours of GPU (`plan.md` section 11; one RTX 5
 | Our system, 5 variants (compose, fixed list, act only, no back-test, LLM decides), subset and full test | 5070 Ti | 41.7 | {{TBD:compute_table}} |
 | Our system, 10 extra arms on the full test (ε 0.5, 1, 4, no noise; library by account; batched 2,1; three students; prompted Qwen3-8B) | 5070 Ti | 62.5 | {{TBD:compute_table}} |
 | 13 external agents, native and ported where both exist, on the subset | 5070 Ti | 60.8 | {{TBD:compute_table}} |
-| FraudGT scoring; HI-Medium see-everything (optional) | 5070 Ti | 0.5; 3.0 | {{TBD:compute_table}} |
+| FraudGT scoring (3070 Ti laptop); HI-Medium see-everything (optional, 5070 Ti) | 3070 Ti; 5070 Ti | 0.5; 3.0 | {{TBD:compute_table}} |
 | T1 steps 1 to 10 (GFP, Multi-GNN, MEGA-GNN, edge scorer, explainers, views, DP-FedAvg, layer-wise) and the 18 detection run-log jobs | 3070 Ti laptop | 19.1; 1.8 | {{TBD:compute_table}} |
 | Non-LLM planners and arms (19) and raw sharing, subset and full test | CPU | 26.0 | {{TBD:compute_table}} |
 | **Total** | | **5070 Ti 168.5; 3070 Ti 20.9; CPU 26.0** | {{TBD:compute_table}} |

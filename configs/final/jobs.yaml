@@ -224,10 +224,10 @@ t1_final:
       cmds:
         - python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
         - python scripts/train_layerwise.py --final --data hi_medium --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2
-    - id: fraudgt               # row 11: the val run's best.pt rescored in dump-only mode (no training), then the stored calibrator; 5070 Ti only
+    - id: fraudgt               # row 11: the val run's best.pt rescored in dump-only mode (no training), then the stored calibrator; on the 3070 Ti laptop, where the val run ran (7 Nov) and best.pt is
       row: 11
       phase: post
-      machine_class: gpu_s3
+      machine_class: gpu_s1
       est_hours: 0.5
       required: true
       env: {T1_EVAL_TEST: "1"}  # per docs/t1_final_run.md: set by run_final.py only; the wrapper adds T1_DUMP_ONLY=1 and T1_OUT and refuses without this
