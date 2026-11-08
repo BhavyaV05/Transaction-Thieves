@@ -216,3 +216,18 @@ def test_sampled_equals_full_batch_with_three_owners_and_unowned_nodes(mode):
     full = _logits(parts, mode, lambda c: net, [torch.as_tensor(p) for p in picks])
     smp, _ = _sampled_logits(parts, net, picks, mode, None)
     assert all(torch.allclose(a, b, atol=1e-5) for a, b in zip(full, smp, strict=True))
+
+
+def test_final_run_scores_a_test_row_whose_account_is_new_in_test():
+    """An account first seen in the test rows has no entry from train/val: the test graph still builds and scores it (g5 KeyError)."""
+    import polars as pl
+
+    frames, x = _toy_views(False)
+    frames_te, x_te = _toy_views(True)
+    row = frames_te[1].tail(1).with_columns(pl.lit(99).alias("src_id"), pl.lit(1).alias("from_bank"), pl.lit(10**6).alias("tx_id"))
+    frames_te[1] = pl.concat([frames_te[1], row.cast(frames_te[1].schema)])
+    x_te[1] = np.vstack([x_te[1], x_te[1][-1:]])
+    parts = {b: np.where(np.arange((f["split"] == "val").sum()) % 2 == 0, "fit", "eval") for b, f in frames.items()}
+    kw = dict(sync="sync_sgd", exchange="bwd", steps=4, local_steps=2, parts=parts, batch=64, lr=5e-3, seed=1, device="cpu", log=lambda s: None)
+    fin = lw.run(frames, x, fixed_step=4, frames_test=frames_te, x_edge_test=x_te, **kw)
+    assert 10**6 in fin["test_idx_tx"][0] and len(fin["raw_test"][0]) == int((frames_te[1]["split"] == "test").sum())
