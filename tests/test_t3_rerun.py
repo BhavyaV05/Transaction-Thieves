@@ -255,3 +255,26 @@ def test_chunk_check_ignores_recovered_planner_prompt_too_long(tmp_path):
     (tmp_path / "ptl.log").write_text("PromptTooLong[planner] V1: estimate ~7000 > cap 6750\n" * 9)
     ok, _ = cc.check(d)
     assert ok
+
+
+def test_alert_table_builds_v2_test_alerts_when_the_variant_comes_from_the_environment(tmp_path, monkeypatch):
+    """The final run's LLM jobs pass no --p0-variant: the tuned profile sets FTM_P0_VARIANT=v2. The v2 test table does not exist,
+    so the frozen map must be applied to T1's v1 table (8 Nov: every job failed on the missing data/alerts/<data>_v2/test.parquet)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("rla_alert_table", ROOT / "scripts" / "run_llm_agent.py")
+    rla = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rla)
+    (tmp_path / "v1").mkdir()
+    v1 = pl.DataFrame({"alert_id": ["F1", "F2"], "tx_id": [1, 2], "bank": [7, 7], "p0": [0.2, 0.7], "label": [0, 1]})
+    v1.write_parquet(tmp_path / "v1" / "test.parquet")
+    cfg = {"alerts_dir": str(tmp_path / "v1"), "alerts_dir_v2": str(tmp_path / "v2")}
+    with pytest.raises(rla.guards.TestSplitLocked):  # outside the final run the test split stays locked
+        rla.alert_table(cfg, "hi_medium", "test")
+    monkeypatch.setattr(rla.guards, "require_final_run", lambda *a, **k: None)  # stands in for run_final's lock
+    monkeypatch.setenv("FTM_P0_VARIANT", "v2")
+    out = rla.alert_table(cfg, "hi_medium", "test")
+    assert "label" not in out.columns and out["alert_id"].to_list() == ["F1", "F2"]
+    assert out["p0_v1"].to_list() == [0.2, 0.7] and out["p0"].to_list() == rla.test_alerts_v2(v1.drop("label"), "hi_medium")["p0"].to_list()
+    monkeypatch.setenv("FTM_P0_VARIANT", "v1")
+    assert rla.alert_table(cfg, "hi_medium", "test")["p0"].to_list() == [0.2, 0.7]

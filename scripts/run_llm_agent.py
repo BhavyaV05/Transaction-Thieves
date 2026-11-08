@@ -167,6 +167,25 @@ def test_alerts_v2(v1: pl.DataFrame, data: str) -> pl.DataFrame:
     return v1.with_columns(pl.col("p0").alias("p0_v1"), pl.Series("p0", p0_recal.apply_map(m, v1["p0"].to_numpy())))
 
 
+def alert_table(cfg: dict, data: str, split: str, p0_variant: str | None = None) -> pl.DataFrame:
+    """The alert rows of `split`. The p0 variant is the argument, else FTM_P0_VARIANT (the tuned profile sets v2), else v1.
+    On test the label column is never read in-process (the analysis joins labels later), and when the variant is v2 and no v2
+    test table exists (nothing writes one) the frozen recalibration map is applied to T1's v1 table."""
+    import os
+
+    from ftm.data import io
+
+    variant = p0_variant or os.environ.get("FTM_P0_VARIANT", "v1")
+    alerts_path = ROOT / io.alerts_dir(cfg, variant) / f"{split}.parquet"  # v1 = data/alerts/<data> (unchanged); v2 = recalibrated p0
+    if split != "test":
+        return pl.read_parquet(alerts_path)  # time-guard: not transactions
+    guards.require_final_run("test alerts")
+    if variant == "v2" and not alerts_path.exists():
+        v1 = pl.scan_parquet(ROOT / io.alerts_dir(cfg, "v1") / "test.parquet").select(pl.exclude("label")).collect()  # time-guard: not transactions
+        return test_alerts_v2(v1, data)
+    return pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
+
+
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0,
                 evidence_view: str | None = None, pos_frac: float | None = None,
@@ -188,15 +207,7 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     if split == "test":
         guards.require_final_run("test alerts")
     cfg = io.load_config(data)
-    alerts_path = ROOT / io.alerts_dir(cfg, p0_variant) / f"{split}.parquet"  # v1 = data/alerts/<data> (unchanged); v2 = recalibrated p0
-    if split == "test":  # the label column is never read in-process on test (the analysis joins labels later)
-        if p0_variant == "v2" and not alerts_path.exists():  # nothing writes a v2 test table: apply the frozen map to T1's v1 one
-            v1 = pl.scan_parquet(ROOT / io.alerts_dir(cfg, "v1") / "test.parquet").select(pl.exclude("label")).collect()  # time-guard: not transactions
-            alerts = test_alerts_v2(v1, data)
-        else:
-            alerts = pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
-    else:
-        alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
+    alerts = alert_table(cfg, data, split, p0_variant)
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)
         alerts = alerts.filter(pl.col("alert_id").is_in(sorted(only_ids)))
     if pos_frac is not None:
