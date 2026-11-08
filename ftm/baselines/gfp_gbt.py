@@ -385,7 +385,8 @@ def read_p0(ds: str, mode: str | None = None, split: str | None = None, root: st
         guards.require_final_run("p0 scores of the test split")
         from pathlib import Path
 
-        fs = sorted(Path(root, ds, "final").glob("p0_*.parquet"))  # written by `scripts/train_gfp.py --final` only
+        modes = [mode] if mode else ["one_bank", "see_everything"]  # GFP's own files: final/ also holds other models' p0 (p0_fraudgt)
+        fs = [f for m in modes if (f := Path(root, ds, "final", f"p0_{m}.parquet")).exists()]  # written by `scripts/train_gfp.py --final`
         if not fs:
             raise FileNotFoundError(f"{root}/{ds}/final/p0_*.parquet: run scripts/train_gfp.py --final first")
         df = pl.concat([pl.read_parquet(f) for f in fs])  # time-guard: not transactions
