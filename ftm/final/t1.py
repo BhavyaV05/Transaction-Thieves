@@ -215,13 +215,42 @@ def load_t1_check():
     return mod
 
 
-def check_t1_entry_points(artefacts: bool = True, run_help: bool = True) -> list[str]:
+# T1 step id -> the configs/t1_final/<name>.yaml entries t1_final_check verifies for it. edge_scorer_home (T3's v2 scorer on the
+# 5070 Ti) has no T1 config: its own --final pass checks that it reproduces the stored val scores before it writes anything.
+STEP_CHECKS = {
+    "gfp_one_bank": ("gfp",), "gfp_see_everything": ("gfp",), "gfp_see_everything_medium": ("gfp",),
+    "intake": ("intake", "subset_rule"), "multi_gnn": ("multi_gnn",), "mega_gnn": ("mega_gnn",),
+    "edge_scorer": ("retrieval",), "explainers": ("retrieval",), "evidence_views": ("retrieval",), "edge_scorer_home": (),
+    "federated": ("federated",), "layerwise": ("layerwise",), "fraudgt": ("fraudgt",),
+    "hi_medium_see_everything": ("gfp", "multi_gnn", "mega_gnn"),
+}
+
+
+def check_names(steps) -> tuple[str, ...] | None:
+    """The t1_final_check config names behind the selected T1 steps: None = every one (no selection given), () = none."""
+    if steps is None:
+        return None
+    names: list[str] = []
+    for s in steps:
+        sid = s.job_id.removeprefix("t1.")
+        for n in STEP_CHECKS.get(sid, (sid,)):
+            if n not in names:
+                names.append(n)
+    return tuple(names)
+
+
+def check_t1_entry_points(artefacts: bool = True, run_help: bool = True, steps=None) -> list[str]:
     """T1's `t1_final_check.check()` as a list of problems. It reads no test row and refuses FTM_FINAL_RUN=1, so it must run
-    BEFORE the lock opens."""
+    BEFORE the lock opens. `steps` (the T1 steps of this invocation) limits the check to what this machine runs: T1's model files
+    live on the laptop, so the 5070 Ti, which runs only edge_scorer_home, gfp_see_everything_medium and LLM jobs, is not refused
+    for them. None checks everything (the --plan report)."""
     if not T1_CHECK_SCRIPT.exists():
         return [f"{T1_CHECK_SCRIPT.name} is missing"]
+    names = check_names(steps)
+    if names == ():
+        return []
     try:
-        problems, _ = load_t1_check().check(artefacts=artefacts, run_help=run_help)
+        problems, _ = load_t1_check().check(names=list(names) if names else None, artefacts=artefacts, run_help=run_help)
     except SystemExit as e:
         return [str(e)]
     return [f"t1_final_check: {p}" for p in problems]

@@ -41,7 +41,7 @@ def lock_closed(monkeypatch):
     """Whatever a test (or main()) sets, the environment is restored afterwards. T1's entry-point check needs the real data/ and
     models/ (it is exercised in tests/test_t1_final_check.py); here it passes."""
     monkeypatch.setenv(guards.FINAL_RUN_ENV, "0")
-    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True: [])
+    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True, steps=None: [])
     yield
     # monkeypatch undoes the setenv after this point; nothing else may leak
 
@@ -978,7 +978,7 @@ def test_plan_and_preflight_flag_t1_steps_without_a_command(world, tmp_path, cap
 
 def test_t1_entry_point_problems_refuse_the_run(world, tmp_path, monkeypatch, capsys):
     paths, h = world
-    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True: ["t1_final_check: gfp: artefact x does not exist"])
+    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True, steps=None: ["t1_final_check: gfp: artefact x does not exist"])
     alerts = tmp_path / "test.parquet"
     write_test_alerts(alerts)
     cfg_file = write_jobs_config(tmp_path, alerts)
@@ -1131,3 +1131,12 @@ def test_hi_medium_gfp_see_everything_is_required_and_the_look_ahead_gnns_stay_o
     opt = steps["hi_medium_see_everything"]
     assert not opt.required and not any("train_gfp.py" in c for c in opt.cmds)
     assert all("train_gnn.py" in c for c in opt.cmds)  # only the look-ahead GNNs remain there
+
+
+def test_t1_entry_check_covers_only_the_steps_this_machine_runs():
+    steps = {s.job_id: s for s in t1.load_steps(fp.load_jobs_config())}
+    assert t1.check_names(None) is None
+    assert t1.check_names([steps["t1.edge_scorer_home"]]) == ()
+    assert t1.check_names([steps["t1.edge_scorer_home"], steps["t1.gfp_see_everything_medium"]]) == ("gfp",)
+    assert t1.check_names([steps["t1.intake"], steps["t1.explainers"]]) == ("intake", "subset_rule", "retrieval")
+    assert t1.check_t1_entry_points(artefacts=True, run_help=False, steps=[]) == []
