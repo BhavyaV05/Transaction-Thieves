@@ -251,12 +251,17 @@ def test_subset_hash_must_agree_across_jobs(tmp_path):
         fn.load_run("val", env["run_dir"])
 
 
+def _drop_alerts(env, name, drop):
+    p = env["files"][name]
+    df = pl.read_parquet(p)
+    df.filter(~pl.col("alert_id").is_in(drop)).write_parquet(p)
+
+
 def test_subset_jobs_on_different_alerts_are_refused(tmp_path):
     env = build_run(tmp_path)
-    p = env["files"]["ext_react"]
-    df = pl.read_parquet(p)
-    drop = df["alert_id"].unique().to_list()[:5]
-    df.filter(~pl.col("alert_id").is_in(drop)).write_parquet(p)
+    ids = pl.read_parquet(env["files"]["ext_react"])["alert_id"].unique().sort().to_list()
+    _drop_alerts(env, "ext_react", ids[:5])
+    _drop_alerts(env, "ours_subset", ids[5:10])  # two different shortfalls: not one askable set
     m = json.loads(env["manifest"].read_text())
     for j in m["jobs"]:
         j.pop("sha256", None)
@@ -635,3 +640,49 @@ def test_build_val_run_packages_chunks(tmp_path):
     m = json.loads((tmp_path / "run" / "MANIFEST.json").read_text())
     assert {j["variant"] for j in m["jobs"]} == {"harness", "student_s0"} and all(j["n_alerts"] == 2 for j in m["jobs"])
     assert "label" not in pl.read_parquet(tmp_path / "run" / m["jobs"][0]["runlog_path"]).columns
+
+
+def _askable_only_run(tmp_path, frac=0.3):
+    """Every LLM subset job covers only the same askable alerts, as the final run's harness jobs do."""
+    env = build_run(tmp_path)
+    ids = sorted(env["world"].subset)
+    keep = set(ids[: int(len(ids) * frac)])
+    for name in ("ours_subset", "ext_react"):
+        _drop_alerts(env, name, sorted(set(ids) - keep))
+    to_runner_manifest(env)
+    m = json.loads((env["run_dir"] / "MANIFEST.json").read_text())
+    for j in m["jobs"]:
+        j.pop("runlog_sha256", None)
+    (env["run_dir"] / "MANIFEST.json").write_text(json.dumps(m))
+    return env, keep
+
+
+def test_askable_only_jobs_are_accepted_compared_on_the_askable_alerts_and_reported(tmp_path, monkeypatch):
+    env, keep = _askable_only_run(tmp_path)
+    run = fn.load_run("val", env["run_dir"])
+    assert run.askable == {"subset": frozenset(keep)} and len(run.subset_ids) == len(env["world"].subset)
+    assert any("askable alerts" in w for w in run.warnings)
+    cov = {c["job"]: c for c in run.coverage if c["alert_set"] == "subset"}
+    assert {c["alerts_with_results"] for c in cov.values()} == {len(keep), len(env["world"].subset)}
+    inputs, systems = fn.load_configs(env["inputs"])
+    panel = fn.build_panel(run, inputs, systems, n_boot=200)
+    for k, s in panel.scores.items():  # every subset arm, LLM or not, is compared on the askable alerts only
+        if k.alert_set == "subset":
+            have = set(np.asarray(panel.alerts["alert_id"].to_list())[s.present()])
+            assert have <= keep
+    assert panel.scores_all and all(k.alert_set == "subset" for k in panel.scores_all)
+    w = ft.Writer(tmp_path / "out")
+    rows = ft.all_alerts(panel, w)
+    assert rows and all(r["askable"] <= len(keep) < r["n"] for r in rows)
+    assert ft.job_coverage(panel, w)
+
+
+def test_askable_only_jobs_with_extra_alerts_are_refused(tmp_path):
+    env, keep = _askable_only_run(tmp_path)
+    ids = (env["run_dir"] / "subset_ids.txt").read_text().split()
+    (env["run_dir"] / "subset_ids.txt").write_text("\n".join(ids[1:]) + "\n")
+    m = json.loads((env["run_dir"] / "MANIFEST.json").read_text())
+    m["subset_sha256"] = fn.ids_sha256(ids[1:])
+    (env["run_dir"] / "MANIFEST.json").write_text(json.dumps(m))
+    with pytest.raises(fn.AnalysisInputError, match="extra"):
+        fn.load_run("val", env["run_dir"])

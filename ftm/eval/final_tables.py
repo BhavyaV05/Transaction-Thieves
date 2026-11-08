@@ -455,6 +455,43 @@ def stop_reasons(panel: Panel, w: Writer) -> list[dict]:
     return rows
 
 
+def job_coverage(panel: Panel, w: Writer) -> list[dict]:
+    """Per job: frozen alerts and alerts with a result (the LLM harness answers only the askable alerts)."""
+    rows = list(panel.run.coverage) if panel.run is not None else []
+    if not rows:
+        raise Missing("no frozen id files in the manifest: coverage is not checked")
+    w.table("job_coverage", rows, ["job", "alert_set", "frozen_alerts", "alerts_with_results", "share"],
+            "Coverage per job: headline comparisons use the askable alerts; the all_alerts table scores the rest with p0")
+    return rows
+
+
+def all_alerts(panel: Panel, w: Writer) -> list[dict]:
+    """Every arm of an askable-only alert set on ALL its frozen alerts, the non-askable ones scored with p0 (no verdict = no
+    change), against the one-bank score. A secondary row beside the askable-only headline, never instead of it."""
+    if not panel.scores_all:
+        raise Missing("every job covers its frozen alerts: the headline already uses all of them")
+    ids = panel.alerts["alert_id"].to_list()
+    se0 = (panel.p0 - panel.y) ** 2
+    frozen = {"subset": np.array([a in set(panel.run.subset_ids) for a in ids]), "full_test": np.ones(len(ids), dtype=bool)}
+    rows = []
+    for k, s in panel.scores_all.items():
+        m = frozen.get(k.alert_set)
+        if m is None or not m.any():
+            continue
+        v = np.where(m, np.where(np.isfinite(s.se_e2e), s.se_e2e, se0), np.nan)
+        B = panel.boot({"arm": v, "one_bank": np.where(m, se0, np.nan)})
+        d = fn.diff_stat(B, "arm", "one_bank")
+        ask = panel.run.askable.get(k.alert_set, frozenset())
+        rows.append({"system": k.system, "variant": k.variant, "mode": k.mode, "alerts": k.alert_set, "n": B["n"],
+                     "askable": int(sum(a in ask for a in np.asarray(ids)[B["mask"]])), "brier": B["point"]["arm"],
+                     "brier one bank": B["point"]["one_bank"], "difference": d["point"], "ci_lo": d["ci"][0], "ci_hi": d["ci"][1]})  # fmt: skip
+    if not rows:
+        raise Missing("no arm of an askable-only alert set has alerts in the headline")
+    w.table("all_alerts", rows, ["system", "variant", "mode", "alerts", "n", "askable", "brier", "brier one bank", "difference", "ci_lo", "ci_hi"],
+            "All frozen alerts (secondary): non-askable alerts scored with p0; difference = Brier(arm) - Brier(one bank), negative = better")
+    return rows
+
+
 def compute_tables(panel: Panel, w: Writer) -> list[dict]:
     rows = []
     for k, s in panel.scores.items():
@@ -1138,6 +1175,8 @@ def run_all(panel: Panel, inputs: dict, outdir: Path, figures: bool = True, outl
     except (Missing, fn.AnalysisInputError):
         tail = None
     w.attempt("n_alerts", lambda: n_alerts_table(panel, inputs, w, tail, e2e))
+    w.attempt("job_coverage", lambda: job_coverage(panel, w))
+    w.attempt("all_alerts", lambda: all_alerts(panel, w))
     w.attempt("stop_reasons", lambda: stop_reasons(panel, w))
     w.attempt("compute", lambda: compute_tables(panel, w))
     w.attempt("e18_sweep", lambda: e18_table(inputs, panel.split, w))
