@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "created": "2026-11-08T01:46:14+0530",
-  "git_commit": "28972f61359f4cc6146ca82015e42033808c8280",
+  "created": "2026-11-08T12:27:20+0530",
+  "git_commit": "f10a2ae2b0407951c2d968467a27cf0305cfe9b3",
   "files": {
     "e18_decision.yaml": "bf7c250c145b66d5b5b458ad08bf3d867bd12e57db08adc457fe11338eb7491a",
     "external_list.yaml": "532612853b6089a17d23e090277b1869866b2b442e09414234955ce2a5b8a871",
     "hypotheses.yaml": "da872c4ef3b53370674b7ff903045f34585a3378ec85aff22a9bbd6b963e215f",
     "subset_manifest.txt": "cdcb389983341f32a4244bc2514454ac795b30a3866742e0403a5a80ebf0a907",
-    "configs/final/non_llm.yaml": "5acf7081abcf95b7c417423c3d4fd3a54d0a93d65705e3e896d2fca14d5cebfa",
+    "configs/final/non_llm.yaml": "928bc6ecb9e9f61f3818c8b92d4dc12bc5295efc6c3573878306869114e356c2",
     "configs/experiments/ablations_nonllm.yaml": "a24b72f9d3e46cbe6af7937a6d5bb2a7d5c96b0bd0ccc29c52c87d7ca4bbfcb7",
     "configs/final/top_external.json": "52604c37cecba6a45ed2477fc41c1fc219e0694699a35bb3cf36e0e2a28c7c12",
     "configs/llm/tuned.yaml": "e84eae2489f47a2b97e25dffa78c429ed2588726844d76311028a216f9c37c7e",
@@ -18,12 +18,13 @@
     "configs/fusion/headroom_v1_accepted_table.jsonl": "41a4b9ef11a29f77096c2a2f39500fb746c94b0a4d25dc0fba898d8c9f354234",
     "configs/decision/headroom_v1.yaml": "4a2ae977b85fc9812149b0cb3e070b305f4e902539b7e1491e77d049f6977a62",
     "configs/t1_final/p0_recal_hi_medium.json": "18d9f98706f2e358e488de6a76863fa4b6170f0b6f8b412c3f7149342f1a9ca2",
+    "configs/fusion/enumerator_table.jsonl": "bcacdd1873ac5174223ee9644c59520bb9575eee2c9cf68bf747ee617718bcb3",
     "outputs/t3_dspy/react_miprov2.json": "0697b61365bd7663c9036d2a31f9799b37b9ea855e50ba5066b37d06cfbb075d",
     "outputs/t3_library/frozen_v3/shape_gemma.json": "2241fdd5ad7094005049e9242918cced077b57b071d5b9d5fea40d0eb01b5cf6"
   },
-  "combined_sha256": "7b27bb35581ad78c3eaebb0ae83bcc6021cdff4a52ef94751e59790f3e3f42a5",
+  "combined_sha256": "b094561b57d2f8e3da6bd6945e8146904c8baec4b44910c633fce0b04722b97f",
   "ta_ack_hash": null,
-  "ta_waived_hash": "7b27bb35581ad78c3eaebb0ae83bcc6021cdff4a52ef94751e59790f3e3f42a5",
-  "ta_waived_recorded": "2026-11-08T01:46:21+0530",
+  "ta_waived_hash": "b094561b57d2f8e3da6bd6945e8146904c8baec4b44910c633fce0b04722b97f",
+  "ta_waived_recorded": "2026-11-08T12:27:27+0530",
   "ta_waived_note": "not sent to any TA; the pre-registration is fixed by the git commit that holds this file"
 }
