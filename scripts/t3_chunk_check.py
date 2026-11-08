@@ -34,10 +34,10 @@ def check(chunk: Path, min_call_share: float = 0.3, max_ptl: float = 0.2, max_no
     summary = json.loads((chunk / "summary.json").read_text()) if (chunk / "summary.json").exists() else {}
     system = str(summary.get("system") or "unknown")
     system1 = bool(summary.get("system1"))
-    calls = sum(1 for r in rows if r.get("llm_calls", 0) > 0) / n
+    calls = sum(1 for r in rows if (r.get("llm_calls") or 0) > 0) / n
     no_verdict = sum(1 for r in rows if r.get("probability") is None) / n
     log = chunk.with_name(chunk.name + ".log")
-    ptl = sum(1 for ln in log.read_text(errors="ignore").splitlines() if ln.startswith("PromptTooLong")) / n if log.exists() else 0.0
+    ptl = sum(1 for ln in log.read_text(errors="ignore").splitlines() if ln.startswith("PromptTooLong") and not ln.startswith("PromptTooLong[planner]")) / n if log.exists() else 0.0
     head = f"{chunk} [{system}{', system1' if system1 else ''}]: alerts {n}, with an LLM call {calls:.2f}, PromptTooLong per alert {ptl:.2f}, without verdict {no_verdict:.2f}"
     fails, warns = [], []
     if is_ours(system):

@@ -229,3 +229,29 @@ def test_chunk_check_skips_the_call_share_rule_when_system1_answers(tmp_path):
     assert ok, msg
     ok, msg = cc.check(_chunk(tmp_path, "s1bad", "ours_compose", [0] * 10, probs=[None] * 10, system1="x"))  # but no verdicts at all is still a failure
     assert not ok and "without a verdict" in msg
+
+
+def test_test_alerts_v2_applies_the_frozen_map_and_keeps_rows():
+    import importlib.util
+
+    import numpy as np
+    import polars as pl
+
+    from ftm.baselines import p0_recal
+
+    spec = importlib.util.spec_from_file_location("rla", ROOT / "scripts" / "run_llm_agent.py")
+    rla = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rla)
+    v1 = pl.DataFrame({"alert_id": ["F1", "F2", "F3"], "p0": [0.1, 0.5, 0.9]})
+    out = rla.test_alerts_v2(v1, "hi_medium")
+    m = p0_recal.load_map(ROOT / "configs" / "t1_final" / "p0_recal_hi_medium.json")
+    assert out["alert_id"].to_list() == ["F1", "F2", "F3"] and out["p0_v1"].to_list() == [0.1, 0.5, 0.9]
+    assert np.allclose(out["p0"].to_numpy(), p0_recal.apply_map(m, np.array([0.1, 0.5, 0.9])))
+
+
+def test_chunk_check_ignores_recovered_planner_prompt_too_long(tmp_path):
+    cc = _load("t3_chunk_check")
+    d = _chunk(tmp_path, "ptl", "ours_compose", [1] * 10)
+    (tmp_path / "ptl.log").write_text("PromptTooLong[planner] V1: estimate ~7000 > cap 6750\n" * 9)
+    ok, _ = cc.check(d)
+    assert ok

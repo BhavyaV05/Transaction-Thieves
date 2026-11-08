@@ -157,6 +157,16 @@ def select_alerts(alerts: pl.DataFrame, split: str, val_part: str | None, seed: 
     return alerts[sample_order(alerts.height, seed, n, offset)]
 
 
+def test_alerts_v2(v1: pl.DataFrame, data: str) -> pl.DataFrame:
+    """The p0 v2 test alert table, built in-process: the same rows and order as T1's v1 test table, p0 replaced by the frozen
+    recalibration map (configs/t1_final/p0_recal_<data>.json, hash-checked, frozen with the prereg) and the old value kept as p0_v1,
+    the layout of data/alerts/<data>_v2/{train,val}.parquet. The map reproduces the stored v2 val p0 to 1e-15."""
+    from ftm.baselines import p0_recal
+
+    m = p0_recal.load_map(ROOT / "configs" / "t1_final" / f"p0_recal_{data}.json")
+    return v1.with_columns(pl.col("p0").alias("p0_v1"), pl.Series("p0", p0_recal.apply_map(m, v1["p0"].to_numpy())))
+
+
 def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str | None = None,
                 only_ids: set[str] | None = None, offset: int = 0,
                 evidence_view: str | None = None, pos_frac: float | None = None,
@@ -180,7 +190,11 @@ def data_alerts(data: str, split: str, n: int, seed: int, k: int, val_part: str 
     cfg = io.load_config(data)
     alerts_path = ROOT / io.alerts_dir(cfg, p0_variant) / f"{split}.parquet"  # v1 = data/alerts/<data> (unchanged); v2 = recalibrated p0
     if split == "test":  # the label column is never read in-process on test (the analysis joins labels later)
-        alerts = pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
+        if p0_variant == "v2" and not alerts_path.exists():  # nothing writes a v2 test table: apply the frozen map to T1's v1 one
+            v1 = pl.scan_parquet(ROOT / io.alerts_dir(cfg, "v1") / "test.parquet").select(pl.exclude("label")).collect()  # time-guard: not transactions
+            alerts = test_alerts_v2(v1, data)
+        else:
+            alerts = pl.scan_parquet(alerts_path).select(pl.exclude("label")).collect()  # time-guard: not transactions
     else:
         alerts = pl.read_parquet(alerts_path)  # time-guard: not transactions
     if only_ids is not None:  # harness world: only alerts a partner bank can be asked about (they have a binding)

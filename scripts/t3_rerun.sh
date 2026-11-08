@@ -408,7 +408,8 @@ stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queu
   if [[ -f outputs/s1/eval/.done && ${FORCE_EVAL:-0} != 1 ]]; then say "system1: eval already run (once), skipped"; else
     local ea=""
     if [[ $DRY == 1 ]]; then funcs="<adopted functions>"; tiers="<fast|cascade>"; else
-      IFS=$'\t' read -r funcs tiers < <($TOOLS s1-eval-args outputs/s1/fitcal_report/selection.json) || exit 1; fi
+      local sel_args; sel_args=$($TOOLS s1-eval-args outputs/s1/fitcal_report/selection.json) || exit 1
+      funcs=${sel_args%%$'\t'*}; tiers=${sel_args#*$'\t'}; fi  # not `IFS=$'\t' read`: tab is IFS whitespace, so an empty function list would shift into funcs
     [[ -n $funcs ]] && { ea="--system1 $FROZEN --system1-functions $funcs"; [[ $tiers == fast ]] && ea="$ea --system1-tiers fast"; }
     # shellcheck disable=SC2086
     run_chunks outputs/s1/eval/off val eval $EVAL_N gemma4-12b-dual --system planner --mode compose --library $LIB/shape_gemma.json $s1
