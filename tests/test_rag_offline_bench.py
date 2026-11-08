@@ -265,3 +265,18 @@ def test_the_scripts_on_the_val_path_name_no_library_built_with_val_runs():
                 if bad in text:
                     hits.append(f"{f.relative_to(ROOT)}: {bad}")
     assert not hits, hits
+
+
+def test_a_recorded_override_keeps_an_arm_out_of_the_selection_but_in_the_report():
+    """User decision (7 Nov): menu_topk_all failed the call-share validity check, so it cannot win the menu component even when the rule would pick it."""
+    cands = {"a": {"brier": {"diff": 0.0, "ci": [0.0, 0.0]}}, "x": {"brier": {"diff": -0.002, "ci": [-0.006, 0.002]}}, "y": {"brier": {"diff": -0.001, "ci": [-0.002, 0.0001]}}}
+    rep = {"vs_default": cands, "resources": {n: {"no_verdict_rate": 0.0, "tokens_in": t} for n, t in (("a", 100.0), ("x", 70.0), ("y", 99.0))},
+           "collapse": {n: {"collapsed": False} for n in cands}}  # fmt: skip
+    comps = dict.fromkeys(cands, "menu")
+    free = rb.select_component(["a", "x", "y"], "a", rep, comps)
+    assert free["winner"] == "x" and free["reason"].startswith("tier 2")  # cheaper and non-inferior: the rule picks it
+    held = rb.select_component(["a", "x", "y"], "a", rep, comps, {"x": "invalid: failed the call-share check"})
+    x = next(c for c in held["candidates"] if c["arm"] == "x")
+    assert held["winner"] != "x" and x["excluded"].startswith("invalid") and x["eligible"] is False and x["tier"] == 0 and x["diff"] == -0.002  # numbers still reported
+    md = rb.markdown({"parts": ["fit"], "n_boot": 1, "groups": {}, "selection": {}, "incomplete": {}, "settings_mismatch": {}, "overrides": {"x": "invalid: failed the call-share check"}})
+    assert "Recorded overrides" in md and "`x`: invalid" in md
