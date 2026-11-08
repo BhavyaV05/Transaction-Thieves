@@ -15,7 +15,9 @@ tables:                 # lr_table.jsonl written by `python scripts/backtest.py 
   realistic: configs/fusion/headroom_v1_table.jsonl
   # the pre-rewrite table (K=1, confounded by time drift, audit finding 22), still loadable: data/backtest/{data}/7df6bad5337d/lr_table.jsonl
   # the e-BH-only version of the new table: configs/fusion/headroom_v1_accepted_table.jsonl
-  enumerator: null      # the enumerated programs' table                             (arm: enumerator)
+  # every DSL program up to size 3 over both subject slots plus the 110 expert programs (506 programs x eps 0.25/0.5/1/2 = 2024 hypotheses,
+  # e-BH accepts 79), train alerts, same namespace as `realistic` (7613b89b5dcc); built 8 Nov, assembled by scripts/backtest.py --assemble
+  enumerator: configs/fusion/enumerator_table.jsonl
   exact_labels: data/backtest/{data}/a829616cb2a1/lr_table.jsonl   # --exact-labels (T1, 8,396 alerts, 106 eligible, 16 accepted)
 
 # A fitted learned policy (scripts/train_policy.py). null: the arm `learned_policy` fits it on the fit half of validation, as in G4.

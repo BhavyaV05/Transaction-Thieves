@@ -8,7 +8,7 @@ Owner: T2 (Bhavya). Specs: `docs/schedule_nov10.md` (phase C: "all non-LLM arms,
 |---|---|---|
 | The non-LLM arms (19) and the raw-sharing arm, on the frozen ids | `scripts/final_non_llm.py`, `ftm/orchestrator/final_nonllm.py` | written, tested on the synthetic world, run through T4's `run_final.py --dry-run` |
 | The banks for every LLM arm (CPU) | `ftm/harness` through `scripts/run_llm_agent.py --toolbox harness` (T3/T4 call it) | nothing new: it is the code the validation runs use |
-| Question tables the arms read | `configs/final/non_llm.yaml` | realistic set; **enumerator and exact-label still empty** (hours of back-testing each) |
+| Question tables the arms read | `configs/final/non_llm.yaml` | realistic set and enumerator table (`configs/fusion/enumerator_table.jsonl`, 8 Nov); **exact-label table is not in this checkout** |
 | Job plan entries | `configs/final/jobs.yaml` (`external_cmd.templates.non_llm_arm`, `extra_jobs`) | filled in; hour estimates are guesses |
 
 ## One configuration, two runs
@@ -119,3 +119,5 @@ Why K=1 is frozen anyway: adopting K=4 means the banks are re-asked, `non_llm.ya
 
 - `ftm/final/runner.py::command_for` quotes the fields before `shlex.split`. On Windows, `{alert_ids}` and `{out}` lost their backslashes (`C:\Users\...` became `C:Users...`) and every `external_cmd` job failed; Linux is unchanged. Pinned by `tests/test_final_non_llm.py::test_command_templates_keep_windows_paths_intact`.
 - `tests/test_run_final.py` has 14 tests that already fail on a Windows machine with `core.autocrlf=true` (the freeze test compares file bytes at a commit, the others build command templates from `sys.executable`). They fail the same way on main without this PR; CI (Linux) is not affected.
+
+- **Enumerator table (8 Nov):** built on the train alerts (1,983 alerts, K=4 time blocks, history ledgers; CPU, about 2 h wall with up to 10 shards), `--questions enumerate --max-size 3` in the `realistic` namespace `7613b89b5dcc`, assembled in a scratch copy so the original `lr_table.jsonl` is unchanged. 506 programs (470 enumerated, 74 of which are also expert programs, plus the other expert ones) x 4 eps = 2,024 hypotheses, e-BH (FDR 0.10) over all of them accepts 79. Set in `configs/final/non_llm.yaml`, which changes its freeze hash: it needs a re-freeze by T4. No test data was read.
