@@ -189,7 +189,8 @@ def _scores(ds: str, final: bool = False, version: str = "v1") -> pl.DataFrame:
             t = Path("data/retrieval") / ds / "final" / "edge_scores_home_v2_test.parquet"
             if not t.exists():
                 raise FileNotFoundError(f"{t}: run `python -m ftm.retrieval.edge_scorer_home --data {ds} --final` first")
-            out = pl.concat([out, pl.read_parquet(t, columns=["tx_id", "bank", "score"])])  # time-guard: not transactions
+            test = pl.read_parquet(t, columns=["tx_id", "bank", "score"])  # time-guard: not transactions
+            out = pl.concat([out.with_columns(pl.col("score").cast(pl.Float64)), test.with_columns(pl.col("score").cast(pl.Float64))])  # the --final pass writes Float32
         return out
     f = Path("data/retrieval") / ds / "edge_scores.parquet"
     if not f.exists():
@@ -199,7 +200,8 @@ def _scores(ds: str, final: bool = False, version: str = "v1") -> pl.DataFrame:
         t = Path("data/retrieval") / ds / "final" / "edge_scores_test.parquet"
         if not t.exists():
             raise FileNotFoundError(f"{t}: run `python -m ftm.retrieval.edge_scorer --data {ds} --final` first")
-        out = pl.concat([out, pl.read_parquet(t, columns=["tx_id", "score"])])  # time-guard: not transactions
+        test = pl.read_parquet(t, columns=["tx_id", "score"])  # time-guard: not transactions
+        out = pl.concat([out.with_columns(pl.col("score").cast(pl.Float64)), test.with_columns(pl.col("score").cast(pl.Float64))])
     return out
 
 
