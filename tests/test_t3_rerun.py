@@ -229,3 +229,11 @@ def test_chunk_check_skips_the_call_share_rule_when_system1_answers(tmp_path):
     assert ok, msg
     ok, msg = cc.check(_chunk(tmp_path, "s1bad", "ours_compose", [0] * 10, probs=[None] * 10, system1="x"))  # but no verdicts at all is still a failure
     assert not ok and "without a verdict" in msg
+
+
+def test_system1_prep_runs_steps_3_and_4_without_the_dual_server():
+    r = _dry("system1-prep")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout + r.stderr
+    assert "score_fast_baseline.py" in out and "system1_consistency.py" in out
+    assert "--dual" not in out and "run_llm_agent.py" not in out

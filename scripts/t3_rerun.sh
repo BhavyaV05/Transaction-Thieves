@@ -20,6 +20,7 @@
 #   e15         injection tests (planner + react) on the real endpoint, with/without the gate (+ CaMeL-style arms, + keyword screen)
 #   e18         scripts/t3_e18_refresh.sh (ordering wrapper)
 #   rag         scripts/t3_rag_bench.sh library arms report combined eval (ordering wrapper)
+#   system1-prep  steps 3-4 of system1 only (fast scoring, perturbed twins, report, frozen file), for a System 1 run elsewhere
 #   system1     docs/t3_system1.md section 8 steps 3-8 in order (fast scoring, CPU reports, dual-serve smoke, integration arms fit+cal,
 #               selection, eval once, E15 with the fast-model screen)
 #   all         teacher library distill student val e15 e18 rag system1
@@ -357,8 +358,9 @@ stage_rag() {
   for st in ${RAG_STAGES:-library arms report combined eval}; do bash scripts/t3_rag_bench.sh "$st"; done  # honours DRY_RUN itself
 }
 
-stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queue lines s1_*)
-  local S=outputs/s1v1 arm part n off1 sel funcs tiers
+stage_system1_prep() {  # docs/t3_system1.md section 8, steps 3-4 only: fast scoring, perturbed twins, the report and the frozen file
+  # (one fast server, no Gemma). `system1` runs it first; on its own it prepares outputs/s1v1 for a System 1 run on another machine.
+  local S=outputs/s1v1
   # 3. fast scoring of every val row (one server of its own)
   if [[ -f $S/tuned_s2/latency.json && -f $S/tuned_s0/latency.json && -f $S/tuned_s1/latency.json ]]; then say "system1 step 3: fast scoring present, skipped"; else
     run bash scripts/t3_qwen_session.sh fast3 qwen3-4b-fast; fi
@@ -374,6 +376,11 @@ stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queu
     run $PY scripts/system1_consistency.py report --perturbed $S/perturbed.jsonl --orig-scores $S/tuned_s$S1_SEED/fast.jsonl \
         --pert-scores $S/tuned_s$S1_SEED/perturbed_fast.jsonl --temperatures $FROZEN --out $S/tuned_s$S1_SEED/consistency.json
   fi
+}
+
+stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queue lines s1_*)
+  local S=outputs/s1v1 arm part n off1 sel funcs tiers
+  stage_system1_prep
   # 5. dual-serve smoke test: must answer both models, per_alert has s1_decisions > 0, no OOM
   env_vllm; serve_dual
   local s1="--system1-model fast3-s$S1_SEED --system1-endpoint ${FTM_FAST_ENDPOINT:-http://127.0.0.1:8001/v1}"
@@ -459,6 +466,7 @@ for st in "$@"; do
     e15) stage_e15 ;;
     e18) stage_e18 ;;
     rag) stage_rag ;;
+    system1-prep) stage_system1_prep ;;
     system1) stage_system1 ;;
     all) for s in teacher library distill student val e15 e18 rag system1; do "$0" "$s" || exit $?; done ;;
     *) echo "unknown stage: $st (plan teacher library distill student[-train|-e16] val[-dspy|-fitcal|-calibrate|-eval|-apply|-report] e15 e18 rag system1 all)" >&2; exit 2 ;;
