@@ -408,4 +408,5 @@ if __name__ == "__main__":
         res = train_scorer_streaming(a.data, epochs=a.epochs, device=a.device, suffix=a.suffix)
     else:
         res = train_scorer(a.data, epochs=a.epochs, device=a.device) if a.train else baseline(a.data)
-    print(json.dumps(res, indent=1))
+    if not a.final:  # --final printed its record above
+        print(json.dumps(res, indent=1))

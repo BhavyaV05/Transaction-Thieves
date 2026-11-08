@@ -169,8 +169,11 @@ def test_final_pass_scores_test_rows_and_leaves_train_val_p0_unchanged(monkeypat
     tab = g.p0_table(full, "see_everything", None, "abc1234")
     g.p0_table(base, "see_everything", None, "abc1234").write_parquet(tmp_path / "data" / "scores" / "toy" / "p0_see_everything.parquet")
     train_gfp.write_final("toy", "see_everything", tab, "abc1234", 1.0)
+    other = tab.filter(pl.col("split") == "test").with_columns(pl.lit("fraudgt").alias("model"), pl.lit(True).alias("scored"))
+    other.write_parquet(tmp_path / "data" / "scores" / "toy" / "final" / "p0_fraudgt.parquet")  # another model's file, one more column
     got = g.read_p0("toy", mode="see_everything", split="test", root=str(tmp_path / "data" / "scores"))
-    assert got.height == len(test_p0) and set(got["split"]) == {"test"}
+    assert got.height == len(test_p0) and set(got["split"]) == {"test"} and set(got["model"]) == {"gfp_lgbm"}
+    assert g.read_p0("toy", split="test", root=str(tmp_path / "data" / "scores")).height == len(test_p0)
     monkeypatch.delenv("FTM_FINAL_RUN")
     with pytest.raises(guards.TestSplitLocked):
         g.read_p0("toy", split="test", root=str(tmp_path / "data" / "scores"))
