@@ -1,0 +1,25 @@
+{
+  "step": {
+    "id": "evidence_views",
+    "row": 8,
+    "phase": "post",
+    "machine_class": "gpu_s1",
+    "est_hours": 0.9,
+    "cmds": [
+      "python -m ftm.retrieval.evidence_views --data hi_small --final --explainers gnnexplainer pgexplainer",
+      "python -m ftm.retrieval.evidence_views --data hi_medium --final --explainers gnnexplainer pgexplainer"
+    ],
+    "depends_on": [
+      "intake",
+      "edge_scorer",
+      "explainers"
+    ],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "ff3a5ab5c1f5025473657c9807a6734f8ff855cd",
+  "start": "2026-11-08T17:17:13+0530",
+  "seconds": 5975.9,
+  "end": "2026-11-08T18:56:49+0530"
+}

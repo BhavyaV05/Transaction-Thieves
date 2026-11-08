@@ -1,0 +1,7 @@
+{
+ "data": "hi_medium",
+ "test_edges": 8818855,
+ "val_edges_compared": 3592257,
+ "max_abs_val_score_diff": 1.7110129220572479e-09,
+ "seconds": 185.69376373291016
+}

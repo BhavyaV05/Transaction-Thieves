@@ -1,0 +1,11 @@
+{
+ "dataset": "hi_small",
+ "mode": "see_everything",
+ "commit": "479d1d4",
+ "seconds": 728.9288492202759,
+ "rows_compared": 4214445,
+ "rows_stored": 4214445,
+ "null_mismatch": 0,
+ "max_abs_p0_diff_train_val": 1.1280906764277177e-14,
+ "test_rows": 863900
+}

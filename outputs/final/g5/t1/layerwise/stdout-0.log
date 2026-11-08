@@ -1,0 +1,6 @@
+  step 320: val fit AP 0.1386
+final {'arm': 'sync_sgd:bwd', 'seed': 0, 'step': 320, 'val_spearman_vs_stored': 0.9600877913877802, 'val_max_abs_diff_vs_stored': 0.8021325096487999, 'test_rows': 327433}
+  step 440: val fit AP 0.1962
+final {'arm': 'sync_sgd:bwd', 'seed': 1, 'step': 440, 'val_spearman_vs_stored': 0.930637019284804, 'val_max_abs_diff_vs_stored': 0.9813300465466455, 'test_rows': 327433}
+  step 480: val fit AP 0.1980
+final {'arm': 'sync_sgd:bwd', 'seed': 2, 'step': 480, 'val_spearman_vs_stored': 0.9501769362004823, 'val_max_abs_diff_vs_stored': 0.9492846019566059, 'test_rows': 327433}

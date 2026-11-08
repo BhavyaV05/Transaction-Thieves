@@ -1,0 +1,91 @@
+18:57:23 graphs built in 0s: train 1734608 edges, train+val 2979311 edges, 159743 nodes
+18:57:24 {"resumed_from": "models/mega_gnn/hi_medium_bank70.pt", "fit_ap": 0.0018627866500026788, "seed_edges_not_sampled": 0}
+18:57:37 bank 70: {'graph': 70, 'test_rows': 886699, 'val_rows_stored': 358004, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 5634} 20s
+18:57:37 graphs built in 0s: train 133445 edges, train+val 226188 edges, 18367 nodes
+18:57:38 {"resumed_from": "models/mega_gnn/hi_medium_bank12.pt", "fit_ap": 0.08931736260492744, "seed_edges_not_sampled": 0}
+18:57:39 bank 12: {'graph': 12, 'test_rows': 65774, 'val_rows_stored': 26969, 'calibration': 'isotonic', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 46} 23s
+18:57:40 graphs built in 0s: train 133018 edges, train+val 225559 edges, 19211 nodes
+18:57:40 {"resumed_from": "models/mega_gnn/hi_medium_bank11.pt", "fit_ap": 0.853616598110988, "seed_edges_not_sampled": 0}
+18:57:42 bank 11: {'graph': 11, 'test_rows': 65883, 'val_rows_stored': 26658, 'calibration': 'isotonic', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 26} 25s
+18:57:42 graphs built in 0s: train 128086 edges, train+val 216805 edges, 17086 nodes
+18:57:42 {"resumed_from": "models/mega_gnn/hi_medium_bank27.pt", "fit_ap": 0.5582625397586888, "seed_edges_not_sampled": 1}
+18:57:44 bank 27: {'graph': 27, 'test_rows': 62752, 'val_rows_stored': 25967, 'calibration': 'isotonic', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 27} 27s
+18:57:44 graphs built in 0s: train 123353 edges, train+val 209592 edges, 16665 nodes
+18:57:45 {"resumed_from": "models/mega_gnn/hi_medium_bank0.pt", "fit_ap": 0.7738048022440188, "seed_edges_not_sampled": 0}
+18:57:46 bank 0: {'graph': 0, 'test_rows': 60904, 'val_rows_stored': 25335, 'calibration': 'isotonic', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 18} 29s
+18:57:47 graphs built in 0s: train 121014 edges, train+val 205160 edges, 17040 nodes
+18:57:47 {"resumed_from": "models/mega_gnn/hi_medium_bank20.pt", "fit_ap": 0.8789928126795754, "seed_edges_not_sampled": 2}
+18:57:49 bank 20: {'graph': 20, 'test_rows': 59834, 'val_rows_stored': 24312, 'calibration': 'isotonic', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 24} 32s
+18:57:49 graphs built in 0s: train 84554 edges, train+val 142707 edges, 10849 nodes
+18:57:49 {"resumed_from": "models/mega_gnn/hi_medium_bank112.pt", "fit_ap": 1.0, "seed_edges_not_sampled": 0}
+18:57:50 bank 112: {'graph': 112, 'test_rows': 41284, 'val_rows_stored': 16869, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 0} 33s
+18:57:50 graphs built in 0s: train 78705 edges, train+val 133309 edges, 11885 nodes
+18:57:51 {"resumed_from": "models/mega_gnn/hi_medium_bank29.pt", "fit_ap": 1.0, "seed_edges_not_sampled": 0}
+18:57:51 bank 29: {'graph': 29, 'test_rows': 38697, 'val_rows_stored': 15907, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 9} 34s
+18:57:51 graphs built in 0s: train 76474 edges, train+val 129310 edges, 11026 nodes
+18:57:52 {"resumed_from": "models/mega_gnn/hi_medium_bank14.pt", "fit_ap": 0.9652777777777778, "seed_edges_not_sampled": 2}
+18:57:52 bank 14: {'graph': 14, 'test_rows': 37532, 'val_rows_stored': 15304, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 27} 36s
+18:57:53 graphs built in 0s: train 74108 edges, train+val 125174 edges, 11056 nodes
+18:57:53 {"resumed_from": "models/mega_gnn/hi_medium_bank15.pt", "fit_ap": 0.8591393436026205, "seed_edges_not_sampled": 0}
+18:57:54 bank 15: {'graph': 15, 'test_rows': 35996, 'val_rows_stored': 15070, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 3} 37s
+18:57:54 graphs built in 0s: train 73879 edges, train+val 124958 edges, 10669 nodes
+18:57:54 {"resumed_from": "models/mega_gnn/hi_medium_bank4.pt", "fit_ap": 0.5478618931475951, "seed_edges_not_sampled": 0}
+18:57:55 bank 4: {'graph': 4, 'test_rows': 36084, 'val_rows_stored': 14995, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 2} 38s
+18:57:55 graphs built in 0s: train 71520 edges, train+val 121037 edges, 10165 nodes
+18:57:55 {"resumed_from": "models/mega_gnn/hi_medium_bank25.pt", "fit_ap": 0.6625921456030255, "seed_edges_not_sampled": 0}
+18:57:56 bank 25: {'graph': 25, 'test_rows': 35187, 'val_rows_stored': 14330, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 13} 39s
+18:57:56 graphs built in 0s: train 69932 edges, train+val 118164 edges, 10359 nodes
+18:57:56 {"resumed_from": "models/mega_gnn/hi_medium_bank114.pt", "fit_ap": 0.3733055773969366, "seed_edges_not_sampled": 0}
+18:57:57 bank 114: {'graph': 114, 'test_rows': 34187, 'val_rows_stored': 14045, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 0} 40s
+18:57:57 graphs built in 0s: train 69507 edges, train+val 117635 edges, 10135 nodes
+18:57:58 {"resumed_from": "models/mega_gnn/hi_medium_bank3.pt", "fit_ap": 0.3215377044538144, "seed_edges_not_sampled": 0}
+18:57:58 bank 3: {'graph': 3, 'test_rows': 34189, 'val_rows_stored': 13939, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 3} 41s
+18:57:58 graphs built in 0s: train 65227 edges, train+val 110409 edges, 9092 nodes
+18:57:59 {"resumed_from": "models/mega_gnn/hi_medium_bank6.pt", "fit_ap": 0.5071235440601797, "seed_edges_not_sampled": 0}
+18:57:59 bank 6: {'graph': 6, 'test_rows': 31872, 'val_rows_stored': 13310, 'calibration': 'isotonic', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 17} 42s
+18:57:59 graphs built in 0s: train 61510 edges, train+val 104300 edges, 8603 nodes
+18:58:00 {"resumed_from": "models/mega_gnn/hi_medium_bank2310.pt", "fit_ap": 0.5978482348218802, "seed_edges_not_sampled": 1}
+18:58:00 bank 2310: {'graph': 2310, 'test_rows': 30297, 'val_rows_stored': 12493, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 36} 43s
+18:58:00 graphs built in 0s: train 61580 edges, train+val 104050 edges, 8865 nodes
+18:58:01 {"resumed_from": "models/mega_gnn/hi_medium_bank111.pt", "fit_ap": 0.25397546068057963, "seed_edges_not_sampled": 0}
+18:58:01 bank 111: {'graph': 111, 'test_rows': 29981, 'val_rows_stored': 12489, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 19} 44s
+18:58:01 graphs built in 0s: train 60022 edges, train+val 101968 edges, 8321 nodes
+18:58:02 {"resumed_from": "models/mega_gnn/hi_medium_bank214.pt", "fit_ap": 0.3721033057322768, "seed_edges_not_sampled": 1}
+18:58:02 bank 214: {'graph': 214, 'test_rows': 29702, 'val_rows_stored': 12244, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 69} 45s
+18:58:02 graphs built in 0s: train 59623 edges, train+val 100722 edges, 8768 nodes
+18:58:03 {"resumed_from": "models/mega_gnn/hi_medium_bank113.pt", "fit_ap": 0.3450660611065235, "seed_edges_not_sampled": 0}
+18:58:03 bank 113: {'graph': 113, 'test_rows': 29147, 'val_rows_stored': 11952, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 8} 46s
+18:58:03 graphs built in 0s: train 59501 edges, train+val 100717 edges, 8553 nodes
+18:58:04 {"resumed_from": "models/mega_gnn/hi_medium_bank1208.pt", "fit_ap": 0.9537715868361027, "seed_edges_not_sampled": 1}
+18:58:04 bank 1208: {'graph': 1208, 'test_rows': 29203, 'val_rows_stored': 12013, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 28} 47s
+18:58:04 graphs built in 0s: train 55820 edges, train+val 94742 edges, 8061 nodes
+18:58:04 {"resumed_from": "models/mega_gnn/hi_medium_bank2597.pt", "fit_ap": 0.797566469114158, "seed_edges_not_sampled": 0}
+18:58:05 bank 2597: {'graph': 2597, 'test_rows': 27460, 'val_rows_stored': 11462, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 17} 48s
+18:58:05 graphs built in 0s: train 52767 edges, train+val 89262 edges, 7744 nodes
+18:58:05 {"resumed_from": "models/mega_gnn/hi_medium_bank28.pt", "fit_ap": 0.0043768915450331375, "seed_edges_not_sampled": 0}
+18:58:06 bank 28: {'graph': 28, 'test_rows': 25853, 'val_rows_stored': 10642, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 5} 49s
+18:58:06 graphs built in 0s: train 52302 edges, train+val 88536 edges, 7868 nodes
+18:58:06 {"resumed_from": "models/mega_gnn/hi_medium_bank544.pt", "fit_ap": 0.9484004127966976, "seed_edges_not_sampled": 2}
+18:58:07 bank 544: {'graph': 544, 'test_rows': 25835, 'val_rows_stored': 10399, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 13} 50s
+18:58:07 graphs built in 0s: train 51557 edges, train+val 87419 edges, 7537 nodes
+18:58:07 {"resumed_from": "models/mega_gnn/hi_medium_bank210.pt", "fit_ap": 0.14219967848286433, "seed_edges_not_sampled": 0}
+18:58:07 bank 210: {'graph': 210, 'test_rows': 25303, 'val_rows_stored': 10559, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 7} 51s
+18:58:07 graphs built in 0s: train 50411 edges, train+val 85424 edges, 7223 nodes
+18:58:08 {"resumed_from": "models/mega_gnn/hi_medium_bank741.pt", "fit_ap": 0.26825673511066, "seed_edges_not_sampled": 1}
+18:58:08 bank 741: {'graph': 741, 'test_rows': 24792, 'val_rows_stored': 10221, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 26} 51s
+18:58:08 graphs built in 0s: train 50302 edges, train+val 85128 edges, 7594 nodes
+18:58:09 {"resumed_from": "models/mega_gnn/hi_medium_bank1818.pt", "fit_ap": 0.5127799142255772, "seed_edges_not_sampled": 0}
+18:58:09 bank 1818: {'graph': 1818, 'test_rows': 24611, 'val_rows_stored': 10215, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 12} 52s
+18:58:09 graphs built in 0s: train 48749 edges, train+val 82447 edges, 7387 nodes
+18:58:10 {"resumed_from": "models/mega_gnn/hi_medium_bank1601.pt", "fit_ap": 0.8750365911339053, "seed_edges_not_sampled": 0}
+18:58:10 bank 1601: {'graph': 1601, 'test_rows': 23765, 'val_rows_stored': 9933, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 20} 53s
+18:58:10 graphs built in 0s: train 48500 edges, train+val 82137 edges, 6981 nodes
+18:58:10 {"resumed_from": "models/mega_gnn/hi_medium_bank1046.pt", "fit_ap": 0.8604461547464834, "seed_edges_not_sampled": 0}
+18:58:11 bank 1046: {'graph': 1046, 'test_rows': 23944, 'val_rows_stored': 9693, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 30} 54s
+18:58:11 graphs built in 0s: train 48590 edges, train+val 81991 edges, 7284 nodes
+18:58:11 {"resumed_from": "models/mega_gnn/hi_medium_bank26.pt", "fit_ap": 0.031637027875640863, "seed_edges_not_sampled": 0}
+18:58:11 bank 26: {'graph': 26, 'test_rows': 23628, 'val_rows_stored': 9773, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 6} 55s
+18:58:12 graphs built in 0s: train 48010 edges, train+val 81322 edges, 7351 nodes
+18:58:12 {"resumed_from": "models/mega_gnn/hi_medium_bank2776.pt", "fit_ap": 0.6330464944513687, "seed_edges_not_sampled": 2}
+18:58:12 bank 2776: {'graph': 2776, 'test_rows': 23611, 'val_rows_stored': 9701, 'calibration': 'platt', 'val_p0_max_abs_diff': 0.0, 'test_not_scored': 52} 55s
+18:58:12 final mega_gnn one_bank done 55s

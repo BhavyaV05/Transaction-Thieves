@@ -1,0 +1,242 @@
+{
+ "commit": "ff3a5ab",
+ "seconds": 15.423430442810059,
+ "graphs": [
+  {
+   "graph": 70,
+   "test_rows": 81371,
+   "val_rows_stored": 99452,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 824
+  },
+  {
+   "graph": 10,
+   "test_rows": 20121,
+   "val_rows_stored": 24014,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 12,
+   "test_rows": 20039,
+   "val_rows_stored": 23900,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 1,
+   "test_rows": 15158,
+   "val_rows_stored": 18092,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 15,
+   "test_rows": 13750,
+   "val_rows_stored": 16296,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 220,
+   "test_rows": 13407,
+   "val_rows_stored": 15857,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 20,
+   "test_rows": 10315,
+   "val_rows_stored": 12228,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 3,
+   "test_rows": 9916,
+   "val_rows_stored": 11885,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 7,
+   "test_rows": 8789,
+   "val_rows_stored": 10400,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 211,
+   "test_rows": 8088,
+   "val_rows_stored": 9663,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 28,
+   "test_rows": 7885,
+   "val_rows_stored": 9566,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 1665,
+   "test_rows": 8017,
+   "val_rows_stored": 9387,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 116,
+   "test_rows": 7850,
+   "val_rows_stored": 9393,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 11,
+   "test_rows": 7206,
+   "val_rows_stored": 8569,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 22,
+   "test_rows": 7049,
+   "val_rows_stored": 8475,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 1292,
+   "test_rows": 6761,
+   "val_rows_stored": 8334,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 118,
+   "test_rows": 6711,
+   "val_rows_stored": 7929,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 23,
+   "test_rows": 6674,
+   "val_rows_stored": 7870,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 14,
+   "test_rows": 6423,
+   "val_rows_stored": 7506,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 1362,
+   "test_rows": 6261,
+   "val_rows_stored": 7420,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 6,
+   "test_rows": 6177,
+   "val_rows_stored": 7355,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 4,
+   "test_rows": 6060,
+   "val_rows_stored": 7143,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 214,
+   "test_rows": 5823,
+   "val_rows_stored": 6825,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 1420,
+   "test_rows": 5751,
+   "val_rows_stored": 6649,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 213,
+   "test_rows": 5482,
+   "val_rows_stored": 6543,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 410,
+   "test_rows": 5508,
+   "val_rows_stored": 6700,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 19,
+   "test_rows": 5189,
+   "val_rows_stored": 6280,
+   "calibration": "skipped: no val-fit positives"
+  },
+  {
+   "graph": 119,
+   "test_rows": 5285,
+   "val_rows_stored": 6234,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  },
+  {
+   "graph": 1674,
+   "test_rows": 5296,
+   "val_rows_stored": 6119,
+   "calibration": "skipped: no val-fit positives"
+  },
+  {
+   "graph": 1588,
+   "test_rows": 5071,
+   "val_rows_stored": 6136,
+   "calibration": "platt",
+   "val_p0_max_abs_diff": 0.0,
+   "test_not_scored": 0
+  }
+ ]
+}

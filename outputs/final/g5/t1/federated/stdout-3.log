@@ -1,0 +1,90 @@
+20:33:30   round 2/10 done
+20:33:33   round 4/10 done
+20:33:36   round 6/10 done
+20:33:39   round 8/10 done
+20:33:42   round 10/10 done
+20:33:44 final dpfedavg_edge_epsinf seed 0: {'setting': 'dpfedavg_edge_epsinf', 'seed': 0, 'epsilon': inf, 'sigma': 0.0, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:33:47   round 2/10 done
+20:33:50   round 4/10 done
+20:33:53   round 6/10 done
+20:33:57   round 8/10 done
+20:34:00   round 10/10 done
+20:34:00 final dpfedavg_edge_epsinf seed 1: {'setting': 'dpfedavg_edge_epsinf', 'seed': 1, 'epsilon': inf, 'sigma': 0.0, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:34:04   round 2/10 done
+20:34:07   round 4/10 done
+20:34:10   round 6/10 done
+20:34:13   round 8/10 done
+20:34:16   round 10/10 done
+20:34:17 final dpfedavg_edge_epsinf seed 2: {'setting': 'dpfedavg_edge_epsinf', 'seed': 2, 'epsilon': inf, 'sigma': 0.0, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:34:30   round 2/10 done
+20:34:43   round 4/10 done
+20:34:56   round 6/10 done
+20:35:09   round 8/10 done
+20:35:22   round 10/10 done
+20:35:23 final dpfedavg_edge_eps1 seed 0: {'setting': 'dpfedavg_edge_eps1', 'seed': 0, 'epsilon': 0.9999999999987061, 'sigma': 2.713507811211275, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:35:37   round 2/10 done
+20:35:50   round 4/10 done
+20:36:03   round 6/10 done
+20:36:16   round 8/10 done
+20:36:29   round 10/10 done
+20:36:29 final dpfedavg_edge_eps1 seed 1: {'setting': 'dpfedavg_edge_eps1', 'seed': 1, 'epsilon': 0.9999999999987061, 'sigma': 2.713507811211275, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:36:44   round 2/10 done
+20:36:58   round 4/10 done
+20:37:12   round 6/10 done
+20:37:26   round 8/10 done
+20:37:39   round 10/10 done
+20:37:40 final dpfedavg_edge_eps1 seed 2: {'setting': 'dpfedavg_edge_eps1', 'seed': 2, 'epsilon': 0.9999999999987061, 'sigma': 2.713507811211275, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:37:55   round 2/10 done
+20:38:10   round 4/10 done
+20:38:24   round 6/10 done
+20:38:38   round 8/10 done
+20:38:53   round 10/10 done
+20:38:54 final dpfedavg_edge_eps2 seed 0: {'setting': 'dpfedavg_edge_eps2', 'seed': 0, 'epsilon': 1.9999999999976752, 'sigma': 1.5817324043808183, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:39:09   round 2/10 done
+20:39:24   round 4/10 done
+20:39:38   round 6/10 done
+20:39:53   round 8/10 done
+20:40:08   round 10/10 done
+20:40:09 final dpfedavg_edge_eps2 seed 1: {'setting': 'dpfedavg_edge_eps2', 'seed': 1, 'epsilon': 1.9999999999976752, 'sigma': 1.5817324043808183, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:40:24   round 2/10 done
+20:40:40   round 4/10 done
+20:40:55   round 6/10 done
+20:41:09   round 8/10 done
+20:41:23   round 10/10 done
+20:41:24 final dpfedavg_edge_eps2 seed 2: {'setting': 'dpfedavg_edge_eps2', 'seed': 2, 'epsilon': 1.9999999999976752, 'sigma': 1.5817324043808183, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:41:40   round 2/10 done
+20:41:54   round 4/10 done
+20:42:09   round 6/10 done
+20:42:24   round 8/10 done
+20:42:39   round 10/10 done
+20:42:40 final dpfedavg_edge_eps4 seed 0: {'setting': 'dpfedavg_edge_eps4', 'seed': 0, 'epsilon': 3.9999999999949223, 'sigma': 1.0393837965295465, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:42:56   round 2/10 done
+20:43:11   round 4/10 done
+20:43:27   round 6/10 done
+20:43:42   round 8/10 done
+20:43:57   round 10/10 done
+20:43:58 final dpfedavg_edge_eps4 seed 1: {'setting': 'dpfedavg_edge_eps4', 'seed': 1, 'epsilon': 3.9999999999949223, 'sigma': 1.0393837965295465, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:44:13   round 2/10 done
+20:44:27   round 4/10 done
+20:44:41   round 6/10 done
+20:44:56   round 8/10 done
+20:45:11   round 10/10 done
+20:45:12 final dpfedavg_edge_eps4 seed 2: {'setting': 'dpfedavg_edge_eps4', 'seed': 2, 'epsilon': 3.9999999999949223, 'sigma': 1.0393837965295465, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:45:30   round 2/10 done
+20:45:45   round 4/10 done
+20:46:00   round 6/10 done
+20:46:15   round 8/10 done
+20:46:30   round 10/10 done
+20:46:31 final dpfedavg_edge_eps8 seed 0: {'setting': 'dpfedavg_edge_eps8', 'seed': 0, 'epsilon': 7.999999999987887, 'sigma': 0.7676116679311233, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:46:47   round 2/10 done
+20:47:02   round 4/10 done
+20:47:17   round 6/10 done
+20:47:32   round 8/10 done
+20:47:47   round 10/10 done
+20:47:48 final dpfedavg_edge_eps8 seed 1: {'setting': 'dpfedavg_edge_eps8', 'seed': 1, 'epsilon': 7.999999999987887, 'sigma': 0.7676116679311233, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}
+20:48:05   round 2/10 done
+20:48:20   round 4/10 done
+20:48:35   round 6/10 done
+20:48:50   round 8/10 done
+20:49:05   round 10/10 done
+20:49:06 final dpfedavg_edge_eps8 seed 2: {'setting': 'dpfedavg_edge_eps8', 'seed': 2, 'epsilon': 7.999999999987887, 'sigma': 0.7676116679311233, 'val_p0_max_abs_diff_vs_stored': 0.0, 'test_rows': 1924006}

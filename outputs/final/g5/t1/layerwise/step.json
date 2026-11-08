@@ -1,0 +1,22 @@
+{
+  "step": {
+    "id": "layerwise",
+    "row": 10,
+    "phase": "post",
+    "machine_class": "gpu_s1",
+    "est_hours": 3.0,
+    "cmds": [
+      "python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2",
+      "python scripts/train_layerwise.py --final --data hi_medium --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2"
+    ],
+    "depends_on": [],
+    "env": {},
+    "required": true
+  },
+  "status": "failed",
+  "commit": "53319790b3f7e3c80506591e6e7e70fc2c7778d4",
+  "start": "2026-11-08T20:55:47+0530",
+  "failed_command": "python scripts/train_layerwise.py --final --data hi_small --steps 480 --lr 6e-3 --arms sync_sgd:bwd --seeds 0 1 2",
+  "exit_code": 1,
+  "end": "2026-11-09T00:27:55+0530"
+}

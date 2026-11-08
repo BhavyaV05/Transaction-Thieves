@@ -1,0 +1,23 @@
+{
+  "step": {
+    "id": "edge_scorer",
+    "row": 6,
+    "phase": "post",
+    "machine_class": "gpu_s1",
+    "est_hours": 0.4,
+    "cmds": [
+      "python -m ftm.retrieval.edge_scorer --data hi_small --final",
+      "python -m ftm.retrieval.edge_scorer --data hi_medium --final"
+    ],
+    "depends_on": [],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "ff3a5ab5c1f5025473657c9807a6734f8ff855cd",
+  "start": "2026-11-08T15:51:58+0530",
+  "failed_command": "python -m ftm.retrieval.edge_scorer --data hi_small --final",
+  "exit_code": 1,
+  "end": "2026-11-08T15:55:33+0530",
+  "seconds": 214.5
+}

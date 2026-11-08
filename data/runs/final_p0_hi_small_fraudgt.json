@@ -1,0 +1,10 @@
+{
+ "commit": "022aa91",
+ "val_p0_max_abs_diff": 0.0,
+ "calibration": "isotonic",
+ "unscored_fill": 0.001029516251649401,
+ "test_rows": 863900,
+ "scored": 856198,
+ "unscored": 7702,
+ "unscored_share": 0.008915383724968168
+}

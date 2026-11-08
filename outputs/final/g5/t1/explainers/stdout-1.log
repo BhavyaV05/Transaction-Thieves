@@ -1,0 +1,58 @@
+16:14:41 hi_medium: 4478 alerts of 28 banks, methods ['gnnexplainer', 'pgexplainer']
+16:16:49 bank 2776: 140 alerts, 128s
+16:17:19 bank 26: 39 alerts, 30s
+16:18:56 bank 1046: 115 alerts, 97s
+16:20:07 bank 1601: 99 alerts, 71s
+16:21:44 bank 1818: 136 alerts, 97s
+16:23:36 bank 741: 149 alerts, 111s
+16:23:44 bank 210: 4 alerts, 8s
+16:26:01 bank 544: 176 alerts, 137s
+16:26:06 bank 28: PGExplainer trained on 5 train alerts, 2s
+16:26:06 bank 28: 1 alerts, 6s
+16:27:27 bank 2597: 115 alerts, 81s
+16:29:21 bank 1208: 149 alerts, 114s
+16:29:35 bank 113: 6 alerts, 13s
+16:30:54 bank 214: 98 alerts, 79s
+16:31:11 bank 111: 17 alerts, 17s
+16:34:24 bank 2310: 240 alerts, 193s
+16:39:50 bank 6: 359 alerts, 326s
+16:42:32 bank 3: 205 alerts, 162s
+16:43:03 bank 114: 42 alerts, 31s
+16:45:26 bank 25: 180 alerts, 143s
+16:46:41 bank 4: 91 alerts, 75s
+16:49:36 bank 15: 183 alerts, 175s
+16:51:17 bank 14: 119 alerts, 101s
+16:52:06 bank 29: 51 alerts, 50s
+16:58:58 bank 20: 462 alerts, 411s
+17:04:24 bank 0: 375 alerts, 326s
+17:08:13 bank 27: 254 alerts, 229s
+17:13:38 bank 11: 409 alerts, 325s
+17:17:13 bank 12: 264 alerts, 215s
+17:17:13 {
+ "gnnexplainer": {
+  "alerts": 4478,
+  "explainer_seconds_mean": 0.7794473539137744,
+  "explainer_seconds_median": 0.7048830986022949,
+  "subgraph_seconds_mean": 0.0005736395736633,
+  "mean_scored_edges": 44.75815096025011,
+  "p0_check": {
+   "alerts": 4477,
+   "share_abs_diff_below_1e-4": 0.4465043555952647,
+   "median_abs_diff": 0.0003434009850025177,
+   "spearman": 0.9572547866286815
+  }
+ },
+ "pgexplainer": {
+  "alerts": 4478,
+  "explainer_seconds_mean": 0.006586123918411507,
+  "explainer_seconds_median": 0.005861163139343262,
+  "subgraph_seconds_mean": 0.0005736395736633,
+  "mean_scored_edges": 44.13711478338544,
+  "p0_check": {
+   "alerts": 4477,
+   "share_abs_diff_below_1e-4": 0.4465043555952647,
+   "median_abs_diff": 0.0003434009850025177,
+   "spearman": 0.9572547866286815
+  }
+ }
+}

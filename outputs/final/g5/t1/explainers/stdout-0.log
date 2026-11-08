@@ -1,0 +1,51 @@
+15:55:34 hi_small: 1737 alerts of 22 banks, methods ['gnnexplainer', 'pgexplainer']
+15:56:04 bank 1588: 47 alerts, 30s
+15:57:05 bank 119: 88 alerts, 61s
+15:57:41 bank 410: 56 alerts, 36s
+15:58:02 bank 213: 32 alerts, 21s
+15:58:09 bank 1420: 9 alerts, 6s
+15:58:39 bank 214: 51 alerts, 30s
+15:59:55 bank 4: 133 alerts, 76s
+16:00:24 bank 1362: 46 alerts, 30s
+16:01:19 bank 14: 92 alerts, 55s
+16:02:25 bank 23: 101 alerts, 66s
+16:02:58 bank 1292: 55 alerts, 33s
+16:04:14 bank 22: 107 alerts, 76s
+16:06:03 bank 11: 152 alerts, 109s
+16:06:33 bank 116: 46 alerts, 30s
+16:07:11 bank 28: 62 alerts, 38s
+16:07:29 bank 211: 26 alerts, 17s
+16:08:03 bank 3: 54 alerts, 34s
+16:09:53 bank 20: 158 alerts, 110s
+16:10:27 bank 220: 55 alerts, 34s
+16:12:11 bank 1: 157 alerts, 103s
+16:14:25 bank 12: 193 alerts, 134s
+16:14:39 bank 10: 17 alerts, 15s
+16:14:40 {
+ "gnnexplainer": {
+  "alerts": 1737,
+  "explainer_seconds_mean": 0.6112484030155321,
+  "explainer_seconds_median": 0.5548593997955322,
+  "subgraph_seconds_mean": 0.00039244604028362476,
+  "mean_scored_edges": 25.30915371329879,
+  "p0_check": {
+   "alerts": 1737,
+   "share_abs_diff_below_1e-4": 0.45365572826712725,
+   "median_abs_diff": 0.0003846836043521762,
+   "spearman": 0.9436639445678768
+  }
+ },
+ "pgexplainer": {
+  "alerts": 1737,
+  "explainer_seconds_mean": 0.005653967031062713,
+  "explainer_seconds_median": 0.0049762725830078125,
+  "subgraph_seconds_mean": 0.00039244604028362476,
+  "mean_scored_edges": 25.20610247553253,
+  "p0_check": {
+   "alerts": 1737,
+   "share_abs_diff_below_1e-4": 0.45365572826712725,
+   "median_abs_diff": 0.0003846836043521762,
+   "spearman": 0.9436639445678768
+  }
+ }
+}

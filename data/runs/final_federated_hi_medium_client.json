@@ -1,0 +1,155 @@
+{
+ "commit": "ff3a5ab",
+ "hyper": {
+  "rounds": 10,
+  "local_steps": 600,
+  "lr": 0.5,
+  "clip": 1.0
+ },
+ "records": [
+  {
+   "setting": "dpfedavg_client_epsinf",
+   "seed": 0,
+   "epsilon": Infinity,
+   "sigma": 0.0,
+   "val_p0_max_abs_diff_vs_stored": 0.0,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_epsinf",
+   "seed": 1,
+   "epsilon": Infinity,
+   "sigma": 0.0,
+   "val_p0_max_abs_diff_vs_stored": 0.0,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_epsinf",
+   "seed": 2,
+   "epsilon": Infinity,
+   "sigma": 0.0,
+   "val_p0_max_abs_diff_vs_stored": 0.0,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps1",
+   "seed": 0,
+   "epsilon": 0.9999999999994013,
+   "sigma": 12.792631778709442,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps1",
+   "seed": 1,
+   "epsilon": 0.9999999999994013,
+   "sigma": 12.792631778709442,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps1",
+   "seed": 2,
+   "epsilon": 0.9999999999994013,
+   "sigma": 12.792631778709442,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps2",
+   "seed": 0,
+   "epsilon": 1.999999999998599,
+   "sigma": 6.796083572638417,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps2",
+   "seed": 1,
+   "epsilon": 1.999999999998599,
+   "sigma": 6.796083572638417,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps2",
+   "seed": 2,
+   "epsilon": 1.999999999998599,
+   "sigma": 6.796083572638417,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps4",
+   "seed": 0,
+   "epsilon": 3.9999999999985945,
+   "sigma": 3.6605536903314713,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps4",
+   "seed": 1,
+   "epsilon": 3.9999999999985945,
+   "sigma": 3.6605536903314713,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps4",
+   "seed": 2,
+   "epsilon": 3.9999999999985945,
+   "sigma": 3.6605536903314713,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps8",
+   "seed": 0,
+   "epsilon": 7.999999999985469,
+   "sigma": 2.0164901812686367,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps8",
+   "seed": 1,
+   "epsilon": 7.999999999985469,
+   "sigma": 2.0164901812686367,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps8",
+   "seed": 2,
+   "epsilon": 7.999999999985469,
+   "sigma": 2.0164901812686367,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps16",
+   "seed": 0,
+   "epsilon": 15.999999999998575,
+   "sigma": 1.1462644977033047,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps16",
+   "seed": 1,
+   "epsilon": 15.999999999998575,
+   "sigma": 1.1462644977033047,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  },
+  {
+   "setting": "dpfedavg_client_eps16",
+   "seed": 2,
+   "epsilon": 15.999999999998575,
+   "sigma": 1.1462644977033047,
+   "val_p0_max_abs_diff_vs_stored": null,
+   "test_rows": 1924006
+  }
+ ]
+}

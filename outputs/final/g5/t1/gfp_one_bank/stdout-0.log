@@ -1,0 +1,31 @@
+bank 70: ok 160s
+bank 10: ok 162s
+bank 12: ok 164s
+bank 1: ok 168s
+bank 15: ok 169s
+bank 220: ok 171s
+bank 20: ok 173s
+bank 3: ok 174s
+bank 7: ok 175s
+bank 211: ok 176s
+bank 28: ok 177s
+bank 1665: ok 177s
+bank 116: ok 178s
+bank 11: ok 181s
+bank 22: ok 182s
+bank 1292: ok 183s
+bank 118: ok 183s
+bank 23: ok 184s
+bank 14: ok 185s
+bank 1362: ok 185s
+bank 6: ok 186s
+bank 4: ok 186s
+bank 214: ok 187s
+bank 1420: ok 188s
+bank 213: ok 189s
+bank 410: ok 189s
+bank 19: skipped: too few positives 189s
+bank 119: ok 190s
+bank 1674: skipped: too few positives 191s
+bank 1588: ok 191s
+final {"dataset": "hi_small", "mode": "one_bank", "commit": "479d1d4", "seconds": 191.16432309150696, "rows_compared": 1477009, "rows_stored": 1526006, "null_mismatch": 0, "max_abs_p0_diff_train_val": 0.0, "test_rows": 327433}

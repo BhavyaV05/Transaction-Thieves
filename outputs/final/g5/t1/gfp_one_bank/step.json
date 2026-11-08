@@ -1,0 +1,21 @@
+{
+  "step": {
+    "id": "gfp_one_bank",
+    "row": 1,
+    "phase": "pre",
+    "machine_class": "gpu_s1",
+    "est_hours": 2.7,
+    "cmds": [
+      "python scripts/train_gfp.py --data hi_small --mode one_bank --final",
+      "python scripts/train_gfp.py --data hi_medium --mode one_bank --final"
+    ],
+    "depends_on": [],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "479d1d44855a0f0b03ccfaa790fde113fb64d9f1",
+  "start": "2026-11-08T13:07:28+0530",
+  "seconds": 7261.7,
+  "end": "2026-11-08T15:08:30+0530"
+}

@@ -1,0 +1,20 @@
+{
+  "step": {
+    "id": "gfp_see_everything",
+    "row": 2,
+    "phase": "pre",
+    "machine_class": "gpu_s1",
+    "est_hours": 0.3,
+    "cmds": [
+      "python scripts/train_gfp.py --data hi_small --mode see_everything --final"
+    ],
+    "depends_on": [],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "479d1d44855a0f0b03ccfaa790fde113fb64d9f1",
+  "start": "2026-11-08T15:08:30+0530",
+  "seconds": 729.9,
+  "end": "2026-11-08T15:20:40+0530"
+}

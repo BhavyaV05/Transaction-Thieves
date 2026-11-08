@@ -1,0 +1,21 @@
+{
+  "step": {
+    "id": "multi_gnn",
+    "row": 4,
+    "phase": "post",
+    "machine_class": "gpu_s1",
+    "est_hours": 3.4,
+    "cmds": [
+      "python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode one_bank",
+      "python scripts/train_gnn.py --final --model multi_gnn --data hi_medium --mode one_bank"
+    ],
+    "depends_on": [],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "878d55ceb87e729ccd94b8a7989c10d898677021",
+  "start": "2026-11-08T15:22:12+0530",
+  "seconds": 347.4,
+  "end": "2026-11-08T15:28:00+0530"
+}

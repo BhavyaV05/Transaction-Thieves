@@ -1,0 +1,21 @@
+{
+ "dataset": "hi_small",
+ "t_alert_from_val": 0.03228574885484481,
+ "alpha_launder": 0.6,
+ "alerts": 1737,
+ "positives": 268,
+ "bulk_alerts": 1592,
+ "bulk_positives": 141,
+ "tail_alerts": 145,
+ "unique_tx": 1645,
+ "projection_from_val": 1272.0,
+ "targets": {
+  "train": 20000,
+  "val_min": 1000,
+  "test": [
+   2500,
+   4000
+  ],
+  "test_pos_min": 375
+ }
+}

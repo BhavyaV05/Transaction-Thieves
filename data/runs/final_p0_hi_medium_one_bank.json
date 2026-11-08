@@ -1,0 +1,11 @@
+{
+ "dataset": "hi_medium",
+ "mode": "one_bank",
+ "commit": "479d1d4",
+ "seconds": 7068.980325222015,
+ "rows_compared": 4631477,
+ "rows_stored": 4631477,
+ "null_mismatch": 0,
+ "max_abs_p0_diff_train_val": 0.0,
+ "test_rows": 1924006
+}

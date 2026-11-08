@@ -1,0 +1,25 @@
+{
+  "step": {
+    "id": "intake",
+    "row": 3,
+    "phase": "pre",
+    "machine_class": "gpu_s1",
+    "est_hours": 0.1,
+    "cmds": [
+      "python scripts/make_alerts.py --data hi_small --final",
+      "python scripts/make_alerts.py --data hi_medium --final"
+    ],
+    "depends_on": [
+      "gfp_one_bank"
+    ],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "878d55ceb87e729ccd94b8a7989c10d898677021",
+  "start": "2026-11-08T15:22:11+0530",
+  "failed_command": "python scripts/make_alerts.py --data hi_small --final",
+  "exit_code": 1,
+  "end": "2026-11-08T15:22:12+0530",
+  "seconds": 0.9
+}

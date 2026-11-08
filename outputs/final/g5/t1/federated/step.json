@@ -1,0 +1,23 @@
+{
+  "step": {
+    "id": "federated",
+    "row": 9,
+    "phase": "post",
+    "machine_class": "gpu_s1",
+    "est_hours": 2.3,
+    "cmds": [
+      "python scripts/train_federated.py --final --data hi_small --unit client --eps 1 2 4 8 16 --seeds 0 1 2",
+      "python scripts/train_federated.py --final --data hi_small --unit edge --eps 1 2 4 8 --seeds 0 1 2",
+      "python scripts/train_federated.py --final --data hi_medium --unit client --eps 1 2 4 8 16 --seeds 0 1 2",
+      "python scripts/train_federated.py --final --data hi_medium --unit edge --eps 1 2 4 8 --seeds 0 1 2"
+    ],
+    "depends_on": [],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "ff3a5ab5c1f5025473657c9807a6734f8ff855cd",
+  "start": "2026-11-08T18:58:13+0530",
+  "seconds": 6653.3,
+  "end": "2026-11-08T20:49:06+0530"
+}

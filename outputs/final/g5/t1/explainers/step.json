@@ -1,0 +1,25 @@
+{
+  "step": {
+    "id": "explainers",
+    "row": 7,
+    "phase": "post",
+    "machine_class": "gpu_s1",
+    "est_hours": 2.6,
+    "cmds": [
+      "python scripts/run_explainers.py --data hi_small --final",
+      "python scripts/run_explainers.py --data hi_medium --final"
+    ],
+    "depends_on": [
+      "intake",
+      "multi_gnn",
+      "edge_scorer"
+    ],
+    "env": {},
+    "required": true
+  },
+  "status": "done",
+  "commit": "ff3a5ab5c1f5025473657c9807a6734f8ff855cd",
+  "start": "2026-11-08T15:55:33+0530",
+  "seconds": 4900.3,
+  "end": "2026-11-08T17:17:13+0530"
+}
