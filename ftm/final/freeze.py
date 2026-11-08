@@ -30,6 +30,7 @@ EXTRA_FROZEN = (
     "configs/llm/tuned.yaml", "configs/fusion/headroom_v1.json", "configs/fusion/headroom_v1_table.jsonl", "configs/fusion/headroom_v1_decisions.json",
     "configs/fusion/headroom_v1_accepted.json", "configs/fusion/headroom_v1_accepted_table.jsonl", "configs/decision/headroom_v1.yaml",
     "configs/t1_final/p0_recal_hi_medium.json",
+    "configs/fusion/enumerator_table.jsonl",  # the H3 enumerator arm's table (non_llm.yaml tables.enumerator), built on train 8 Nov
 )  # fmt: skip
 # Hashed like EXTRA_FROZEN but not tracked by git (outputs/ is ignored): the DSPy MIPROv2 program the dspy_react jobs load
 # (--dspy-program in configs/final/jobs.yaml). The preflight compares its hash with FREEZE.json instead of `git show`.
