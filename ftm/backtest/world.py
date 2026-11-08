@@ -57,7 +57,7 @@ def load_world(data: str, split: str = "train", seed: int = 0, bank_config: Bank
     root = Path(root)
     cfg = io.load_config(data)
     pq, views = root / cfg["parquet_dir"], root / cfg["views_dir"]
-    alerts = pl.read_parquet(root / cfg["alerts_dir"] / f"{split}.parquet")  # time-guard: not transactions
+    alerts = pl.read_parquet(root / io.alerts_dir(cfg) / f"{split}.parquet")  # time-guard: not transactions; FTM_P0_VARIANT=v2 reads the recalibrated p0
     if only_keep and "keep" in alerts.columns:
         alerts = alerts.filter(pl.col("keep"))
     alerts = alerts.sort(["timestamp", "alert_id"])

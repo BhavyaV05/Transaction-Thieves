@@ -612,3 +612,26 @@ def test_baselines_table_shows_the_look_ahead_column(tmp_path):
     assert script.main(["--split", "val", "--run", str(env["run_dir"]), "--inputs", str(env["inputs"]), "--outdir", str(out), "--n-boot", "200", "--no-figures"]) == 0
     head = (out / "table_baselines.csv").read_text().splitlines()[0] if (out / "table_baselines.csv").exists() else ""
     assert (not head) or "look-ahead" in head  # built only when a detection score table is provided; when built it carries the column
+
+
+def test_build_val_run_packages_chunks(tmp_path):
+    import importlib.util
+    import sys as _sys
+
+    spec = importlib.util.spec_from_file_location("build_val_run", Path(__file__).resolve().parents[1] / "scripts" / "build_val_run.py")
+    mod = importlib.util.module_from_spec(spec)
+    _sys.modules["build_val_run"] = mod
+    spec.loader.exec_module(mod)
+
+    def log(system, variant, ids):
+        return pl.DataFrame({"system": system, "variant": variant, "mode": "ported", "seed": 0, "split": "val", "event": "verdict",
+                             "alert_id": ids, "p0": 0.3, "label": 1})  # fmt: skip
+
+    for arm, system, ids in (("a", "ours_compose", ["x", "y"]), ("e16_student_s0", "ours_compose", ["x", "y"])):
+        for k, i in enumerate(([ids[0]], [ids[1]])):
+            (tmp_path / "llm" / arm / f"c00{k}").mkdir(parents=True)
+            log(system, "harness", i).write_parquet(tmp_path / "llm" / arm / f"c00{k}" / "runlog.parquet")
+    assert mod.main(["--llm", str(tmp_path / "llm"), "--out", str(tmp_path / "run")]) == 0
+    m = json.loads((tmp_path / "run" / "MANIFEST.json").read_text())
+    assert {j["variant"] for j in m["jobs"]} == {"harness", "student_s0"} and all(j["n_alerts"] == 2 for j in m["jobs"])
+    assert "label" not in pl.read_parquet(tmp_path / "run" / m["jobs"][0]["runlog_path"]).columns

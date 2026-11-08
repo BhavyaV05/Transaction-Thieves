@@ -1,0 +1,17 @@
+{
+ "source": "validation dry run, outputs/analysis/val_run_v3 (160 askable eval alerts)",
+ "n_val_alerts": 806,
+ "equivalence_margin": 0.01,
+ "margin_gap": 0.16598317817751362,
+ "best_simple_planner": "fixed_order",
+ "best_ported_external": "bed_llm",
+ "review_capacity": {
+  "kind": "top_fraction",
+  "fraction": 0.1,
+  "status": "placeholder, to be pre-registered"
+ },
+ "hub_cap": null,
+ "largest_cluster_share": 0.01488833746898263,
+ "best_ported_external_derived_on_val": "rewoo_adapted",
+ "best_ported_external_source": "G4 pick, configs/final/top_external.json (frozen 7 Nov: verdict rate >= 0.95, then val Brier); the gap-closed rule of ftm.eval.final.best_ported_external picks rewoo_adapted on the 160 val alerts, reported for information only"
+}
