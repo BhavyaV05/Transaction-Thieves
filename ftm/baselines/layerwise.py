@@ -343,6 +343,11 @@ def run(frames: dict[int, pl.DataFrame], x_edge: dict[int, np.ndarray], *, sync:
     g_ev = [ClientGraph(b, frames[b], node_bank, x_edge[b], client_of_bank, False) for b in banks]
     g_te = None
     if frames_test is not None:  # train+val+test graph: only the test rows are scored on it
+        for b in banks:  # accounts first seen in test get their bank; existing entries (and so the train/val graphs) are untouched
+            f = frames_test[b]
+            for col, bcol in (("src_id", "from_bank"), ("dst_id", "to_bank")):
+                for n, nb in zip(f[col].to_list(), f[bcol].to_list(), strict=True):
+                    node_bank.setdefault(n, nb)
         g_te = [ClientGraph(b, frames_test[b], node_bank, x_edge_test[b], client_of_bank, False) for b in banks]
     if sampled:
         sm_tr, sm_ev = Sampler(g_tr, fanout, x_device=device), Sampler(g_ev, fanout)
