@@ -86,9 +86,9 @@ arms)
     # shellcheck disable=SC2086
     run_arm "$OUT" "$name" "$sys" "$seed" "$lib" "fit:191:$CHUNK" "cal:109:109" -- $flags
   done < <($REPORT arms --tsv)
-  run $REPORT report --root "$OUT" ;;
+  run $REPORT report --root "$OUT" ${RAG_OVERRIDES:+--overrides-file "$RAG_OVERRIDES"} ;;
 report)
-  run $REPORT report --root "$OUT" ;;
+  run $REPORT report --root "$OUT" ${RAG_OVERRIDES:+--overrides-file "$RAG_OVERRIDES"} ;;
 combined)  # all chosen winners in one arm, seeds 0 and 1: the interaction check against the default
   [[ -f $OUT/selection.json ]] || { echo "no $OUT/selection.json: run the arms and the report first"; exit 1; }
   read -r lib flags < <($REPORT winner-flags --selection "$OUT/selection.json")
@@ -99,7 +99,7 @@ combined)  # all chosen winners in one arm, seeds 0 and 1: the interaction check
     # shellcheck disable=SC2086
     run_arm "$OUT" "planner_combined$([[ $seed == 1 ]] && echo _seed1)" planner "$seed" "$libpath" "fit:191:$CHUNK" "cal:109:109" -- $flags
   done
-  run $REPORT report --root "$OUT" ;;
+  run $REPORT report --root "$OUT" ${RAG_OVERRIDES:+--overrides-file "$RAG_OVERRIDES"} ;;
 eval)  # the once-only eval: refuse a second time
   EV=${EVAL_OUT:-outputs/rag_bench_eval}
   [[ -f $EV/.done ]] && { echo "eval already scored once ($EV/.done); it is never repeated"; exit 1; }

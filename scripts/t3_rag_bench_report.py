@@ -261,20 +261,23 @@ def group_report(arms: dict[str, Loaded], default: str, clusters: np.ndarray, th
     return out
 
 
-def select_component(arm_names: list[str], default: str, rep: dict, components: dict[str, str]) -> dict:
+def select_component(arm_names: list[str], default: str, rep: dict, components: dict[str, str], excluded: dict[str, str] | None = None) -> dict:
     """THE SELECTION RULE (docs/t3_rag_bench.md, fixed before any GPU run), per component, on val fit+cal:
     eligible = verdict rate >= 0.95, not collapsed. Tier 1: an eligible arm whose paired cluster-bootstrap 95% CI of
     Brier(arm) - Brier(default) lies below 0: the one with the lowest Brier. Tier 2 (no tier-1 arm): an eligible arm with CI upper bound
-    < +0.005 (non-inferior) that cuts mean prompt tokens by >= 10%: the cheapest. Else the default stays."""
+    < +0.005 (non-inferior) that cuts mean prompt tokens by >= 10%: the cheapest. Else the default stays.
+    `excluded` = arm -> reason: a RECORDED override (never a silent edit). The arm stays in the tables and in `candidates` with its numbers, marked
+    `excluded`, tier 0, and cannot win."""
+    excluded = excluded or {}
     cands = []
     for n in arm_names:
         if n == default:
             continue
         d = rep["vs_default"][n]["brier"]
         res = rep["resources"][n]
-        ok = res["no_verdict_rate"] <= 1 - MIN_VERDICT_RATE and not rep["collapse"][n]["collapsed"]
+        ok = res["no_verdict_rate"] <= 1 - MIN_VERDICT_RATE and not rep["collapse"][n]["collapsed"] and n not in excluded
         saving = 1 - res["tokens_in"] / max(rep["resources"][default]["tokens_in"], 1)
-        cands.append({"arm": n, "diff": d["diff"], "ci": d["ci"], "eligible": ok, "token_saving": saving,
+        cands.append({"arm": n, "diff": d["diff"], "ci": d["ci"], "eligible": ok, "token_saving": saving, **({"excluded": excluded[n]} if n in excluded else {}),
                       "tier": 1 if ok and d["ci"][1] < 0 else 2 if ok and d["ci"][1] < NON_INFERIORITY_MARGIN and saving >= MIN_TOKEN_SAVING else 0})  # fmt: skip
     t1 = sorted((c for c in cands if c["tier"] == 1), key=lambda c: c["diff"])
     t2 = sorted((c for c in cands if c["tier"] == 2), key=lambda c: -c["token_saving"])
@@ -314,7 +317,7 @@ def group_table(rep: dict, default: str) -> str:
     return t
 
 
-def build_report(root: Path, n_boot: int, parts=("fit", "cal"), select: bool = True, clusters_path: Path = CLUSTERS) -> dict:
+def build_report(root: Path, n_boot: int, parts=("fit", "cal"), select: bool = True, clusters_path: Path = CLUSTERS, excluded: dict[str, str] | None = None) -> dict:
     arms = build_arms()
     by_group: dict[str, dict[str, Loaded]] = {}
     comps = {a.name: a.component for a in arms}
@@ -334,7 +337,7 @@ def build_report(root: Path, n_boot: int, parts=("fit", "cal"), select: bool = T
     mapping = e18.load_clusters(clusters_path) if clusters_path.exists() else None
     thr = decision_threshold(str(DECISION))
     out: dict = {"parts": list(parts), "root": str(root), "n_boot": n_boot, "groups": {}, "selection": {}, "incomplete": {},
-           "settings_mismatch": out_bad}  # fmt: skip
+           "settings_mismatch": out_bad, "overrides": dict(excluded or {})}  # fmt: skip
     for g, arms_g in by_group.items():
         d = defaults[g]
         if d not in arms_g:
@@ -350,7 +353,7 @@ def build_report(root: Path, n_boot: int, parts=("fit", "cal"), select: bool = T
             for comp in sorted({comps[n] for n in done if comps[n] not in ("default", "seed", "combined")}):
                 members = [n for n in done if comps[n] == comp or n == d]
                 if len(members) > 1:
-                    out["selection"][f"{g}/{comp}"] = select_component(members, d, rep, comps)
+                    out["selection"][f"{g}/{comp}"] = select_component(members, d, rep, comps, excluded)
     return out
 
 
@@ -382,6 +385,8 @@ def markdown(rep: dict) -> str:
     if rep.get("settings_mismatch"):
         L += ["Arms excluded because summary.json does not record the settings their flags demand:", "", "```json",
               json.dumps(rep["settings_mismatch"], indent=1), "```", ""]
+    if rep.get("overrides"):
+        L += ["**Recorded overrides (the pre-written selection rule was not applied to these arms):**", ""] + [f"* `{n}`: {why}" for n, why in rep["overrides"].items()] + [""]
     if rep["incomplete"]:
         L += ["Incomplete / not comparable:", "", "```json", json.dumps(rep["incomplete"], indent=1), "```"]
     return "\n".join(L)
@@ -420,6 +425,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--root", type=Path, default=ROOT / "outputs" / "rag_bench")
     r.add_argument("--eval", action="store_true", help="score the eval part (frozen winners only; descriptive)")
     r.add_argument("--n-boot", type=int, default=4000)
+    r.add_argument("--overrides-file", type=Path, default=None, help="JSON {arm: reason}: the same recorded override as --exclude-arm, from a file (reasons with spaces)")
+    r.add_argument("--exclude-arm", action="append", default=[], metavar="ARM=REASON",
+                   help="recorded override: the arm is reported descriptively but cannot be selected; the reason is written to selection.json and report.md (repeatable)")
     r.add_argument("--clusters", type=Path, default=CLUSTERS)
     w = sub.add_parser("winner-flags")
     w.add_argument("--selection", type=Path, default=ROOT / "outputs" / "rag_bench" / "selection.json")
@@ -442,7 +450,10 @@ def main(argv: list[str] | None = None) -> int:
         flags, lib = winner_flags(sel)
         print(lib, " ".join(flags))
         return 0
-    rep = build_report(a.root, a.n_boot, parts=("eval",) if a.eval else ("fit", "cal"), select=not a.eval, clusters_path=a.clusters)
+    excluded = dict(x.split("=", 1) for x in a.exclude_arm)
+    if a.overrides_file:
+        excluded.update(json.loads(a.overrides_file.read_text(encoding="utf-8")))
+    rep = build_report(a.root, a.n_boot, parts=("eval",) if a.eval else ("fit", "cal"), select=not a.eval, clusters_path=a.clusters, excluded=excluded)
     a.root.mkdir(parents=True, exist_ok=True)
     (a.root / ("report_eval.json" if a.eval else "selection.json")).write_text(json.dumps(rep, indent=1, default=float))
     (a.root / ("report_eval.md" if a.eval else "report.md")).write_text(markdown(rep))
