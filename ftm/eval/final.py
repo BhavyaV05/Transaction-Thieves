@@ -196,6 +196,8 @@ class Run:
     job_table: list[dict] = field(default_factory=list)
     synthetic: bool = False  # a rehearsal run (manifest synthetic=true): never a result, labels may sit in the logs
     synth_labels: pl.DataFrame | None = None
+    coverage: list[dict] = field(default_factory=list)  # per job: frozen alerts, alerts with results (job_coverage table)
+    askable: dict[str, frozenset] = field(default_factory=dict)  # alert set -> the askable alerts, when some job covers only those
 
 
 def _read_log(job: JobSpec, idx: int, keep_label: bool = False) -> pl.DataFrame:
@@ -278,10 +280,13 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
     sub = [i for i, j in enumerate(jobs) if j.alert_set == "subset"]
     if sub:
         sets = [frozenset(log.filter((pl.col("_job") == i) & (pl.col("event") == "verdict"))["alert_id"].to_list()) for i in sub]
-        if len(set(sets)) > 1:
-            problems.append("subset jobs ran on different alert sets (subset hash must be equal across jobs): "
+        union = frozenset().union(*sets)
+        short = {s for s in sets if s != union}  # askable-only jobs (the harness asks only where a partner bank can answer)
+        if len(short) > 1:
+            problems.append("subset jobs ran on different alert sets (subset hash must be equal across jobs, or every job that covers "
+                            "fewer alerts must cover the same askable alerts): "
                             + ", ".join(f"job {i}: {len(s)} alerts" for i, s in zip(sub, sets, strict=True)))
-        subset_ids = tuple(sorted(sets[0]))
+        subset_ids = tuple(sorted(union))
         hashes = {jobs[i].subset_sha256 for i in sub if jobs[i].subset_sha256}
         top = (manifest or {}).get("subset_sha256")
         hashes |= {top} if top else set()
@@ -292,7 +297,9 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
         if subset_hash and subset_hash != mine:
             warnings.append(f"manifest subset_sha256 {subset_hash[:12]} differs from the sha256 of the sorted alert ids found in the "
                             f"logs ({mine[:12]}); the hash definitions may differ, the alert sets themselves agree across jobs")
-    problems += _check_against_id_files(log, jobs, manifest, Path(run_dir) if run_dir is not None else None, warnings, strict=split == "test")
+    coverage: list[dict] = []
+    problems += _check_against_id_files(log, jobs, manifest, Path(run_dir) if run_dir is not None else None, warnings, strict=split == "test",
+                                        coverage=coverage)  # fmt: skip
     if problems:
         raise AnalysisInputError("run is inconsistent:\n  - " + "\n  - ".join(problems))
     synth_labels = None
@@ -302,8 +309,11 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
     if "_label" in log.columns:
         log = log.drop("_label")
     table = (manifest or {}).get("job_table") or []
+    askable = {c["alert_set"]: c["_ids"] for c in coverage if c["alerts_with_results"] < c["frozen_alerts"]}
+    for c in coverage:
+        c.pop("_ids", None)
     return Run(split, run_id, jobs, log, manifest, warnings, subset_hash or (ids_sha256(subset_ids) if subset_ids else None),
-               subset_ids, missing_jobs, table, synthetic, synth_labels)  # fmt: skip
+               subset_ids, missing_jobs, table, synthetic, synth_labels, coverage, askable)  # fmt: skip
 
 
 def _read_ids(path: Path) -> list[str]:
@@ -311,11 +321,17 @@ def _read_ids(path: Path) -> list[str]:
 
 
 def _check_against_id_files(log: pl.DataFrame, jobs: list[JobSpec], manifest: dict | None, run_dir: Path | None, warnings: list[str],
-                            strict: bool = False) -> list[str]:
+                            strict: bool = False, coverage: list[dict] | None = None) -> list[str]:
     """MANIFEST subset_ids_path / full_test_ids_path (relative to the run dir): their hashes must be the manifest's, and every subset
-    job must have run exactly the frozen subset (and every full_test job exactly the full test set). strict (the test split): a
-    missing id file is an error, not a warning, since without it an arm with missing verdicts would be compared on fewer alerts."""
+    job must have run the frozen subset (and every full_test job the full test set). strict (the test split): a missing id file is
+    an error, not a warning, since without it an arm with missing verdicts would be compared on fewer alerts.
+
+    A job may cover fewer than the frozen ids only in one way: the LLM harness asks only about alerts where a partner bank can
+    answer (the askable alerts), so its verdict ids are a subset of the frozen ids, and every such job of the alert set must cover
+    the SAME askable ids. Extra ids, or two different shortfalls, are errors. Per-job coverage goes to `coverage` (the
+    job_coverage table); the headline compares on the askable alerts and the all-alerts table scores the rest with p0."""
     out: list[str] = []
+    coverage = coverage if coverage is not None else []
     if not manifest or run_dir is None:
         return out
     for key, hkey, kind in (("subset_ids_path", "subset_sha256", "subset"), ("full_test_ids_path", "full_test_sha256", "full_test")):
@@ -333,13 +349,29 @@ def _check_against_id_files(log: pl.DataFrame, jobs: list[JobSpec], manifest: di
             continue
         want = set(ids)
         inj = set(log.filter(pl.col("injection_id").is_not_null())["_job"].unique().to_list()) if "injection_id" in log.columns else set()
+        shortfalls: dict[frozenset, list[int]] = {}
         for i, j in enumerate(jobs):
             if j.alert_set != kind or i in inj:  # injection jobs run on their own attack items, not on test alerts
                 continue
             got = set(log.filter((pl.col("_job") == i) & (pl.col("event") == "verdict"))["alert_id"].to_list())
-            if got != want:
+            extra = got - want
+            if extra or not got:
                 out.append(f"job {i} ({j.job_id or j.system}): its {len(got)} alerts are not the frozen {kind} ids ({len(want)}): "
-                           f"{len(want - got)} missing, {len(got - want)} extra")  # fmt: skip
+                           f"{len(want - got)} missing, {len(extra)} extra")  # fmt: skip
+                continue
+            if got != want:
+                shortfalls.setdefault(frozenset(got), []).append(i)
+            coverage.append({"job": j.job_id or f"{j.system}/{j.variant}", "alert_set": kind, "frozen_alerts": len(want),
+                             "alerts_with_results": len(got), "share": len(got) / len(want), "_ids": frozenset(got)})  # fmt: skip
+        if len(shortfalls) > 1:
+            out.append(f"{kind} jobs that cover fewer than the frozen ids cover different alerts ("
+                       + "; ".join(f"jobs {v}: {len(k)} alerts" for k, v in shortfalls.items())
+                       + "): only one askable set is allowed")  # fmt: skip
+        elif shortfalls:
+            (s, idx), = shortfalls.items()
+            warnings.append(f"{len(idx)} {kind} job(s) cover only the {len(s)} askable alerts of the {len(want)} frozen ids "
+                            f"({len(s) / len(want):.1%}); headline comparisons use the askable alerts, the all_alerts table scores "
+                            "the rest with p0 (no verdict = no change)")  # fmt: skip
     return out
 
 
@@ -536,8 +568,10 @@ def question_only(p0: np.ndarray, alert_idx: np.ndarray, steps: pl.DataFrame, n_
     return fuse.sigmoid(fuse.logit(pred) + extra)
 
 
-def score_runs(run: Run, alerts: pl.DataFrame, fusion_params: dict | None = None) -> tuple[dict[Key, Scores], dict]:
-    """Scores for every (system, variant, mode, alert_set) of the run, on the master alerts. Returns (scores, info)."""
+def score_runs(run: Run, alerts: pl.DataFrame, fusion_params: dict | None = None,
+               only: dict[str, frozenset] | None = None) -> tuple[dict[Key, Scores], dict]:
+    """Scores for every (system, variant, mode, alert_set) of the run, on the master alerts. Returns (scores, info).
+    only: alert set -> the alerts to keep (run.askable: the headline compares every arm of that set on the askable alerts)."""
     ids = alerts["alert_id"].to_list()
     pos = {a: i for i, a in enumerate(ids)}
     n = len(ids)
@@ -556,6 +590,8 @@ def score_runs(run: Run, alerts: pl.DataFrame, fusion_params: dict | None = None
             continue
         vs = grp.filter(pl.col("alert_id").is_in(ids))
         info["dropped_unknown_alerts"] += grp.height - vs.height
+        if only and key.alert_set in only:
+            vs = vs.filter(pl.col("alert_id").is_in(sorted(only[key.alert_set])))
         if vs.is_empty():
             continue
         steps = s_all.filter((pl.col("system") == key.system) & (pl.col("variant") == key.variant) & (pl.col("mode") == key.mode)
@@ -588,7 +624,7 @@ def score_runs(run: Run, alerts: pl.DataFrame, fusion_params: dict | None = None
                 vals = vs[c].drop_nulls()
                 cost[c] = float(vals.mean()) if len(vals) else None
         if not steps.is_empty():
-            asked = steps.filter(pl.col("alert_id").is_in(ids))
+            asked = steps.filter(pl.col("alert_id").is_in(vs["alert_id"].unique().to_list()))
             cost["questions_per_alert"] = asked.height / (vs.height or 1)
             if "response_kind" in asked.columns:
                 cost["answered_per_alert"] = asked.filter(pl.col("response_kind") == "reply").height / (vs.height or 1)
@@ -644,6 +680,7 @@ class Panel:
     fixed: dict = field(default_factory=dict)
     fixed_derived: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    scores_all: dict[Key, Scores] = field(default_factory=dict)  # arms of an askable-only alert set, on every alert they logged
 
     # ---- roles
     def selector(self, role: str) -> dict:
@@ -777,7 +814,9 @@ def build_panel(run: Run, inputs: dict, systems: dict, fixed_path: str | Path | 
     acc = [alerts[c].to_list() for c in (inputs.get("alerts") or {}).get("account_cols", ["src_id", "dst_id"])]
     clusters = bs.cluster_ids(alerts["attempt_id"].to_list(), acc, hub_cap=hub)
     cinfo = {**bs.cluster_report(clusters), "hub_cap": hub}
-    scores, info = score_runs(run, alerts, _read_json(resolve_path((inputs.get("fusion") or {}).get("params"), split)))
+    fparams = _read_json(resolve_path((inputs.get("fusion") or {}).get("params"), split))
+    scores, info = score_runs(run, alerts, fparams, only=run.askable or None)
+    scores_all = {k: v for k, v in score_runs(run, alerts, fparams)[0].items() if k.alert_set in run.askable} if run.askable else {}
     sources: dict[str, Scores] = {}
     for name, spec in sc.items():
         if name == "one_bank" or not spec or not spec.get("path"):
@@ -785,7 +824,7 @@ def build_panel(run: Run, inputs: dict, systems: dict, fixed_path: str | Path | 
         p = load_score(spec, alerts, split)
         if p is not None:
             sources[name] = source_scores(name, p, y, p0)
-    panel = Panel(split, alerts, y, p0, clusters, cinfo, scores, sources, systems, n_boot, seed, run, fixed)
+    panel = Panel(split, alerts, y, p0, clusters, cinfo, scores, sources, systems, n_boot, seed, run, fixed, scores_all=scores_all)
     panel.warnings += run.warnings
     if info["dropped_unknown_alerts"]:
         panel.warnings.append(f"{info['dropped_unknown_alerts']} verdict rows are for alerts outside the headline alert set (dropped)")
