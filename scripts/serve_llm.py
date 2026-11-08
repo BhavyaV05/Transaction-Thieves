@@ -232,6 +232,11 @@ def llamacpp_command(prof: dict, name: str, model_path: str, host: str, port: in
 def serve_dual(cfg: dict, name: str, host: str, backend: str, dry_run: bool) -> int:
     """Two (or more) vLLM servers on one GPU. vLLM budgets its share from the memory free at start-up, so the members start one at a
     time; the next starts when the previous serves /models. Prints every command first; --dry-run stops there."""
+    # serve_down (t3_rerun.sh) SIGTERMs this process group, but the vLLM children run in their own sessions: turn SIGTERM into
+    # SystemExit so the `finally` below terminates them instead of leaving both servers holding the GPU.
+    import signal
+
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     import time
     import urllib.request
 

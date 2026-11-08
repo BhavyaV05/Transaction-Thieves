@@ -147,10 +147,10 @@ def markdown(rows: list[dict], p0row: dict, meta: dict, old_notes: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--root", type=Path, default=ROOT / "outputs" / "t3_val" / "eval")
+    ap.add_argument("--root", type=Path, default=ROOT / "outputs" / "t3_val_v3" / "eval")
     ap.add_argument("--clusters", type=Path, default=ROOT / "outputs" / "e18" / "clusters.json")
     ap.add_argument("--md", type=Path, default=ROOT / "docs" / "t3_val_runs.md")
-    ap.add_argument("--csv", type=Path, default=ROOT / "outputs" / "t3_val" / "table.csv")
+    ap.add_argument("--csv", type=Path, default=ROOT / "outputs" / "t3_val_v3" / "table.csv")
     ap.add_argument("--n-boot", type=int, default=bs.N_BOOT)
     ap.add_argument("--extra-root", type=Path, nargs="*", default=[], help="more spec directories (E16 runs on the Qwen server)")
     a = ap.parse_args(argv)
