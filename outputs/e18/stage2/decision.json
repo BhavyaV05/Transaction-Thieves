@@ -1,0 +1,51 @@
+{
+  "chosen": "gemma4-12b",
+  "reason": "smallest_equivalent_to_best",
+  "best": "gemma4-12b",
+  "margin": 0.001799999999999996,
+  "latency_s": [
+    8,
+    20
+  ],
+  "per_candidate": {
+    "gemma4-12b": {
+      "brier": 0.17405279381680744,
+      "diff_vs_best": 0.0,
+      "ci_vs_best": [
+        0.0,
+        0.0
+      ],
+      "median_s": 5.571320934497635,
+      "active_b": 12,
+      "params_b": 12,
+      "equivalent": true,
+      "meets_latency": true
+    },
+    "qwen3.8-27b-q3": {
+      "brier": 0.18440686415143218,
+      "diff_vs_best": 0.010354070334624738,
+      "ci_vs_best": [
+        -0.0023237599170333905,
+        0.02195683441443442
+      ],
+      "median_s": 5.43908415450278,
+      "active_b": 27,
+      "params_b": 27,
+      "equivalent": false,
+      "meets_latency": true
+    },
+    "qwen3-14b": {
+      "brier": 0.18896222192574388,
+      "diff_vs_best": 0.014909428108936446,
+      "ci_vs_best": [
+        0.004261753108535398,
+        0.025183343642247943
+      ],
+      "median_s": 3.2449052174961253,
+      "active_b": 14,
+      "params_b": 14,
+      "equivalent": false,
+      "meets_latency": true
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+ "library_schema_version": 1,
+ "shape_schema_version": 2,
+ "keying": "shape",
+ "frozen": true,
+ "content_hash": "386a0cd40a174f62",
+ "strategies": [
+  {
+   "strategy_id": "S0241",
+   "kind": "success",
+   "text": "In cases like this (any typology, 1 payers in, 0 payees out, 2 banks, amounts 1k-10k flat, over <6h), asking `n_counterparties(ALERT.receiver, dir=in, window=before(72))` helped: mean Brier gain +0.0060 over 61 past alerts.",
+   "question": "n_counterparties(ALERT.receiver, dir=in, window=before(72))",
+   "family": "n_counterparties:in",
+   "eps": 1.0,
+   "support": 61,
+   "mean_gain": 0.005978199498804916,
+   "se_gain": 0.00298237063938809,
+   "accepted": true,
+   "shape": {
+    "typology": "any",
+    "in_deg": "1",
+    "out_deg": "0",
+    "n_banks": "2",
+    "amount": "1k-10k flat",
+    "span": "<6h"
+   },
+   "account": null
+  },
+  {
+   "strategy_id": "S0275",
+   "kind": "success",
+   "text": "In cases like this (any typology, 1 payers in, 0 payees out, 2 banks, amounts 1k-10k flat, over <6h), asking `new_account(ALERT.receiver, days=2)` helped: mean Brier gain +0.0201 over 54 past alerts.",
+   "question": "new_account(ALERT.receiver, days=2)",
+   "family": "new_account",
+   "eps": 1.0,
+   "support": 54,
+   "mean_gain": 0.02008691094374919,
+   "se_gain": 0.0075092648897662284,
+   "accepted": true,
+   "shape": {
+    "typology": "any",
+    "in_deg": "1",
+    "out_deg": "0",
+    "n_banks": "2",
+    "amount": "1k-10k flat",
+    "span": "<6h"
+   },
+   "account": null
+  }
+ ]
+}
