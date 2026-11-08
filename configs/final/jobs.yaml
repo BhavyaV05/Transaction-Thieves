@@ -169,7 +169,7 @@ t1_final:
       est_hours: 1.5
       cmds:
         - python scripts/train_gfp.py --data hi_medium --mode see_everything --final
-    - id: multi_gnn             # row 4: the val checkpoints re-scored, nothing trained
+    - id: multi_gnn             # row 4: the val checkpoints re-scored, nothing trained (HI-Small see-everything dropped, issue 127)
       row: 4
       phase: post
       machine_class: gpu_s1
@@ -177,7 +177,6 @@ t1_final:
       cmds:
         - python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode one_bank
         - python scripts/train_gnn.py --final --model multi_gnn --data hi_medium --mode one_bank
-        - python scripts/train_gnn.py --final --model multi_gnn --data hi_small --mode see_everything
     - id: mega_gnn              # row 5
       row: 5
       phase: post
@@ -186,7 +185,6 @@ t1_final:
       cmds:
         - python scripts/train_gnn.py --final --model mega_gnn --data hi_small --mode one_bank
         - python scripts/train_gnn.py --final --model mega_gnn --data hi_medium --mode one_bank
-        - python scripts/train_gnn.py --final --model mega_gnn --data hi_small --mode see_everything
     - id: edge_scorer           # row 6
       row: 6
       phase: post
@@ -243,7 +241,8 @@ t1_final:
       phase: post
       machine_class: gpu_s1
       est_hours: 0.5
-      required: true
+      required: false           # 8 Nov: not run in the final run. The laptop's earlier --final run (7 Nov, before the freeze) is kept as data/scores/hi_small/final/p0_fraudgt.parquet
+                                # (counts only, no metric computed); the analysis reads that file and the report records it as a deviation. Do not select this step.
       env: {T1_EVAL_TEST: "1"}  # per docs/t1_final_run.md: set by run_final.py only; the wrapper adds T1_DUMP_ONLY=1 and T1_OUT and refuses without this
       cmds:
         - python scripts/fraudgt_final.py   # needs best.pt + pred_val.csv of the val run in data/fraudgt/val_run (configs/t1_final/fraudgt.yaml: dump_dir)
