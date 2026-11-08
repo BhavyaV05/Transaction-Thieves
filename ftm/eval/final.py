@@ -292,7 +292,7 @@ def load_run(split: str, run_dir: str | Path | None = None, logs: list[str | Pat
         if subset_hash and subset_hash != mine:
             warnings.append(f"manifest subset_sha256 {subset_hash[:12]} differs from the sha256 of the sorted alert ids found in the "
                             f"logs ({mine[:12]}); the hash definitions may differ, the alert sets themselves agree across jobs")
-    problems += _check_against_id_files(log, jobs, manifest, Path(run_dir) if run_dir is not None else None, warnings)
+    problems += _check_against_id_files(log, jobs, manifest, Path(run_dir) if run_dir is not None else None, warnings, strict=split == "test")
     if problems:
         raise AnalysisInputError("run is inconsistent:\n  - " + "\n  - ".join(problems))
     synth_labels = None
@@ -310,9 +310,11 @@ def _read_ids(path: Path) -> list[str]:
     return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
 
-def _check_against_id_files(log: pl.DataFrame, jobs: list[JobSpec], manifest: dict | None, run_dir: Path | None, warnings: list[str]) -> list[str]:
+def _check_against_id_files(log: pl.DataFrame, jobs: list[JobSpec], manifest: dict | None, run_dir: Path | None, warnings: list[str],
+                            strict: bool = False) -> list[str]:
     """MANIFEST subset_ids_path / full_test_ids_path (relative to the run dir): their hashes must be the manifest's, and every subset
-    job must have run exactly the frozen subset (and every full_test job exactly the full test set)."""
+    job must have run exactly the frozen subset (and every full_test job exactly the full test set). strict (the test split): a
+    missing id file is an error, not a warning, since without it an arm with missing verdicts would be compared on fewer alerts."""
     out: list[str] = []
     if not manifest or run_dir is None:
         return out
@@ -322,7 +324,8 @@ def _check_against_id_files(log: pl.DataFrame, jobs: list[JobSpec], manifest: di
             continue
         f = Path(rel) if Path(rel).is_absolute() else run_dir / rel
         if not f.exists():
-            warnings.append(f"manifest {key} {rel} not found: the {kind} alert set could not be checked against the frozen ids")
+            msg = f"manifest {key} {rel} not found: the {kind} alert set could not be checked against the frozen ids"
+            (out if strict else warnings).append(msg)
             continue
         ids = _read_ids(f)
         if manifest.get(hkey) and ids_sha256(ids) != manifest[hkey]:
