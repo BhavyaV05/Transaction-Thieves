@@ -1,0 +1,42 @@
+{
+  "selection": {
+    "functions": [
+      "typology"
+    ],
+    "tiers": "fast",
+    "per_function": {
+      "worth": false,
+      "inject": false,
+      "typology": true
+    },
+    "holm": {
+      "worth": {
+        "p": 0.0438956104389561,
+        "p_adj": 0.06269373062693731,
+        "reject": false
+      },
+      "inject": {
+        "p": 0.021397860213978603,
+        "p_adj": 0.06269373062693731,
+        "reject": false
+      },
+      "typology": {
+        "p": 0.0047995200479952005,
+        "p_adj": 0.023997600239976002,
+        "reject": true
+      },
+      "all_fast": {
+        "p": 0.005499450054994501,
+        "p_adj": 0.023997600239976002,
+        "reject": true
+      },
+      "all": {
+        "p": 0.020897910208979104,
+        "p_adj": 0.06269373062693731,
+        "reject": false
+      }
+    },
+    "delta": 0.002,
+    "alpha": 0.05
+  }
+}

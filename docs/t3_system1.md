@@ -220,3 +220,17 @@ step 5 0.2 h; step 6 about 6 arms x 300 alerts x ~9 s = ~4.5 h for fit+cal, plus
 * Multi-token options (teacher-forced option scoring) are not implemented: no decision needs them.
 * `scripts/e10_final.py` (the blind test-row scorer) was moved to the v3 frozen format but never run on test; `configs/final/jobs.yaml` still names `outputs/e10/fast_v2.json` and adapter `fast-s2`: change both to the frozen file and adapter chosen above when the final jobs are regenerated.
 * The E15 script's `fastmodel_screen` now sends the note in the training format with an unknown bank id ("?"); a small domain shift, noted.
+
+## 10. Results (8 Nov 2026)
+
+Full reports: `docs/results/system1_fitcal.md`, `docs/results/system1_eval.md`, `docs/results/e15_system1_screen_{planner,react}.json`. Dual serving on the 16 GB card needed Gemma at 0.68 of the memory (section 5; measured non-KV use 9.04 GiB).
+
+**Selection (frozen from fit + cal): typology only, fast tier.** worth and inject stay off.
+
+**Eval, scored once (160 alerts):** off 0.1893, selected 0.1868; difference −0.0025 [−0.0061, +0.0005]; AUC 0.7667 → 0.7692; 1 of 160 decisions flipped; speed-up 0.99. The typology fast tier was retired on eval (it could not beat the fit majority on cal), so every typology decision took the default.
+
+**Cascade bounds held on every decision type** (realised error within 2α = 0.10: injection 0.095, rule_applies 0.036, worth_asking 0.053, typology 0).
+
+**Injection screen on the held-out families:** recall 0.80 [0.761, 0.835], precision 0.91, false quarantine of look-alike notes 0.071 [0.052, 0.097]; weakest on hex (0.66) and rot13 (0.69) encodings.
+
+**E15 with the screen (attack success among exposed runs):** ReAct with the gate alone: authority 5.3%, smuggling 7.9%; with gate + screen: 0% on every kind. The planner is near 0% with or without the screen (at most 1.8% on one kind with the screen, 3.4% without the gate).
