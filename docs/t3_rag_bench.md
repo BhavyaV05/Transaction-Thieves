@@ -214,3 +214,29 @@ The arms, the selection rule and every threshold are exactly as written in secti
 ## 12. Recorded override: `menu_topk_all` is invalid (8 Nov 2026)
 
 The pre-written selection rule (section 1-2) picked `menu_topk_all` as the menu winner (tier 2, "non-inferior and cheaper": Brier difference -0.0021 [-0.0065, +0.0025], 23 % fewer prompt tokens). The arm failed the call-share validity check of the run (29 % of the alerts made an LLM call on fit/c001, minimum 30 %): the full 204-question menu overflows the prompt, most alerts return p0 with no LLM call (zero-call alerts 60/100 and 63/89 on fit, against 22/100 and 17/89 for `menu_topk_8`; PromptTooLong 0.79 per alert), so its near-p0 Brier and its "saving" are artefacts, not the full menu doing well. By the user's decision the arm is excluded from the selection as **invalid: failed the call-share check; most alerts return p0 because the full menu overflows the prompt**. The exclusion is a recorded override (`--overrides-file`, written to `selection.json` under `overrides` and printed in `report.md`), not an edit of the rule: the arm stays in every table with its numbers, with `excluded` and tier 0 in its candidate row. The menu component therefore keeps the default (`menu_topk_8`, the profile's own setting); no other component changed.
+
+## 13. Results (8 Nov 2026)
+
+Full reports: `docs/results/rag_bench_fitcal.md` (fit + cal, every arm), `docs/results/rag_bench_eval.md` (eval, once), `docs/results/rag_bench_world460_fitcal.md` (FinFRE-RAG pools).
+
+**Selection on fit + cal: every default kept.** No arm of any group passed tier 1 or tier 2; `menu_topk_all` passed tier 2 but is excluded by the recorded override of section 12. So the combined arm equals the default configuration.
+
+**Eval, scored once (ada world: 155 askable alerts, threshold 0.3227):**
+
+| arm | Brier | AUC |
+|---|---|---|
+| planner_default | 0.194 | 0.759 |
+| planner_combined | 0.194 | 0.760 |
+| p0 | 0.195 | 0.753 |
+| sharma_ported (default) | 0.233 | 0.666 |
+| sharma_native (default) | 0.237 | 0.672 |
+| co_investigator_native (default) | 0.257 | 0.706 |
+| co_investigator_ported (default) | 0.272 | 0.655 |
+| finfre_rag_native (default) | 0.283 | 0.699 |
+| finfre_rag_ported (default) | 0.302 | 0.711 |
+| torres_native (default) | 0.413 | 0.611 |
+| torres_ported (default) | 0.434 | 0.555 |
+
+planner_combined minus planner_default: −0.0001 [−0.0011, +0.0008]; planner_default minus p0: −0.0004 [−0.0061, +0.0053]. Co-Investigator native gave no verdict on 61% of the eval alerts (its own behaviour; scored as p0).
+
+**World note.** The ada data lacks the views of banks 70 and 112: 453 askable alerts there against 460 on the 5070 Ti, and 155 instead of 160 on eval. All arms of a comparison share the same alerts; the absolute numbers are not directly comparable with the 5070 Ti tables. The FinFRE-RAG pool groups chose in the 460 world and were scored on eval in the 453 world.
