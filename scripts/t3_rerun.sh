@@ -377,6 +377,7 @@ stage_system1() {  # docs/t3_system1.md section 8, steps 3-8 (steps 0-2 are queu
   # 5. dual-serve smoke test: must answer both models, per_alert has s1_decisions > 0, no OOM
   env_vllm; serve_dual
   local s1="--system1-model fast3-s$S1_SEED --system1-endpoint ${FTM_FAST_ENDPOINT:-http://127.0.0.1:8001/v1}"
+  mk outputs/s1   # the smoke log is written here before any run dir exists
   if [[ ! -f outputs/s1/smoke/summary.json ]]; then
     # shellcheck disable=SC2086
     run_log outputs/s1/smoke.log $PY scripts/run_llm_agent.py --system planner --alerts val --val-part fit --data hi_medium --n 8 $COMMON --model gemma4-12b-dual \
