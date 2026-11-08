@@ -492,6 +492,19 @@ def test_runner_manifest_is_read_and_checked_against_the_id_files(tmp_path):
         fn.load_run("val", env["run_dir"])
 
 
+def test_missing_id_file_warns_on_val_and_is_an_error_on_test(tmp_path):
+    env = build_run(tmp_path)
+    to_runner_manifest(env)
+    (env["run_dir"] / "subset_ids.txt").unlink()
+    run = fn.load_run("val", env["run_dir"])  # val: a warning, the analysis goes on
+    manifest = json.loads((env["run_dir"] / "MANIFEST.json").read_text())
+    jobs, _ = fn.parse_manifest(env["run_dir"] / "MANIFEST.json")
+    warnings: list[str] = []
+    assert fn._check_against_id_files(run.log, jobs, manifest, env["run_dir"], warnings) == [] and any("not found" in w for w in warnings)
+    problems = fn._check_against_id_files(run.log, jobs, manifest, env["run_dir"], [], strict=True)  # test: refused
+    assert len(problems) == 1 and "subset_ids.txt not found" in problems[0]
+
+
 def test_partial_manifest_marks_missing_arms_and_still_produces_tables(tmp_path):
     env = build_run(tmp_path)
     to_runner_manifest(env, drop=("ext_react.parquet", "random.parquet"))
