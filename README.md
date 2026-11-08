@@ -1,3 +1,5 @@
+> **Reviewers: start with [`REVIEW.md`](REVIEW.md).** It has the repo map, where results live, how to run the tests and the final run, and the known deviations.
+
 # Transaction-Thieves: Follow the Money Without Moving the Data
 
 Team **Cache me if you can** (LMA Group Project 2026). Banks see only their own customers' transactions, but launderers route money across banks. Our system lets a bank ask other banks a few small, private, typed questions (each answered with one differentially-private value), back-tests every question before it may affect a decision, and makes the final call with a formula, never with LLM text.
