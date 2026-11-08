@@ -95,6 +95,7 @@ a window-capped 335 MB per sequence on the sliding layers = ~0.45 GB per 7k-toke
 
 **Verdict: it does not fit with a safe margin** (15.6 GB needed vs 15.0-15.4 GB usable, and the estimates carry about +-0.5 GB).  It may start if the desktop is
 below 0.9 GB; the smoke test below decides.  Start order matters (each vLLM sizes itself from the memory free at start-up): Gemma first, then the fast server.
+**Measured 8 Nov (vLLM 0.31, desktop 1.1 GiB):** at 0.76 Gemma used 9.04 GiB outside its KV cache (weights 8.6, activations 0.41, CUDA graphs 0.03), well under the ~10.8 GB estimate, and the fast server then found 2.7 GiB free, less than its 3.25 GiB, and failed. The profile now uses 0.68 (10.52 GiB): 1.48 GiB of fp8 KV, enough for the 4 sequences, and about 3.8 GiB left for the fast server.
 Fallbacks, in order: (1) close the desktop session (0.9 -> ~0.3 GB); (2) drop the Gemma KV to `--max-num-seqs 2` (the integration runs then use `--concurrency 2`);
 (3) the offline path needs no dual serving: fast and large scoring of the decision set, calibration and the cascade report run one server at a time
 (`scripts/t3_qwen_session.sh fast3|large3`), only the live integration arms need both.  The fast tier is NOT run as a prompt on the Gemma server: that would be a different model.
