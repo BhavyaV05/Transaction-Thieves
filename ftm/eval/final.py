@@ -399,7 +399,7 @@ def build_alert_table(ds: str, split: str, out: str | Path) -> Path:
     if split == "test":
         guards.require_final_run("the test alert table")
     cfg = io.load_config(ds)
-    alerts = pl.read_parquet(Path(cfg["alerts_dir"]) / f"{split}.parquet")  # time-guard: not transactions
+    alerts = pl.read_parquet(io.alerts_dir(cfg) / f"{split}.parquet")  # time-guard: not transactions; FTM_P0_VARIANT=v2 reads the v2 p0 (the final run's one-bank score)
     tx = io.scan_transactions(cfg["parquet_dir"], split=split, columns=["tx_id", "src_id", "dst_id", "day"]).collect()
     pat = io.scan_patterns(cfg["parquet_dir"], split=split).select("tx_id", "attempt_id").collect()
     df = join_alert_table(alerts, tx.select("tx_id", "src_id", "dst_id"), pat)
