@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "synthetic": false,
+  "data": "hi_medium",
+  "rule": {
+    "n": 1000,
+    "seed": 0,
+    "strata": "bank_p0_decile"
+  },
+  "n_subset": 1000,
+  "pool": "bulk days (~test_tail)",
+  "n_pool": 3873,
+  "subset_sha256": "2faf01a4c6aa9db53622aff6577e0d6aade0fd95551dd872bf63c6c5921f94bd",
+  "n_full_test": 4478,
+  "full_test_sha256": "4643ebea8a61f7899669750911975b1b619566a8e0431368f528220970174d84",
+  "subset_ids": "subset_ids.txt",
+  "full_test_ids": "full_test_ids.txt",
+  "commit": "878d55ceb87e729ccd94b8a7989c10d898677021",
+  "created": "2026-11-08T15:22:12+0530"
+}
