@@ -297,7 +297,9 @@ def main(argv: list[str] | None = None) -> int:
     if a.plan and not a.confirm_final:
         report["--confirm-final"] = []  # not needed to look
     report["commands for the selected jobs"] = pf.check_job_commands(chosen) + t1.check_commands(t1_chosen)
-    report["T1 entry points (scripts/t1_final_check.py)"] = t1.check_t1_entry_points(artefacts=True, run_help=not a.plan, steps=None if a.plan else t1_chosen)
+    # --manifest-only runs no T1 step, so the steps' input artefacts (stored on the machine that ran them) are not checked here
+    report["T1 entry points (scripts/t1_final_check.py)"] = t1.check_t1_entry_points(artefacts=not a.manifest_only, run_help=not a.plan,
+                                                                                     steps=None if a.plan else t1_chosen)  # fmt: skip
     builders = [s for s in t1_all if s.phase == "pre" and s.cmds]
     report["test alert set"] = pf.check_test_alert_source(ROOT / cfg["test_alerts"]["path"].format(data=cfg["data"]),
                                                            cfg["test_alerts"].get("cmd") or (builders[0].job_id if builders else None))  # fmt: skip

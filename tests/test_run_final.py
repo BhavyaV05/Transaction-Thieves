@@ -967,6 +967,18 @@ def test_manifest_only_runs_no_t1_step(world, tmp_path):
     assert not sentinel.exists()
 
 
+def test_manifest_only_does_not_check_t1_input_artefacts(world, tmp_path, monkeypatch):
+    """The manifest is written on one machine after T1 steps ran on another: their input artefacts are not here and need not be."""
+    paths, h = world
+    alerts = tmp_path / "test.parquet"
+    write_test_alerts(alerts)
+    seen = []
+    monkeypatch.setattr(t1, "check_t1_entry_points", lambda artefacts=True, run_help=True, steps=None: seen.append(artefacts) or [])
+    cfg_file = write_jobs_config(tmp_path, alerts, t1_final={"steps": [step("s", ["echo hi"], "pre")]})
+    run_final.main(final_args(world, tmp_path, cfg_file, "--run-id", "g5", "--only", "t1.*", "--manifest-only", "--confirm-final", h))
+    assert seen and not any(seen)
+
+
 def test_plan_and_preflight_flag_t1_steps_without_a_command(world, tmp_path, capsys):
     paths, h = world
     alerts = tmp_path / "test.parquet"
