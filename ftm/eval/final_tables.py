@@ -478,10 +478,13 @@ def all_alerts(panel: Panel, w: Writer) -> list[dict]:
         m = frozen.get(k.alert_set)
         if m is None or not m.any():
             continue
-        v = np.where(m, np.where(np.isfinite(s.se_e2e), s.se_e2e, se0), np.nan)
+        ask = panel.run.askable.get(k.alert_set, frozenset())
+        a_m = np.array([a in ask for a in ids])
+        # non-askable alerts: no question can be asked, so every arm is the one-bank score there (the CPU arms log a no-verdict row
+        # whose p0 may be another variant; the alert table's p0 is the one every arm is compared against)
+        v = np.where(m, np.where(a_m & np.isfinite(s.se_e2e), s.se_e2e, se0), np.nan)
         B = panel.boot({"arm": v, "one_bank": np.where(m, se0, np.nan)})
         d = fn.diff_stat(B, "arm", "one_bank")
-        ask = panel.run.askable.get(k.alert_set, frozenset())
         rows.append({"system": k.system, "variant": k.variant, "mode": k.mode, "alerts": k.alert_set, "n": B["n"],
                      "askable": int(sum(a in ask for a in np.asarray(ids)[B["mask"]])), "brier": B["point"]["arm"],
                      "brier one bank": B["point"]["one_bank"], "difference": d["point"], "ci_lo": d["ci"][0], "ci_hi": d["ci"][1]})  # fmt: skip
