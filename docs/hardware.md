@@ -26,7 +26,7 @@ Companion to `tracks.md` section 1 and `plan.md` section 12.
 
 HI-Medium needs lazy Polars/DuckDB scans on machines with less than 32 GB. Full-graph jobs default to Akshat's PC.
 
-## 3. Week-0 smoke tests (tick when done; details in `tasks/`)
+## 3. Week-0 smoke tests (as recorded in week 0)
 
 - [ ] **T3:** vLLM + Qwen3-8B (4-bit), Qwen3-4B, gpt-oss-20b run on the 5070 Ti. Ran 2026-10-23 on native Linux: **Qwen3-8B-AWQ and Qwen3-4B-AWQ pass on sm_120; gpt-oss-20b runs out of memory next to the desktop (not ticked until it loads or the fallback is agreed).** Recipe below; results and errors: `docs/t3_week0.md` section 4.
 - [x] **T1 (proxy only):** Qwen3-8B Q4_K_M via **ollama/GGUF, not vLLM**, loads 100% on the 3070 Ti (6.4 GB of 8.2 GB VRAM peak) and answers a ~5,900-token prompt in ~3.3 s (about 2,100 prompt tok/s, 62 generation tok/s). The vLLM 4-bit check on the same checkpoint is still open, so the second-server decision is not final. Details: `docs/t1_week0.md` section 6.
@@ -113,6 +113,6 @@ FTM_LLM_MODEL=qwen3-8b
 ## 6. Rules
 
 1. Timing numbers (latency, GPU-seconds) are measured on the reference machine only. Brier/accuracy can come from any machine with the identical checkpoint and settings.
-2. One workload per GPU: training and serving do not share a GPU. Block time in `GPU_CALENDAR.md`.
+2. One workload per GPU: training and serving do not share a GPU. During the project, GPU time was booked in `GPU_CALENDAR.md` (removed after the project; it is in the git history).
 3. Laptops: plugged in, cooling, checkpoint at least hourly, no multi-day single runs.
-4. Log GPU-hours per machine weekly in `GPU_CALENDAR.md`.
+4. GPU-hours per machine were logged weekly in the same calendar file.
