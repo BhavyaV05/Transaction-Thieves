@@ -189,7 +189,7 @@ External & BED-LLM (frozen pick) & 0.1956 & $-0.410$ [$-0.831$, $-0.176$] & 2.76
 \label{tab:main}
 \end{table}
 
-Table~\ref{tab:big} in the appendix puts every system we ran on test side by side on every metric; Tables~\ref{tab:detval} and~\ref{tab:valagents} do the same for all detection models and all thirteen LLM agents on validation.
+Table~\ref{tab:big} in the appendix puts every model we ran on test side by side with ours on every metric, Table~\ref{tab:bigabl} does the same for our variants and ablations, and Tables~\ref{tab:detval} and~\ref{tab:valagents} do the same for all detection models and all thirteen LLM agents on validation.
 
 \paragraph{Main result (H1, H2).} Table~\ref{tab:main} shows the headline. Our system's Brier (0.1673) is statistically the same as the bank working alone (0.1668): it closes essentially none of the gap. Even raw, noise-free records from three partner banks close only 4\% of the gap, and its interval also covers zero. This tells us the limit is not mainly privacy noise: on these alerts, the evidence a partner bank can supply about one counterparty adds little beyond what GFP already computes from the home bank's graph. The privacy curve is flat ($\eps=1$, 2 and 4 are within 0.0013 Brier of each other), which is consistent with that reading.
 
@@ -329,7 +329,7 @@ Everything is in the repository:\\ \url{https://github.com/BhavyaV05/Transaction
 \begin{landscape}
 \begin{table}
 \centering
-\caption{\textbf{Every system on the test split against ours, on every metric.} HI-Medium, frozen final run g5, budget $\varepsilon=2$ per alert unless stated. $\Delta B$ = Brier minus one bank on the same alerts (negative is better). Gap closed is against GFP see-everything; ``QO'' scores only the system's questions through our fusion. AUC = ROC-AUC. ECE uses 10 equal-mass bins. P@10\%, R@10\% = precision and recall when the top 10\% of alerts by score are reviewed. No-v. = share of alerts with no usable verdict (scored as $p_0$). Costs are per alert; tokens are input plus output. Non-LLM planners and raw sharing use no LLM. Confidence intervals for the main rows are in Tables~\ref{tab:main}--\ref{tab:abl}.}
+\caption{\textbf{Every model we tested against ours, on every metric} (test split, HI-Medium, frozen final run g5, $\varepsilon=2$ per alert). \textcolor{ours}{\textbf{Ours}} is the frozen, pre-registered system; its variants and ablations are in Table~\ref{tab:bigabl}. \textbf{Bold} = best value in each quality column among all systems except the see-everything upper limit ($^\ast$), which needs every bank's data; ties of more than three systems are not marked. $\Delta B$ = Brier minus one bank on the same alerts (negative is better). Gap closed is against GFP see-everything; ``QO'' scores only the system's questions through our fusion. AUC = ROC-AUC. ECE uses 10 equal-mass bins. P@10\%, R@10\% = precision and recall when the top 10\% of alerts by score are reviewed. No-v. = share of alerts with no usable verdict (scored as $p_0$). Costs are per alert; tokens are input plus output. Non-LLM planners and raw sharing use no LLM. Confidence intervals for the main rows are in Tables~\ref{tab:main} and~\ref{tab:ext}.}
 \label{tab:big}
 \setlength{\tabcolsep}{3.2pt}
 \scriptsize
@@ -340,45 +340,66 @@ Everything is in the repository:\\ \url{https://github.com/BhavyaV05/Transaction
 Group & System & Brier & $\Delta B$ & Gap & Gap QO & AUC & PR-AUC & ECE & P@10\% & R@10\% & No-v. & Qs & $\varepsilon$ & LLM calls & Tokens & GPU-s \\
 \midrule
 \multicolumn{17}{l}{\textit{All 771 askable test alerts (241 laundering)}}\\
-Reference & One bank only (GFP $p_0$) & 0.1668 & -- & 0 & -- & 0.809 & 0.660 & 0.098 & 0.83 & 0.27 & -- & -- & -- & -- & -- & -- \\
- & See everything (GFP, upper limit) & 0.0966 & $-$0.0702 & 1.000 & -- & 0.915 & 0.876 & 0.055 & 1.00 & 0.32 & -- & -- & -- & -- & -- & -- \\
- & Raw records, 3 banks, no privacy & 0.1640 & $-$0.0028 & 0.040 & -- & 0.846 & 0.731 & 0.140 & 0.83 & 0.27 & 0.00 & 1.99 & 0.00 & -- & -- & -- \\
-\addlinespace[2pt]
+Reference & One bank only (GFP $p_0$) & 0.1668 & 0.0000 & 0.000 & -- & 0.809 & 0.660 & \textbf{0.098} & 0.83 & 0.27 & -- & -- & -- & -- & -- & -- \\
+ & See everything (GFP, upper limit)$^\ast$ & 0.0966 & $-$0.0702 & 1.000 & -- & 0.915 & 0.876 & 0.055 & 1.00 & 0.32 & -- & -- & -- & -- & -- & -- \\
+ & Raw records, 3 banks, no privacy & \textbf{0.1640} & \textbf{$-$0.0028} & \textbf{0.040} & -- & \textbf{0.846} & \textbf{0.731} & 0.140 & 0.83 & 0.27 & 0.00 & 1.99 & 0.00 & -- & -- & -- \\
+\addlinespace[3pt]
 Non-LLM planners & Random & 0.1698 & 0.0029 & $-$0.042 & $-$1.27 & 0.810 & 0.665 & 0.103 & 0.81 & 0.26 & 0.00 & 5.12 & 1.83 & -- & -- & -- \\
  & Fixed expert order & 0.1694 & 0.0025 & $-$0.037 & $-$1.24 & 0.807 & 0.655 & 0.100 & 0.83 & 0.27 & 0.00 & 2.33 & 1.89 & -- & -- & -- \\
  & Expected information gain & 0.1823 & 0.0154 & $-$0.220 & $-$1.59 & 0.795 & 0.649 & 0.134 & 0.81 & 0.26 & 0.00 & 8.80 & 1.44 & -- & -- & -- \\
  & Learned policy & 0.1814 & 0.0145 & $-$0.208 & $-$1.57 & 0.797 & 0.651 & 0.133 & 0.81 & 0.26 & 0.00 & 7.99 & 1.45 & -- & -- & -- \\
  & Enumerator (every question) & 0.1708 & 0.0040 & $-$0.057 & $-$1.19 & 0.814 & 0.670 & 0.124 & 0.82 & 0.26 & 0.00 & 1.78 & 0.69 & -- & -- & -- \\
-\addlinespace[2pt]
-External LLM agents & BED-LLM & 0.1956 & 0.0288 & $-$0.410 & $-$1.18 & 0.735 & 0.553 & 0.103 & 0.60 & 0.19 & 0.00 & 2.76 & 0.61 & 6.9 & 21.6k & 32.6 \\
-\addlinespace[2pt]
-Ours and ablations & \textbf{Ours: compose, $\varepsilon=2$} & 0.1673 & 0.0005 & $-$0.007 & $-$1.38 & 0.816 & 0.663 & 0.102 & 0.83 & 0.27 & 0.00 & 1.55 & 1.46 & 2.4 & 12.9k & 29.0 \\
- & Ours, $\varepsilon=1$ & 0.1666 & $-$0.0003 & 0.003 & $-$1.32 & 0.819 & 0.665 & 0.104 & 0.83 & 0.27 & 0.00 & 0.82 & 0.74 & 1.2 & 6.2k & 14.1 \\
- & Ours, $\varepsilon=4$ & 0.1679 & 0.0011 & $-$0.015 & $-$1.40 & 0.812 & 0.664 & 0.105 & 0.82 & 0.26 & 0.00 & 2.37 & 2.67 & 4.1 & 22.2k & 49.8 \\
-\addlinespace[2pt]
+\addlinespace[3pt]
+External LLM agents & BED-LLM & 0.1956 & 0.0288 & $-$0.410 & \textbf{$-$1.18} & 0.735 & 0.553 & 0.103 & 0.60 & 0.19 & 0.00 & 2.76 & 0.61 & 6.9 & 21.6k & 32.6 \\
+\addlinespace[3pt]
+\textcolor{ours}{\textbf{Ours}} & \textbf{LLM planner, compose, $\varepsilon=2$} & 0.1673 & 0.0005 & $-$0.007 & $-$1.38 & 0.816 & 0.663 & 0.102 & 0.83 & 0.27 & 0.00 & 1.55 & 1.46 & 2.4 & 12.9k & 29.0 \\
 \midrule
 \multicolumn{17}{l}{\textit{Pre-registered subset: 208 askable test alerts (60 laundering)}}\\
-Reference & One bank only (GFP $p_0$) & 0.1580 & -- & 0 & -- & 0.825 & 0.688 & 0.123 & 0.86 & 0.30 & -- & -- & -- & -- & -- & -- \\
- & See everything (GFP, upper limit) & 0.0722 & $-$0.0858 & 1.000 & -- & 0.938 & 0.910 & 0.042 & 1.00 & 0.35 & -- & -- & -- & -- & -- & -- \\
- & Raw records, 3 banks, no privacy & 0.1537 & $-$0.0044 & 0.051 & -- & 0.872 & 0.774 & 0.162 & 0.86 & 0.30 & 0.00 & 1.89 & 0.00 & -- & -- & -- \\
-\addlinespace[2pt]
+Reference & One bank only (GFP $p_0$) & 0.1580 & 0.0000 & 0.000 & -- & 0.825 & 0.688 & \textbf{0.123} & 0.86 & 0.30 & -- & -- & -- & -- & -- & -- \\
+ & See everything (GFP, upper limit)$^\ast$ & 0.0722 & $-$0.0858 & 1.000 & -- & 0.938 & 0.910 & 0.042 & 1.00 & 0.35 & -- & -- & -- & -- & -- & -- \\
+ & Raw records, 3 banks, no privacy & \textbf{0.1537} & \textbf{$-$0.0044} & \textbf{0.051} & -- & \textbf{0.872} & \textbf{0.774} & 0.162 & 0.86 & 0.30 & 0.00 & 1.89 & 0.00 & -- & -- & -- \\
+\addlinespace[3pt]
 Non-LLM planners & Random & 0.1591 & 0.0011 & $-$0.013 & -- & 0.851 & 0.724 & 0.132 & 0.86 & 0.30 & 0.00 & 5.31 & 1.85 & -- & -- & -- \\
  & Fixed expert order & 0.1590 & 0.0010 & $-$0.011 & -- & 0.829 & 0.690 & 0.127 & 0.86 & 0.30 & 0.00 & 2.57 & 1.88 & -- & -- & -- \\
  & Expected information gain & 0.1773 & 0.0193 & $-$0.225 & -- & 0.815 & 0.677 & 0.157 & 0.86 & 0.30 & 0.00 & 8.88 & 1.35 & -- & -- & -- \\
  & Learned policy & 0.1718 & 0.0138 & $-$0.160 & -- & 0.832 & 0.696 & 0.156 & 0.86 & 0.30 & 0.00 & 8.77 & 1.36 & -- & -- & -- \\
  & Enumerator (every question) & 0.1569 & $-$0.0011 & 0.013 & -- & 0.844 & 0.713 & 0.145 & 0.86 & 0.30 & 0.00 & 1.66 & 0.67 & -- & -- & -- \\
-\addlinespace[2pt]
-External LLM agents & BED-LLM & 0.1805 & 0.0225 & $-$0.262 & $-$1.06 & 0.774 & 0.608 & 0.136 & 0.71 & 0.25 & 0.00 & 2.79 & 0.67 & 6.9 & 21.5k & 32.9 \\
- & Co-Investigator & 0.2334 & 0.0754 & $-$0.879 & $-$1.06 & 0.756 & 0.555 & 0.219 & 0.71 & 0.25 & 0.71 & 2.27 & 0.97 & 7.6 & 16.9k & 38.7 \\
+\addlinespace[3pt]
+External LLM agents & BED-LLM & 0.1805 & 0.0225 & $-$0.262 & \textbf{$-$1.06} & 0.774 & 0.608 & 0.136 & 0.71 & 0.25 & 0.00 & 2.79 & 0.67 & 6.9 & 21.5k & 32.9 \\
+ & Co-Investigator & 0.2334 & 0.0754 & $-$0.879 & \textbf{$-$1.06} & 0.756 & 0.555 & 0.219 & 0.71 & 0.25 & 0.71 & 2.27 & 0.97 & 7.6 & 16.9k & 38.7 \\
  & DSPy ReAct (adapted) & 0.1623 & 0.0043 & $-$0.051 & $-$1.61 & 0.832 & 0.700 & 0.145 & 0.86 & 0.30 & 0.00 & 1.30 & 1.63 & 1.4 & 3.0k & 7.4 \\
  & ReWOO (adapted) & 0.1638 & 0.0058 & $-$0.068 & $-$1.49 & 0.834 & 0.692 & 0.141 & 0.86 & 0.30 & 0.00 & 0.89 & 0.85 & 0.9 & 1.8k & 4.1 \\
-\addlinespace[2pt]
-Ours and ablations & \textbf{Ours: compose, $\varepsilon=2$} & 0.1576 & $-$0.0004 & 0.005 & -- & 0.838 & 0.697 & 0.132 & 0.86 & 0.30 & 0.00 & 1.53 & 1.47 & 2.4 & 12.9k & 28.4 \\
- & -- fixed list only & 0.1656 & 0.0076 & $-$0.088 & $-$1.54 & 0.833 & 0.687 & 0.141 & 0.86 & 0.30 & 0.00 & 1.18 & 1.52 & 1.2 & 4.1k & 9.0 \\
- & -- act only (no hypothesis) & 0.1592 & 0.0012 & $-$0.014 & $-$1.24 & 0.841 & 0.700 & 0.136 & 0.86 & 0.30 & 0.00 & 1.46 & 1.48 & 2.0 & 10.6k & 22.4 \\
- & -- no back-testing & 0.1626 & 0.0046 & $-$0.053 & $-$1.17 & 0.820 & 0.682 & 0.137 & 0.86 & 0.30 & 0.00 & 2.71 & 1.32 & 5.4 & 27.2k & 60.1 \\
- & -- LLM decides stop/escalate & 0.1577 & $-$0.0003 & 0.004 & $-$1.26 & 0.833 & 0.691 & 0.137 & 0.86 & 0.30 & 0.00 & 1.52 & 1.46 & 2.4 & 13.1k & 29.2 \\
-\addlinespace[2pt]
+\addlinespace[3pt]
+\textcolor{ours}{\textbf{Ours}} & \textbf{LLM planner, compose, $\varepsilon=2$} & 0.1576 & $-$0.0004 & 0.005 & -- & 0.838 & 0.697 & 0.132 & 0.86 & 0.30 & 0.00 & 1.53 & 1.47 & 2.4 & 12.9k & 28.4 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\end{landscape}
+
+\begin{landscape}
+\begin{table}
+\centering
+\caption{\textbf{Our system: privacy budget variants and ablations}, same metrics as Table~\ref{tab:big}. The budget rows use all 771 askable test alerts; the ablations use the 208 askable subset alerts (each ablation switches off one component of the full system). \textbf{Bold} = best in each quality column within each block. Intervals for the ablation differences are in Table~\ref{tab:abl}. $\Delta B$ = Brier minus one bank on the same alerts (negative is better). Gap closed is against GFP see-everything; ``QO'' scores only the system's questions through our fusion. AUC = ROC-AUC. ECE uses 10 equal-mass bins. P@10\%, R@10\% = precision and recall when the top 10\% of alerts by score are reviewed. No-v. = share of alerts with no usable verdict (scored as $p_0$). Costs are per alert; tokens are input plus output.}
+\label{tab:bigabl}
+\setlength{\tabcolsep}{3.2pt}
+\scriptsize
+\resizebox{\linewidth}{!}{\begin{tabular}{llrrrrrrrrrrrrrrr}
+\toprule
+ & & \multicolumn{4}{c}{Probability quality} & \multicolumn{3}{c}{Ranking and calibration} & \multicolumn{2}{c}{Review at 10\%} & & \multicolumn{5}{c}{Cost per alert} \\
+\cmidrule(lr){3-6}\cmidrule(lr){7-9}\cmidrule(lr){10-11}\cmidrule(lr){13-17}
+Group & System & Brier & $\Delta B$ & Gap & Gap QO & AUC & PR-AUC & ECE & P@10\% & R@10\% & No-v. & Qs & $\varepsilon$ & LLM calls & Tokens & GPU-s \\
+\midrule
+\multicolumn{17}{l}{\textit{Privacy budget, all 771 askable test alerts}}\\
+Privacy budget & $\varepsilon=1$ & \textbf{0.1666} & \textbf{$-$0.0003} & \textbf{0.003} & \textbf{$-$1.32} & \textbf{0.819} & \textbf{0.665} & 0.104 & \textbf{0.83} & \textbf{0.27} & 0.00 & 0.82 & 0.74 & 1.2 & 6.2k & 14.1 \\
+ & $\varepsilon=2$ (frozen system) & 0.1673 & 0.0005 & $-$0.007 & $-$1.38 & 0.816 & 0.663 & \textbf{0.102} & \textbf{0.83} & \textbf{0.27} & 0.00 & 1.55 & 1.46 & 2.4 & 12.9k & 29.0 \\
+ & $\varepsilon=4$ & 0.1679 & 0.0011 & $-$0.015 & $-$1.40 & 0.812 & 0.664 & 0.105 & 0.82 & 0.26 & 0.00 & 2.37 & 2.67 & 4.1 & 22.2k & 49.8 \\
+\midrule
+\multicolumn{17}{l}{\textit{Ablations, 208 askable subset alerts}}\\
+Ablations & Full system, $\varepsilon=2$ & \textbf{0.1576} & \textbf{$-$0.0004} & \textbf{0.005} & -- & 0.838 & 0.697 & \textbf{0.132} & 0.86 & 0.30 & 0.00 & 1.53 & 1.47 & 2.4 & 12.9k & 28.4 \\
+ & LLM may only pick from a fixed list & 0.1656 & 0.0076 & $-$0.088 & $-$1.54 & 0.833 & 0.687 & 0.141 & 0.86 & 0.30 & 0.00 & 1.18 & 1.52 & 1.2 & 4.1k & 9.0 \\
+ & Act only (no stated hypothesis) & 0.1592 & 0.0012 & $-$0.014 & $-$1.24 & \textbf{0.841} & \textbf{0.700} & 0.136 & 0.86 & 0.30 & 0.00 & 1.46 & 1.48 & 2.0 & 10.6k & 22.4 \\
+ & No back-testing (LLM belief) & 0.1626 & 0.0046 & $-$0.053 & \textbf{$-$1.17} & 0.820 & 0.682 & 0.137 & 0.86 & 0.30 & 0.00 & 2.71 & 1.32 & 5.4 & 27.2k & 60.1 \\
+ & LLM decides stop / escalate & 0.1577 & $-$0.0003 & 0.004 & $-$1.26 & 0.833 & 0.691 & 0.137 & 0.86 & 0.30 & 0.00 & 1.52 & 1.46 & 2.4 & 13.1k & 29.2 \\
 \bottomrule
 \end{tabular}}
 \end{table}
