@@ -30,7 +30,7 @@ LMA Group Project 2026\\[3pt]
 \maketitle
 
 \begin{abstract}
-\noindent A bank sees only the transactions that touch its own customers, and launderers exploit this by routing money through several banks. We ask a narrow question: if a bank cannot settle an alert on its own, can it gain by asking other banks a few small, typed questions, each answered with a single differentially private number, while no transaction record ever leaves the other bank? We built a full system around that idea: a question language that partner banks execute exactly on their own ledgers, a privacy accountant, a compliance gate, statistical back-testing that a question must pass before it may influence a decision, a fitted evidence-fusion formula, and an LLM planner (Gemma~4 12B, orchestrated with LangGraph) that chooses or writes the questions. We reproduced or re-implemented the main detection models (GFP + LightGBM, Multi-GNN, MEGA-GNN, FraudGT), federated baselines (DP-FedAvg, layer-wise exchange) and thirteen published LLM agents, and evaluated everything under one pre-registered, frozen protocol on IBM's synthetic AMLworld data. On the held-out test split (771 askable alerts, privacy budget $\eps=2$ per alert) our system closes $-0.007$ [$-0.038$, $0.026$] of the gap between one bank and a model that sees every bank: the questions do not measurably help. It does clearly beat the strongest external LLM agent, BED-LLM (H9, Holm $p=0.004$), and several of its own design choices (back-testing, free composition of questions) measurably help inside the system. We report this negative headline result as it stands and explain why we think it happens.
+\noindent We built and tested a system that lets a bank ask other banks small, private questions about a suspicious transaction, without any transaction record leaving the other bank. Launderers route money through several banks because each bank sees only its own customers, and banks may not pool their data. In our system an LLM agent (Gemma~4 12B, orchestrated with LangGraph) chooses or writes typed questions, each partner bank answers with one differentially private number, every question must first prove itself by back-testing on past alerts, and a fitted formula, never the LLM's text, makes the final call. On IBM's synthetic AMLworld data split into 30 banks, we reproduced four detection models and two federated baselines, ported thirteen published LLM agents into one fair harness, and pre-registered ten hypotheses before running the frozen test once. The main result is negative: on 771 askable test alerts our system closes $-0.007$ [$-0.038$, $0.026$] of the gap between one bank and a model that sees every bank, and even raw records from three partner banks close only 0.04. The system does beat the strongest published agent, BED-LLM (Holm $p=0.004$), and composing new questions and back-testing both help inside it. Our diagnostics point to the cause: partner answers add little beyond the home bank's own graph features, and likelihood ratios learned on past alerts do not hold on the hard alerts the agent sees.
 \end{abstract}
 
 %=====================================================================
@@ -47,9 +47,17 @@ Three ideas make this more than a toy:
 \item \textbf{One gate for everyone.} Our planner and every external agent we compare against pass through the same compliance gate, privacy accountant and simulated bank network, with the same LLM backbone and call limits. Only the control strategy differs.
 \end{enumerate}
 
-\noindent Our research questions were: (RQ1) how much of the one-bank-to-see-everything gap can private questions close; (RQ2) does an LLM planner beat simple planners at choosing questions; (RQ3) does back-testing matter; and (RQ6) how does the system compare with published AML and general-purpose LLM agents. All hypotheses (H1--H10), thresholds and the Holm correction order were pre-registered and frozen with a hash before the test split was opened.
+\paragraph{Why this is hard.} Four things make the problem difficult at once. Laundering is rare (about one transaction in a thousand), so labels are scarce and metrics are noisy. Every answer costs privacy budget and carries noise, so the agent can ask only one or two questions per alert. Partner banks reply late or decline, so the agent must plan under delay. And an LLM that reads untrusted text from another bank can be steered by hidden instructions, so its free text must never reach the decision.
 
-\paragraph{Contributions.} (i) An end-to-end, privacy-accounted research harness for cross-bank questions, with 30 simulated partner banks; (ii) faithful reproductions of the main AML detection baselines on a time-respecting split; (iii) ports of thirteen LLM agents into a single fair harness; (iv) a pre-registered evaluation, run once on the test split, whose mostly negative result we report in full.
+\noindent Our research questions were: (RQ1) how much of the one-bank-to-see-everything gap can private questions close; (RQ2) does an LLM planner beat simple planners at choosing questions; (RQ3) does back-testing matter; and (RQ6) how does the system compare with published AML and general-purpose LLM agents. All hypotheses (H1--H10), thresholds and the Holm correction order were pre-registered and frozen with a hash before the test split was opened, so no hypothesis was chosen after seeing a result.
+
+\paragraph{Contributions.}
+\begin{itemize}
+\item \textbf{A complete, privacy-accounted harness} for cross-bank questions: a question language, 30 simulated partner banks, a compliance gate, a privacy accountant, e-value back-testing, a fitted fusion formula and an LLM planner.
+\item \textbf{Reproductions of the main AML baselines} (GFP, Multi-GNN, MEGA-GNN, FraudGT, DP-FedAvg, layer-wise exchange) on a time-respecting split, with the finding that the official GNN loaders leak future edges.
+\item \textbf{Thirteen published LLM agents ported into one harness}, each in native, ported and adapted form, under the same backbone, gate and budget.
+\item \textbf{A pre-registered, frozen, run-once test evaluation} whose negative result we report in full and explain with diagnostics.
+\end{itemize}
 
 %=====================================================================
 \section{Literature Review}
@@ -125,7 +133,30 @@ where ``see everything'' is GFP trained on all banks' data. $G=0$ means no gain 
 \section{Experiment Runs}
 \label{sec:exp}
 
-The project was compute-heavy. The final test run alone used \textbf{44 GPU-hours} on an RTX 5070 Ti (5,440 LLM verdict rows, plus 6,600 CPU verdict rows), and the validation reruns on the rewritten LangGraph pipeline took roughly 60 more GPU-hours. Detection models trained for days on the 5070 Ti and on a 3070 Ti laptop (FraudGT ran 500 epochs), and some arms ran on the \emph{ada} HPC cluster. The main runs were:
+The project was large in both engineering and compute; Table~\ref{tab:scale} summarises it. The final test run alone used \textbf{44 GPU-hours} on an RTX 5070 Ti (5,440 LLM verdict rows, plus 6,600 CPU verdict rows), and the validation reruns on the rewritten LangGraph pipeline took roughly 60 more GPU-hours. Detection models trained for days on the 5070 Ti and on a 3070 Ti laptop (FraudGT ran 500 epochs), and some arms ran on the \emph{ada} HPC cluster.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+Work item & Scale \\
+\midrule
+Detection baselines & 4 models (GFP, Multi-GNN, MEGA-GNN, FraudGT), one-bank and see-everything, on HI-Small and HI-Medium; GFP and Multi-GNN reproduced on the paper split first; FraudGT 500 epochs \\
+Federated baselines & DP-FedAvg at 2 privacy units $\times$ 6 $\varepsilon$ levels $\times$ 3 seeds on both datasets; layer-wise exchange in 8 arms $\times$ 3 seeds \\
+Backbone sweep (E18) & 7 open LLMs, 2 stages (160 then 460 validation alerts), 4.6 GPU-hours \\
+Fine-tuning & QLoRA Qwen3-8B student $\times$ 3 seeds; Qwen3-4B fast model with conformal cascade; DSPy MIPROv2 prompt optimisation (2.7 GPU-hours) \\
+External agents & 13 published agents in native, ported and adapted forms: 27 agent arms on validation \\
+Validation & 33 systems on the fit, calibration and evaluation parts; about 60 GPU-hours \\
+Safety & Prompt-injection suite (E15) over 4 attack types; injection screen on held-out encodings \\
+Final test run & 25 arms, 12,040 verdict rows, 44 GPU-hours, run once after the freeze \\
+Engineering & 3 machines (RTX 5070 Ti desktop, RTX 3070 Ti laptop, \emph{ada} HPC cluster); about 600 commits and 158 pull requests by four people; 1,243 unit tests in CI \\
+\bottomrule
+\end{tabularx}
+\caption{The scale of the work behind this report.}
+\label{tab:scale}
+\end{table}
+
+\noindent The main runs were:
 
 \paragraph{Reproducing the detection baselines.} We reproduced GFP + LightGBM on the paper's own split (F1 62.95 vs.\ 62.86 $\pm$ 0.25 published; XGBoost 62.51 vs.\ 63.23) and Multi-GNN with the official code (F1 67.64 vs.\ 68.16 $\pm$ 2.65). MEGA-GNN was only partially reproduced (59.7 vs.\ 74.88 after 10 of 80 epochs, compute-limited), and FraudGT ran its full 500 epochs on our split (best val F1 0.686). We then retrained all of them, one-bank and see-everything, on our time-respecting split. One important finding: the official GNN loaders sample future edges, so their see-everything scores are not valid upper limits under a time guard. Re-scored time-respecting, Multi-GNN's HI-Medium PR-AUC drops from 0.611 to 0.199. GFP is therefore our upper limit.
 
@@ -159,6 +190,8 @@ H7 & Formula vs.\ LLM deciding & $-0.000$ [$-0.004$, 0.004] & 1.00 & not support
 \caption{Pre-registered hypotheses on the test split (771 askable alerts; H9's interval is for the gap-closed difference). H5, H6, H8 and H10 were not run in the reduced plan.}
 \label{tab:hyp}
 \end{table}
+
+\paragraph{Confirmatory and exploratory results.} Only the hypothesis tests in Table~\ref{tab:hyp} are confirmatory: they were pre-registered, run once and Holm-corrected. Everything else (the ablation intervals, the breakdowns by pattern, the adapted agents and the extra metrics of the appendix) is exploratory or descriptive, and we never use it to change a verdict. Intervals are 95\% cluster bootstraps with 10,000 resamples.
 
 \paragraph{Detection models.} On all 3,873 headline alerts, one-bank GFP has Brier 0.1585 (PR-AUC 0.602); see-everything GFP has 0.0854 (PR-AUC 0.848). This is the gap we try to close, and it is large: at a review capacity of 10\% of alerts, the see-everything model's precision is 0.98 against 0.72.
 
@@ -251,7 +284,7 @@ LLM decides when to stop/escalate & 0.1577 & +0.0001 [$-0.0035$, 0.0038] & 1.52 
 Two components clearly earn their place. Letting the LLM \emph{compose} new questions, rather than choose from a fixed menu, lowers Brier by 0.008, with an interval that excludes zero. Removing \emph{back-testing} makes the system ask almost twice as many questions, costs twice the LLM calls and GPU time, and is worse by 0.005. In the pre-registered H4 test on all 771 alerts the back-testing effect was $-0.005$ [$-0.010$, $-0.000$] (Holm $p=0.072$), and H4 also required that a false-discovery audit of accepted questions pass, which it did not (0.714). Stating a hypothesis before acting and letting the LLM handle the stop/escalate decision made no measurable difference (H7). The privacy budget ablation ($\eps=1$, 2, 4) is in Table~\ref{tab:main}. From validation we also have: naive fusion (all weights 1) moves the score the wrong way, which is why we fitted the fusion weights; and the QLoRA student and Qwen3-8B prompted are both worse than the Gemma~4 12B teacher.
 
 %=====================================================================
-\section{Limitations}
+\section{Limitations}\label{sec:lim}
 
 \begin{itemize}
 \item \textbf{Synthetic data, simulated banks.} AMLworld is generated, and the partner banks, latency and private set intersection are simulated. Real 314(b) traffic and real laundering are messier.
@@ -284,8 +317,15 @@ The honest summary is that the idea did not work. Under a frozen, pre-registered
 \paragraph{What we would do next.} Measure partner information first; design questions about what the home bank \emph{cannot} compute (multi-hop, cross-bank cycles via private set intersection over several banks); estimate likelihood ratios on the same selected alert population the agent sees; and increase coverage with more partner banks.
 
 %=====================================================================
-\section*{Reproducibility}
-Everything is in the repository:\\ \url{https://github.com/BhavyaV05/Transaction-Thieves}.\\ The \texttt{README.md} explains setup, data preparation, the validation runs, how the frozen final run is launched (\texttt{scripts/run\_final.py}) and how the analysis is regenerated (\texttt{scripts/final\_analysis.py}); \texttt{REVIEW.md} maps the repository. The pre-registration is in \texttt{prereg/} with its freeze hash, and the test tables are archived in \texttt{docs/results/test\_analysis/}.
+\section*{Reproducibility}\sloppy
+\begin{itemize}
+\item \textbf{Code:} \url{https://github.com/BhavyaV05/Transaction-Thieves}. The \texttt{README.md} gives every command, from setup to the final tables; \texttt{REVIEW.md} maps the repository.
+\item \textbf{Data:} AMLworld is public (Kaggle, CDLA-Sharing licence). \texttt{scripts/prepare\_data.py} builds the bank views, splits and alert tables.
+\item \textbf{Frozen protocol:} hypotheses, thresholds and the Holm order are in \texttt{prereg/}, frozen with the hash in \texttt{prereg/FREEZE.json}. Code reads the test split only inside \texttt{scripts/run\_final.py}, which checks the hash.
+\item \textbf{Analysis:} \texttt{scripts/final\_analysis.py} regenerates every table and figure from the run logs; the test tables are archived in \texttt{docs/results/test\_analysis/}. \texttt{scripts/report\_all\_systems.py} adds the descriptive metrics of the appendix.
+\item \textbf{Seeds and compute:} fixed seeds, three seeds for everything trained; hardware and GPU-hours as in Table~\ref{tab:scale}.
+\item \textbf{What cannot be reproduced exactly:} trained weights are not released; FraudGT's code has no licence, so its patch is kept outside the repository; the GFP see-everything rerun differed from its earlier run (Section~\ref{sec:lim}); LLM serving at temperature 0 can still vary slightly with batching.
+\end{itemize}
 
 \small
 \begin{thebibliography}{99}\setlength{\itemsep}{1pt}
