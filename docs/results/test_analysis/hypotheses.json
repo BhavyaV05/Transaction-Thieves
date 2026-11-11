@@ -1,0 +1,453 @@
+{
+ "H1": {
+  "id": "H1",
+  "tier": "primary",
+  "claim": "At eps = 2 per alert, private questions close at least 30% of the gap (Brier).",
+  "rule": "95% CI lower bound > 0 AND point estimate >= 0.30",
+  "status": "tested",
+  "verdict": "not_supported",
+  "reason": null,
+  "p": 0.6745325467453255,
+  "p_adj": 1.0,
+  "holm_reject": false,
+  "rule_met": false,
+  "components": [
+   {
+    "name": "gap closed vs gfp_see_everything",
+    "estimate": -0.006624549160551142,
+    "ci": [
+     -0.03818803912009544,
+     0.026348484389459668
+    ],
+    "p": 0.6745325467453255,
+    "rule_met": false,
+    "n": 771,
+    "nan_share": 0.0,
+    "denominator": 0.07018886615657217
+   }
+  ],
+  "notes": [
+   "tested against gfp_see_everything only; the other upper limit is not provided (intersection-union over the available ones)"
+  ],
+  "statistic": "gap_closed(one_bank, ours_compose_eps2, upper)",
+  "threshold": 0.3,
+  "n_alerts": 771,
+  "n_pos": 241,
+  "n_clusters": 402,
+  "estimate": -0.006624549160551142,
+  "ci": [
+   -0.03818803912009544,
+   0.026348484389459668
+  ],
+  "mde_brier": 0.0030075828948144313,
+  "brier_diff_vs_one_bank": {
+   "point": 0.0004649695943775567,
+   "ci": [
+    -0.0017073717703796158,
+    0.002563379916424202
+   ]
+  },
+  "family": "primary",
+  "family_size": 5,
+  "verdict_text": "not_supported (rule not met): gap closed vs gfp_see_everything: -0.007 [-0.038, 0.026] FAILS; Holm p_adj 1.0000 (primary family of 5)"
+ },
+ "H2": {
+  "id": "H2",
+  "tier": "primary",
+  "claim": "Questions get at least 70% of the benefit of sharing raw records, while sharing none.",
+  "rule": "95% CI lower bound >= 0.70",
+  "status": "tested",
+  "verdict": "not_supported",
+  "reason": null,
+  "p": 0.9741507646501556,
+  "p_adj": 1.0,
+  "holm_reject": false,
+  "rule_met": false,
+  "components": [
+   {
+    "name": "ratio of benefits",
+    "estimate": -0.16494966573183548,
+    "ci": [
+     -2.88201596901957,
+     0.7502394018837699
+    ],
+    "p": 0.9741507646501556,
+    "rule_met": false
+   }
+  ],
+  "notes": [],
+  "statistic": "(B(one_bank) - B(ours_eps2)) / (B(one_bank) - B(raw_share_3_banks))",
+  "threshold": 0.7,
+  "n_alerts": 771,
+  "n_pos": 241,
+  "n_clusters": 402,
+  "estimate": -0.16494966573183548,
+  "ci": [
+   -2.88201596901957,
+   0.7502394018837699
+  ],
+  "nan_share": 0.2612,
+  "mde_brier": 0.0030075828948144313,
+  "family": "primary",
+  "family_size": 5,
+  "verdict_text": "not_supported (rule not met): ratio of benefits: -0.165 [-2.882, 0.750] FAILS; Holm p_adj 1.0000 (primary family of 5)"
+ },
+ "H3": {
+  "id": "H3",
+  "tier": "primary",
+  "claim": "LLM composing its own questions is at least as good as the best simple planner AND the enumerator, and better than itself with a fixed list.",
+  "rule": "all three hold: non-inferior to the best simple planner and to the enumerator (CI upper bound < margin), better than the fixed list (CI upper bound < 0)",
+  "status": "tested",
+  "verdict": "not_supported",
+  "reason": null,
+  "p": 0.11028897110288971,
+  "p_adj": 0.33086691330866913,
+  "holm_reject": false,
+  "rule_met": false,
+  "components": [
+   {
+    "name": "B(llm) - B(best simple: fixed_order)",
+    "kind": "non_inferior",
+    "estimate": -0.0013404876951770839,
+    "ci": [
+     -0.006255342427791613,
+     0.003385810446616762
+    ],
+    "p": 9.999000099990002e-05,
+    "rule_met": true
+   },
+   {
+    "name": "B(llm) - B(enumerator)",
+    "kind": "non_inferior",
+    "estimate": 0.0007170649768500625,
+    "ci": [
+     -0.014295538214347987,
+     0.01561679578205315
+    ],
+    "p": 0.11028897110288971,
+    "rule_met": false
+   },
+   {
+    "name": "B(llm) - B(llm fixed list)",
+    "kind": "superior",
+    "estimate": -0.00796799938979359,
+    "ci": [
+     -0.01311362355781455,
+     -0.003098866776567301
+    ],
+    "p": 0.0007999200079992001,
+    "rule_met": true
+   }
+  ],
+  "notes": [],
+  "statistic": "intersection-union of three bootstrap tests",
+  "margin": 0.01,
+  "margin_source": "fixed on validation",
+  "best_simple_planner": "fixed_order",
+  "best_simple_planner_source": "fixed on validation",
+  "n_alerts": 208,
+  "n_pos": 60,
+  "n_clusters": 167,
+  "estimate": -0.0013404876951770839,
+  "ci": [
+   -0.006255342427791613,
+   0.003385810446616762
+  ],
+  "mde_brier": 0.006869014283544202,
+  "family": "primary",
+  "family_size": 5,
+  "verdict_text": "not_supported (rule not met): B(llm) - B(best simple: fixed_order): -0.001 [-0.006, 0.003] ok; B(llm) - B(enumerator): 0.001 [-0.014, 0.016] FAILS; B(llm) - B(llm fixed list): -0.008 [-0.013, -0.003] ok; Holm p_adj 0.3309 (primary family of 5)"
+ },
+ "H4": {
+  "id": "H4",
+  "tier": "primary",
+  "claim": "Back-testing matters: without it results get worse; with it, under 10% of accepted questions are useless on later data.",
+  "rule": "ours better than no back-testing (CI upper bound < 0) AND FDR audit upper 95% bound < 0.10",
+  "status": "tested",
+  "verdict": "not_supported",
+  "reason": null,
+  "p": 0.017998200179982,
+  "p_adj": 0.071992800719928,
+  "holm_reject": false,
+  "rule_met": false,
+  "components": [
+   {
+    "name": "B(ours_compose) - B(no_backtest)",
+    "estimate": -0.0049468711214410155,
+    "ci": [
+     -0.009901246813667672,
+     -0.0002791267871668871
+    ],
+    "p": 0.017998200179982,
+    "rule_met": true
+   },
+   {
+    "name": "single factor: B(llm_decides) - B(no_backtest) (reported, not part of the test)",
+    "estimate": -0.004878103525984112,
+    "ci": [
+     -0.008779794333625347,
+     -0.001421136399470135
+    ],
+    "p": null,
+    "rule_met": null
+   },
+   {
+    "name": "FDR audit: share of accepted questions with LR <= 1 on this period",
+    "estimate": 0.7142857142857143,
+    "ci": [
+     null,
+     0.9633074338239145
+    ],
+    "p": null,
+    "rule_met": false,
+    "n": 7
+   }
+  ],
+  "notes": [],
+  "statistic": "B(ours_compose) - B(no_backtest); FDR audit",
+  "threshold_fdr": 0.1,
+  "n_alerts": 208,
+  "n_pos": 60,
+  "n_clusters": 167,
+  "estimate": -0.0049468711214410155,
+  "ci": [
+   -0.009901246813667672,
+   -0.0002791267871668871
+  ],
+  "mde_brier": 0.006863973372413496,
+  "fdr_audit": {
+   "k_useless": 5,
+   "n_questions": 7,
+   "share": 0.7142857142857143,
+   "upper95": 0.9633074338239145,
+   "min_asked": 30,
+   "rows": [
+    {
+     "question": "n_counterparties(ALERT.sender, dir=in, window=before(72))",
+     "eps": 1.0,
+     "asked": 40,
+     "realised_log_lr_in_claimed_direction": -0.05283062256019797,
+     "useless": true
+    },
+    {
+     "question": "n_counterparties(ALERT.sender, dir=out, window=after(24))",
+     "eps": 1.0,
+     "asked": 32,
+     "realised_log_lr_in_claimed_direction": -0.07121387661479166,
+     "useless": true
+    },
+    {
+     "question": "new_account(ALERT.receiver, days=2)",
+     "eps": 1.0,
+     "asked": 118,
+     "realised_log_lr_in_claimed_direction": -0.13324510006388846,
+     "useless": true
+    },
+    {
+     "question": "new_account(ALERT.sender, days=2)",
+     "eps": 1.0,
+     "asked": 87,
+     "realised_log_lr_in_claimed_direction": 0.09507898540588763,
+     "useless": false
+    },
+    {
+     "question": "matching_amount_out(ALERT.sender, tol=0.05)",
+     "eps": 1.0,
+     "asked": 30,
+     "realised_log_lr_in_claimed_direction": -0.03190342458158652,
+     "useless": true
+    },
+    {
+     "question": "matching_amount_out(ALERT.receiver, tol=0.05)",
+     "eps": 1.0,
+     "asked": 34,
+     "realised_log_lr_in_claimed_direction": 0.814361969093798,
+     "useless": false
+    },
+    {
+     "question": "n_counterparties(ALERT.receiver, dir=in, window=before(72))",
+     "eps": 1.0,
+     "asked": 157,
+     "realised_log_lr_in_claimed_direction": -0.03121595723918358,
+     "useless": true
+    }
+   ]
+  },
+  "family": "primary",
+  "family_size": 5,
+  "verdict_text": "not_supported (rule not met): B(ours_compose) - B(no_backtest): -0.005 [-0.010, -0.000] ok; FDR audit: share of accepted questions with LR <= 1 on this period: 0.714 [n/a, 0.963] FAILS; Holm p_adj 0.0720 (primary family of 5)"
+ },
+ "H9": {
+  "id": "H9",
+  "tier": "primary",
+  "claim": "At eps = 2, our system closes at least as much of the gap as the best ported external agent on the same backbone.",
+  "rule": "95% CI lower bound of gap_closed(ours) - gap_closed(best ported external) > -margin_gap",
+  "status": "tested",
+  "verdict": "supported",
+  "reason": null,
+  "p": 0.0007999200079992001,
+  "p_adj": 0.003999600039996,
+  "holm_reject": true,
+  "rule_met": true,
+  "components": [
+   {
+    "name": "end_to_end vs gfp_see_everything",
+    "estimate": 0.26634670067223054,
+    "ci": [
+     -0.021505340040412973,
+     0.7987821301259813
+    ],
+    "p": 0.0007999200079992001,
+    "rule_met": true,
+    "n": 208,
+    "ours_gap": 0.00483257743100676,
+    "external_gap": -0.2615141232412238,
+    "is_test": true
+   },
+   {
+    "name": "questions_only vs gfp_see_everything",
+    "estimate": -0.11911188872748535,
+    "ci": [
+     -0.3215947739718919,
+     0.03768932315951847
+    ],
+    "p": 0.2953704629537046,
+    "rule_met": false,
+    "n": 208,
+    "ours_gap": -1.1798516961746133,
+    "external_gap": -1.060739807447128,
+    "is_test": false
+   }
+  ],
+  "notes": [],
+  "statistic": "gap_closed(ours) - gap_closed(best_ported_external)",
+  "margin_gap": 0.16598317817751362,
+  "margin_gap_source": "fixed on validation",
+  "best_ported_external": "bed_llm",
+  "best_ported_external_source": "fixed on validation",
+  "eval_set": "subset (external agents)",
+  "n_alerts": 208,
+  "n_pos": 60,
+  "n_clusters": 167,
+  "mde_brier": 0.005721965631627239,
+  "estimate": 0.26634670067223054,
+  "ci": [
+   -0.021505340040412973,
+   0.7987821301259813
+  ],
+  "family": "primary",
+  "family_size": 5,
+  "verdict_text": "supported: rule '95% CI lower bound of gap_closed(ours) - gap_closed(best ported external) > -margin_gap' holds (end_to_end vs gfp_see_everything: 0.266 [-0.022, 0.799] ok; questions_only vs gfp_see_everything: -0.119 [-0.322, 0.038] FAILS); Holm p_adj 0.0040 (primary family of 5)"
+ },
+ "H6": {
+  "id": "H6",
+  "tier": "secondary",
+  "claim": "Smart retrieval shows at least 15 points more real pattern edges among the 40, and improves results.",
+  "rule": "share difference CI lower bound >= 0.15 AND Brier CI upper bound < 0",
+  "status": "not_run",
+  "verdict": "not_run",
+  "reason": "role evidence_scorer_pcst: no run-log rows match {\"system\": \"ours_compose\", \"variant\": [\"harness_view_scorer_pcst\"]}",
+  "p": null,
+  "p_adj": 1.0,
+  "holm_reject": false,
+  "rule_met": null,
+  "components": [],
+  "notes": [],
+  "family": "secondary",
+  "family_size": 3,
+  "verdict_text": "not_run: role evidence_scorer_pcst: no run-log rows match {\"system\": \"ours_compose\", \"variant\": [\"harness_view_scorer_pcst\"]}"
+ },
+ "H7": {
+  "id": "H7",
+  "tier": "secondary",
+  "claim": "A calibrated formula making the final call beats the LLM deciding.",
+  "rule": "95% CI upper bound of B(ours_compose) - B(llm_decides) < 0",
+  "status": "tested",
+  "verdict": "not_supported",
+  "reason": null,
+  "p": 0.49355064493550643,
+  "p_adj": 1.0,
+  "holm_reject": false,
+  "rule_met": false,
+  "components": [
+   {
+    "name": "B(ours_compose) - B(llm_decides)",
+    "estimate": -6.876759545690336e-05,
+    "ci": [
+     -0.0038064685463336367,
+     0.003533518618656824
+    ],
+    "p": 0.49355064493550643,
+    "rule_met": false
+   }
+  ],
+  "notes": [],
+  "statistic": "B(ours_compose) - B(llm_decides)",
+  "n_alerts": 208,
+  "n_pos": 60,
+  "n_clusters": 167,
+  "estimate": -6.876759545690336e-05,
+  "ci": [
+   -0.0038064685463336367,
+   0.003533518618656824
+  ],
+  "mde_brier": 0.005163313334702117,
+  "family": "secondary",
+  "family_size": 3,
+  "verdict_text": "not_supported (rule not met): B(ours_compose) - B(llm_decides): -0.000 [-0.004, 0.004] FAILS; Holm p_adj 1.0000 (secondary family of 3)"
+ },
+ "H10": {
+  "id": "H10",
+  "tier": "secondary",
+  "claim": "Private questions match or beat DP federated training on Brier at a comparable privacy level.",
+  "rule": "95% CI upper bound < equivalence_margin",
+  "status": "not_run",
+  "verdict": "not_run",
+  "reason": "role dp_fedavg: score table 'dp_fedavg' is not provided (inputs.yaml scores.dp_fedavg.path)",
+  "p": null,
+  "p_adj": 1.0,
+  "holm_reject": false,
+  "rule_met": null,
+  "components": [],
+  "notes": [],
+  "family": "secondary",
+  "family_size": 3,
+  "verdict_text": "not_run: role dp_fedavg: score table 'dp_fedavg' is not provided (inputs.yaml scores.dp_fedavg.path)"
+ },
+ "H5": {
+  "id": "H5",
+  "tier": "exploratory",
+  "claim": "The fast model handles most routine decisions within its accuracy bound, at least 10x faster, with no detection loss.",
+  "rule": "exploratory",
+  "status": "not_run",
+  "verdict": "not_run",
+  "reason": "fast-model decision results are not provided (inputs.yaml fast_model.path; scripts/score_fast_baseline.py)",
+  "p": null,
+  "p_adj": null,
+  "holm_reject": null,
+  "rule_met": null,
+  "components": [],
+  "notes": [],
+  "family": "exploratory",
+  "label": "exploratory, uncorrected",
+  "verdict_text": "not_run: fast-model decision results are not provided (inputs.yaml fast_model.path; scripts/score_fast_baseline.py)"
+ },
+ "H8": {
+  "id": "H8",
+  "tier": "exploratory",
+  "claim": "Two questions at once, then one more, keeps 80% of the benefit in 60% of the time.",
+  "rule": "exploratory",
+  "status": "not_run",
+  "verdict": "not_run",
+  "reason": "role async_batched: no run-log rows match {\"system\": \"eig\", \"variant\": [\"eig_batched_2_1\"]} (pending arm: manifest job nonllm.eig_eps_0.5.full_test, nonllm.eig_eps_0.5.subset, nonllm.eig_eps_1.full_test, nonllm.eig_eps_1.subset is not done yet)",
+  "p": null,
+  "p_adj": null,
+  "holm_reject": null,
+  "rule_met": null,
+  "components": [],
+  "notes": [],
+  "family": "exploratory",
+  "label": "exploratory, uncorrected",
+  "verdict_text": "not_run: role async_batched: no run-log rows match {\"system\": \"eig\", \"variant\": [\"eig_batched_2_1\"]} (pending arm: manifest job nonllm.eig_eps_0.5.full_test, nonllm.eig_eps_0.5.subset, nonllm.eig_eps_1.full_test, nonllm.eig_eps_1.subset is not done yet)"
+ }
+}
