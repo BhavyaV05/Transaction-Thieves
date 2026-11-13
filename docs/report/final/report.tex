@@ -77,7 +77,7 @@ Three design rules set the system apart:
 \item \textbf{Split by time.} Days 1--9 are training, 10--12 validation and 13--16 test. Every tool takes the alert time and cannot see later data. Code locks the test split, and only the final-run script opened it.
 \item \textbf{Alerts.} The home bank's GFP model scores every transaction. A filter keeps only the transactions the model is unsure about. On HI-Medium test this gives \textbf{4,478 alerts}: 3,873 in the main period (975 laundering) and 605 in the sparse final days, reported separately.
 \item \textbf{Askable alerts.} A question needs a partner bank that holds the other account. Of the 3,873 main alerts, \textbf{771} are askable (241 laundering). A random subset of 1,000 test alerts, fixed in advance, contains 208 askable ones and serves the more expensive agents.
-\item \textbf{Question table and strategy library.} Training-period alerts gave a table of 440 question and privacy-level pairs with their tested evidence weights (6 accepted on HI-Medium; the formula weighs all 440), and a library of question strategies indexed by the \emph{shape} of the local graph, never by account.
+\item \textbf{Question table and strategy library.} Training-period alerts gave a table of 440 question and privacy-level pairs with their tested evidence weights (6 accepted on HI-Medium), and a library of question strategies indexed by the \emph{shape} of the local graph, never by account.
 \end{itemize}
 
 %=====================================================================
