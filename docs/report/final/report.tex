@@ -36,14 +36,14 @@ LMA Group Project 2026\\[3pt]
 %=====================================================================
 \section{Introduction}
 
-Money laundering is a network crime. A scheme moves money through many accounts, often at different banks, so no single bank sees the whole pattern. Altman et al.\ showed that a detection model trained on one bank's part of the transaction graph does far worse than the same model trained on the whole graph~\cite{altman2023}. Banks cannot pool their data. US law (section~314(b) of the PATRIOT Act~\cite{cfr314b}) and Singapore's COSMIC platform~\cite{cosmic} let banks share information about suspected laundering, but these requests are slow, manual and often send raw records.
+Money laundering is a network crime. A scheme moves money through many accounts at different banks, so no single bank sees the whole pattern. Altman et al.\ showed that a detection model trained on one bank's part of the transaction graph does far worse than the same model trained on the whole graph~\cite{altman2023}. Banks cannot pool their data. US law (section~314(b) of the PATRIOT Act~\cite{cfr314b}) and Singapore's COSMIC platform~\cite{cosmic} let banks share information about suspected laundering, but these requests are slow and manual, and send raw records.
 
 This project tests a middle ground. When a bank's own model is unsure about an alert, an agent at that bank (the \emph{home bank}) may send a partner bank a fixed-form question, such as ``did the receiving account pass on at least 80\% of what it received within 24 hours?''. The partner runs the question on its own ledger and returns one value (yes/no, a count, or the size of an overlap between two account sets). Noise is added under differential privacy~\cite{dwork2014}, so a single answer reveals little about any one transaction. The home bank combines the answers with its own score and decides.
 
 Three design rules set the system apart:
 \begin{enumerate}
 \item \textbf{Test a question before trusting it.} Every question, including new ones the LLM writes, must first show on past alerts that its answer separates laundering from clean cases. A question that fails cannot affect the decision.
-\item \textbf{A formula decides, not the LLM.} The LLM plans what to ask. A fitted formula turns the answers into the final probability, using numbers only. Sharma found that an LLM investigator made worse calls than the model it was helping, because it trusted its own reasoning~\cite{sharma2026}.
+\item \textbf{A formula makes the final call.} The LLM plans what to ask. A fitted formula turns the answers into the final probability, using numbers only. Sharma found that an LLM investigator made worse calls than the model it was helping, because it trusted its own reasoning~\cite{sharma2026}.
 \item \textbf{The same rules for every agent.} The planner and every published agent it is compared with use the same compliance check, privacy budget, simulated banks, LLM and call limits. Only the strategy differs.
 \end{enumerate}
 
@@ -109,7 +109,7 @@ Figure~\ref{fig:arch} shows the pipeline. Its starting point is $p_0$, the proba
 
 \paragraph{Testing questions first.} For each question and $\eps$ level, the question is replayed on past training alerts with the same noise. This gives its \emph{likelihood ratio}: how much more often each answer occurs for laundering than for clean alerts. A question is \emph{accepted} only if it passes a test that limits false discoveries~\cite{wang2022}, and its ratio is capped at the most that $\eps$ allows. New questions the LLM writes must pass the same test before their answers count.
 
-\paragraph{Decision formula.} The final probability is $\operatorname{logit}\hat p = \operatorname{logit} p_0 + \sum_k w_{f(k)} \log \mathrm{LR}_k$: the home bank's score, moved by the weighted evidence of each answer. There is one weight per question family, fitted on validation and then frozen. With all weights set to 1, the formula moved $p_0$ the wrong way on validation, because the questions partly measure what $p_0$ already knows. Fitted weights fixed this before the test run.
+\paragraph{Decision formula.} The final probability is $\operatorname{logit}\hat p = \operatorname{logit} p_0 + \sum_k w_{f(k)} \log \mathrm{LR}_k$: the home bank's score, moved by the weighted evidence of each answer. Each question family has one weight, fitted on validation and then frozen. With all weights set to 1, the formula moved $p_0$ the wrong way on validation, because some questions measure what $p_0$ already knows. Fitted weights fixed this before the test run.
 
 \paragraph{Planner.} The planner is built with LangGraph around Gemma~4 12B. At each step it sees the evidence, $p_0$, the current probability, the remaining budget and a menu of strategies. It then picks a listed question, writes a new one, or stops. Its free text is logged but never enters the decision. A size sweep of seven models, planned in advance (E18), chose the backbone.
 
@@ -149,7 +149,7 @@ Engineering & 3 machines; about 600 commits and 158 pull requests by four people
 \label{tab:scale}
 \end{table}
 
-\paragraph{Reproducing the detection baselines.} On the paper's own split, GFP + LightGBM scored F1 62.95 (published 62.86 $\pm$ 0.25), GFP + XGBoost 62.51 (63.23), and Multi-GNN with the official code 67.64 (68.16 $\pm$ 2.65). MEGA-GNN was only partly reproduced (59.7 vs.\ 74.88 after 10 of 80 epochs, for lack of compute). FraudGT ran its full 500 epochs (best validation F1 0.686). All models were then retrained, one bank and see everything, on the time-based split. The official GNN loaders sample future edges, so their see-everything scores are too high. With future edges removed, Multi-GNN's HI-Medium PR-AUC drops from 0.611 to 0.199. GFP therefore serves as the upper limit.
+\paragraph{Reproducing the detection baselines.} On the paper's own split, GFP + LightGBM scored F1 62.95 (published 62.86 $\pm$ 0.25), GFP + XGBoost 62.51 (63.23), and Multi-GNN with the official code 67.64 (68.16 $\pm$ 2.65). MEGA-GNN was not fully reproduced (59.7 vs.\ 74.88 after 10 of 80 epochs, for lack of compute). FraudGT ran its full 500 epochs (best validation F1 0.686). All models were then retrained, one bank and see everything, on the time-based split. The official GNN loaders sample future edges, so their see-everything scores are too high. With future edges removed, Multi-GNN's HI-Medium PR-AUC drops from 0.611 to 0.199. GFP therefore serves as the upper limit.
 
 \paragraph{Federated baselines.} DP-FedAvg (per bank and per transaction, $\eps$ 1 to 16, three seeds) did worse than one-bank GFP, and the per-transaction version learned nothing. The best layer-wise exchange of Ceydeli et al.\ beat one-bank GFP on HI-Small validation by a small margin (Brier 0.001116 vs.\ 0.001167).
 
@@ -232,7 +232,7 @@ Co-Investigator & 0.2334 & $-0.878$ [$-1.709$, $-0.471$] & 7.6 & 38.7 & 0.71 \\
 \label{tab:ext}
 \end{table}
 
-\paragraph{Published agents (H9).} Here the system holds up (Table~\ref{tab:ext}, Figure~\ref{fig:figs}). On all 771 askable alerts it is at least as good as BED-LLM, the strongest published agent on validation, with a gap closed 0.27 higher (Holm $p=0.004$). BED-LLM and Co-Investigator make the final call themselves and drift away from $p_0$; Co-Investigator gives no usable verdict on 71\% of alerts. The adapted agents, which use this system's formula, come much closer, so most of the advantage comes from the tested weights and the formula, not from a smarter loop. Scored on their questions alone, all systems fall far below zero, this one included.
+\paragraph{Published agents (H9).} Here the system holds up (Table~\ref{tab:ext}, Figure~\ref{fig:figs}). On all 771 askable alerts it is at least as good as BED-LLM, the strongest published agent on validation, with a gap closed 0.27 higher (Holm $p=0.004$). BED-LLM and Co-Investigator make the final call themselves and drift away from $p_0$; Co-Investigator gives no usable verdict on 71\% of alerts. The adapted agents, which use this system's formula, come much closer, so most of the advantage comes from the tested weights and the formula; the loop matters little. Scored on their questions alone, all systems fall far below zero, this one included.
 
 \begin{figure}[t]
 \centering
@@ -275,7 +275,7 @@ Two parts earn their place. Letting the LLM \emph{write} new questions, instead 
 \item \textbf{Synthetic data, simulated banks.} AMLworld is generated, and the partner banks, delays and set overlaps are simulated. Real requests and real laundering are messier.
 \item \textbf{Privacy unit.} The guarantee is per transaction, not per customer; the cap of $\eps=8$ per account is a partial fix.
 \item \textbf{Reduced final run.} For lack of time, a subset of systems fixed in advance was run. H5, H6, H8 and H10, the evidence-view versions, the fine-tuned students and $\eps=0.5$ and $\infty$ were not run on test, and only one published agent ran on all askable alerts.
-\item \textbf{Recorded deviations.} Two reruns did not exactly match their validation scores and were kept with a recorded deviation: see-everything GFP on HI-Medium, and layer-wise exchange on HI-Small (dropped on HI-Medium). FraudGT was scored once before the lock, and a few test-path bugs were fixed during the final run without changing any locked setting. The plan had no TA countersignature.
+\item \textbf{Recorded deviations.} Two reruns did not match their validation scores and were kept with a recorded deviation: see-everything GFP on HI-Medium, and layer-wise exchange on HI-Small (dropped on HI-Medium). FraudGT was scored once before the lock, and a few test-path bugs were fixed during the final run without changing any locked setting. The plan had no TA countersignature.
 \end{itemize}
 
 %=====================================================================
@@ -291,7 +291,7 @@ The idea did not work: the questions did not improve on the bank's own model (H1
 
 \paragraph{4. Privacy caps what one answer can say.} With $\eps\le2$, a yes/no answer can shift the odds by at most $e^{\eps}$; the strongest accepted answer reached 3.8, and privacy was not the limit.
 
-\paragraph{5. LLMs judge probabilities poorly but can plan.} Every published agent that writes its own probability ranked alerts worse than $p_0$ on validation (AUC 0.29--0.72 against 0.76). The same loops run inside this system, with the formula deciding, matched $p_0$, which is why H9 holds. Writing and testing new questions both helped on test, so the LLM's planning had value, with little signal to work on.
+\paragraph{5. LLMs judge probabilities poorly but can plan.} Every published agent that writes its own probability ranked alerts worse than $p_0$ on validation (AUC 0.29--0.72 against 0.76). The same loops run inside this system, with the formula deciding, matched $p_0$; that is where H9 comes from. Writing and testing new questions both helped on test, so the LLM's planning had value, with little signal to work on.
 
 \paragraph{6. Engineering.} Locking the plan and the test data kept the evaluation honest, but the key diagnostic (point 2) appeared late in validation. Reproducing every baseline first exposed the future-edge leak in the official GNN loaders.
 
