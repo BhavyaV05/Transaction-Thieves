@@ -30,39 +30,39 @@ LMA Group Project 2026\\[3pt]
 \maketitle
 
 \begin{abstract}
-\noindent Launderers move money through several banks because each bank sees only its own customers, and banks may not pool their data. This project built and tested a system in which a bank asks partner banks small, private questions about a suspicious transaction. No transaction record leaves the partner bank. An LLM agent (Gemma~4 12B) picks or writes each question. The partner answers with one number, with noise added for privacy. Every question must first prove useful on past alerts, and a fitted formula, not the LLM, makes the final call. The data are IBM's synthetic AMLworld transactions, split into 30 banks. Four detection models and two federated baselines were reproduced, thirteen published LLM agents were run under the same rules, and ten hypotheses were fixed in advance before the test data were used once. The main result is negative. On 771 test alerts the system closes $-0.007$ [$-0.038$, $0.026$] of the gap between a bank working alone and a model that sees every bank. Even the raw records of three partner banks close only 0.04. The system does beat the strongest published agent, BED-LLM ($p=0.004$ after correction for multiple tests). The diagnostics show why: partner answers add little to what the home bank already knows, and the evidence weights learned on past alerts do not hold on the hard alerts the agent handles.
+\noindent Launderers move money through several banks because each bank sees only its own customers, and banks may not pool their data. This project built and tested a system in which a bank asks partner banks small, private questions about a suspicious transaction. No transaction record leaves the partner bank. An LLM agent (Gemma~4 12B) picks or writes each question. The partner answers with one number, with noise added for privacy. Every question must first prove useful on past alerts, and a fitted formula, not the LLM, makes the final call. The data are IBM's synthetic AMLworld transactions, split into 30 banks. Four detection models and two federated baselines were reproduced, thirteen published LLM agents were run under the same rules, and ten hypotheses were fixed in advance before the test data were used once. The main result is negative. On 771 test alerts the system closes $-0.007$ [$-0.038$, $0.026$] of the gap between a bank working alone and a model that sees every bank. Even the raw records of three partner banks close only 0.04. On test the system had the lowest Brier of every planner and published LLM agent compared, and it is statistically at least as good as the strongest, BED-LLM ($p=0.004$ after correction for multiple tests), but it only tied the bank working alone. The diagnostics show why: partner answers add little to what the home bank already knows, and the evidence weights learned on past alerts do not hold on the hard alerts the agent handles.
 \end{abstract}
 
 %=====================================================================
 \section{Introduction}
 
-Money laundering is a network crime. A scheme moves money through many accounts, often at different banks, so no single bank sees the whole pattern. Altman et al.\ showed that a detection model trained on one bank's part of the transaction graph does far worse than the same model trained on the whole graph~\cite{altman2023}. Banks cannot pool their data. US law (section~314(b) of the PATRIOT Act~\cite{cfr314b}) and Singapore's COSMIC platform~\cite{cosmic} let banks share information about suspected laundering, but these requests are slow, manual and often send raw records.
+Money laundering is a network crime. A scheme moves money through many accounts at different banks, so no single bank sees the whole pattern. Altman et al.\ showed that a detection model trained on one bank's part of the transaction graph does far worse than the same model trained on the whole graph~\cite{altman2023}. Banks cannot pool their data. US law (section~314(b) of the PATRIOT Act~\cite{cfr314b}) and Singapore's COSMIC platform~\cite{cosmic} let banks share information about suspected laundering, but these requests are slow and manual, and send raw records.
 
 This project tests a middle ground. When a bank's own model is unsure about an alert, an agent at that bank (the \emph{home bank}) may send a partner bank a fixed-form question, such as ``did the receiving account pass on at least 80\% of what it received within 24 hours?''. The partner runs the question on its own ledger and returns one value (yes/no, a count, or the size of an overlap between two account sets). Noise is added under differential privacy~\cite{dwork2014}, so a single answer reveals little about any one transaction. The home bank combines the answers with its own score and decides.
 
 Three design rules set the system apart:
 \begin{enumerate}
 \item \textbf{Test a question before trusting it.} Every question, including new ones the LLM writes, must first show on past alerts that its answer separates laundering from clean cases. A question that fails cannot affect the decision.
-\item \textbf{A formula decides, not the LLM.} The LLM plans what to ask. A fitted formula turns the answers into the final probability, using numbers only. Sharma found that an LLM investigator made worse calls than the model it was helping, because it trusted its own reasoning~\cite{sharma2026}.
+\item \textbf{A formula makes the final call.} The LLM plans what to ask. A fitted formula turns the answers into the final probability, using numbers only. Sharma found that an LLM investigator made worse calls than the model it was helping, because it trusted its own reasoning~\cite{sharma2026}.
 \item \textbf{The same rules for every agent.} The planner and every published agent it is compared with use the same compliance check, privacy budget, simulated banks, LLM and call limits. Only the strategy differs.
 \end{enumerate}
 
-\paragraph{Why the problem is hard.} Laundering is rare (about one transaction in a thousand), so labels are few and results are noisy. Each answer costs privacy budget and carries noise, so only one or two questions fit per alert. Partner banks reply late or not at all. Text from another bank may hide instructions aimed at the LLM, so free text must never reach the decision.
+\paragraph{Why the problem is hard.} Laundering is rare (about one in a thousand), so labels are few and results noisy; each answer costs privacy budget and carries noise, so only one or two questions fit per alert; partners reply late or not at all; and text from another bank may hide instructions aimed at the LLM.
 
 \noindent The research questions were: (RQ1) how much of the gap between one bank and a model that sees all banks can private questions close; (RQ2) does an LLM choose questions better than simple rules; (RQ3) does testing questions first matter; and (RQ6) how does the system compare with published agents. The ten hypotheses (H1--H10) and their tests were fixed and locked with a hash before the test data were opened.
 
-\paragraph{Contributions.} (1) A complete test bed for private questions between banks, from question language to LLM planner. (2) Reproductions of the main AML baselines on a split that respects time, showing that the official GNN loaders leak future data. (3) Thirteen published LLM agents run under the same LLM, rules and budget. (4) One test run under a locked plan, with its negative result reported in full and explained.
+\paragraph{Contributions.} (1) An agent design for private questions between banks in which the LLM plans but statistics decide: an edge-scorer retriever for the 40-transaction evidence trail, a question language (DSL), differential privacy, a compliance gate, back-testing of every question, a fitted fusion formula, a strategy library, an LLM planner, a fast-model cascade, and a stop rule that halts once no remaining answer could change the decision. (2) Reproductions of the main AML baselines on a split that respects time, showing that the official GNN loaders leak future data. (3) Thirteen published LLM agents run under the same LLM, rules and budget. (4) One locked test run, with its negative result explained.
 
 %=====================================================================
 \section{Literature Review}
 
 \paragraph{AML data and detection models.} AMLworld~\cite{altman2023} is IBM's synthetic multi-bank transaction dataset, with laundering labels and pattern types. Its reference model is gradient-boosted trees on features from the Graph Feature Preprocessor (GFP)~\cite{blanusa2024}. Graph neural networks report higher scores: Multi-GNN~\cite{egressy2024}, MEGA-GNN~\cite{bilgi2025} and FraudGT~\cite{lin2024}. Each sees either one bank or the whole graph; none queries other banks while their data stay put.
 
-\paragraph{Learning across banks in private.} Project Aurora~\cite{aurora} and Tian et al.~\cite{tian2025} study collaboration between institutions. Ceydeli et al.~\cite{ceydeli2026} exchange GNN layer outputs between banks. Federated averaging with private training (DP-FedAvg) is the standard private baseline. In all of these, banks train one model together; none asks a question per alert. The overlap questions follow the private set-intersection method of Purcell et al.~\cite{purcell2023}, with its noisy output simulated.
+\paragraph{Learning across banks in private.} Project Aurora~\cite{aurora} and Tian et al.~\cite{tian2025} study collaboration between institutions. Ceydeli et al.~\cite{ceydeli2026} exchange GNN layer outputs between banks. In these, and in private federated averaging (DP-FedAvg), banks train one model together; none asks a question per alert. Overlap questions simulate the private set intersection of Purcell et al.~\cite{purcell2023}.
 
 \paragraph{LLM agents for fraud and AML.} Sharma~\cite{sharma2026} pairs graph features with an LLM case investigator. Torres et al.~\cite{torres2026} sort AML alerts using subgraph evidence. FinFRE-RAG~\cite{tan2026} retrieves similar fraud cases, and Co-Investigator drafts suspicious-activity reports. All of them work inside one bank and use evidence without testing it first.
 
-\paragraph{General agents and choosing what to ask.} ReAct~\cite{yao2023}, Reflexion~\cite{shinn2023}, ReWOO~\cite{xu2023}, LATS~\cite{zhou2024} and LLMCompiler~\cite{kim2024} are general tool-using loops. DSPy~\cite{khattab2024} tunes a ReAct agent's prompts. BED-LLM~\cite{choudhury2025} and Uncertainty of Thoughts~\cite{hu2024uot} pick the next question by expected information gain, the idea closest to this project, but neither was tested where each question costs privacy and answers are noisy and late.
+\paragraph{General agents and choosing what to ask.} ReAct~\cite{yao2023}, Reflexion~\cite{shinn2023}, ReWOO~\cite{xu2023}, LATS~\cite{zhou2024}, LLMCompiler~\cite{kim2024} and DSPy~\cite{khattab2024} build general tool-using agents. BED-LLM~\cite{choudhury2025} and Uncertainty of Thoughts~\cite{hu2024uot} pick the next question by expected information gain, the idea closest to this project, but neither was tested where each question costs privacy and answers are noisy and late.
 
 \paragraph{Keeping an LLM's ideas only if they pass a test.} CAAFE~\cite{hollmann2023} keeps LLM-proposed features only if they improve validation scores, and POPPER~\cite{huang2025} tests hypotheses with e-values. This project applies the same idea to LLM-written questions. The strategy library follows ReasoningBank~\cite{ouyang2026}, and the evidence retriever builds on SubgraphRAG~\cite{li2025} and G-Retriever~\cite{he2024}.
 
@@ -109,9 +109,11 @@ Figure~\ref{fig:arch} shows the pipeline. Its starting point is $p_0$, the proba
 
 \paragraph{Testing questions first.} For each question and $\eps$ level, the question is replayed on past training alerts with the same noise. This gives its \emph{likelihood ratio}: how much more often each answer occurs for laundering than for clean alerts. A question is \emph{accepted} only if it passes a test that limits false discoveries~\cite{wang2022}, and its ratio is capped at the most that $\eps$ allows. New questions the LLM writes must pass the same test before their answers count.
 
-\paragraph{Decision formula.} The final probability is $\operatorname{logit}\hat p = \operatorname{logit} p_0 + \sum_k w_{f(k)} \log \mathrm{LR}_k$: the home bank's score, moved by the weighted evidence of each answer. There is one weight per question family, fitted on validation and then frozen. With all weights set to 1, the formula moved $p_0$ the wrong way on validation, because the questions partly measure what $p_0$ already knows. Fitted weights fixed this before the test run.
+\paragraph{Decision formula.} The final probability is $\operatorname{logit}\hat p = \operatorname{logit} p_0 + \sum_k w_{f(k)} \log \mathrm{LR}_k$: the home bank's score, moved by the weighted evidence of each answer. Each question family has one weight, fitted on validation and then frozen. With all weights set to 1, the formula moved $p_0$ the wrong way on validation, because some questions measure what $p_0$ already knows. Fitted weights fixed this before the test run.
 
 \paragraph{Planner.} The planner is built with LangGraph around Gemma~4 12B. At each step it sees the evidence, $p_0$, the current probability, the remaining budget and a menu of strategies. It then picks a listed question, writes a new one, or stops. Its free text is logged but never enters the decision. A size sweep of seven models, planned in advance (E18), chose the backbone.
+
+\paragraph{Fast model.} Routine decisions (is a question worth asking, does a rule apply, does a partner's note hide an attack) go to a fine-tuned Qwen3-4B in a conformal cascade: its answer stands only when its prediction set holds one label; otherwise Gemma tries, and if both are unsure a safe default applies, which bounds the error of accepted answers by $2\alpha$.
 
 \paragraph{Baselines.} Five planners without an LLM run in the same system: random, a fixed expert order, expected information gain, a learned policy, and an enumerator that tries every question. \emph{Raw sharing} gives the home bank the actual records of three partner banks with no noise; it shows the most that sharing could add. The thirteen published agents (Table~\ref{tab:valagents}) each run \emph{as published} (one bank's view) and \emph{ported} (with the question tool and budget). \emph{Adapted} versions run an agent's control loop inside this system, which separates a better loop from better evidence weights.
 
@@ -127,7 +129,7 @@ where ``see everything'' is GFP trained on all banks' data. $G=0$ means no gain 
 
 Table~\ref{tab:scale} sums up the work. Most of it ran on an RTX 5070 Ti, the rest on a 3070 Ti laptop and the \emph{ada} HPC cluster.
 
-\begin{table}[h]
+\begin{table}[!htb]
 \centering\small
 \begin{tabularx}{\linewidth}{lX}
 \toprule
@@ -147,13 +149,13 @@ Engineering & 3 machines; about 600 commits and 158 pull requests by four people
 \label{tab:scale}
 \end{table}
 
-\paragraph{Reproducing the detection baselines.} On the paper's own split, GFP + LightGBM scored F1 62.95 (published 62.86 $\pm$ 0.25), GFP + XGBoost 62.51 (63.23), and Multi-GNN with the official code 67.64 (68.16 $\pm$ 2.65). MEGA-GNN was only partly reproduced (59.7 vs.\ 74.88 after 10 of 80 epochs, for lack of compute). FraudGT ran its full 500 epochs (best validation F1 0.686). All models were then retrained, one bank and see everything, on the time-based split. The official GNN loaders sample future edges, so their see-everything scores are too high. With future edges removed, Multi-GNN's HI-Medium PR-AUC drops from 0.611 to 0.199. GFP therefore serves as the upper limit.
+\paragraph{Reproducing the detection baselines.} On the paper's own split, GFP + LightGBM scored F1 62.95 (published 62.86 $\pm$ 0.25), GFP + XGBoost 62.51 (63.23), and Multi-GNN with the official code 67.64 (68.16 $\pm$ 2.65). MEGA-GNN was not fully reproduced (59.7 vs.\ 74.88 after 10 of 80 epochs, for lack of compute). FraudGT ran its full 500 epochs (best validation F1 0.686). All models were then retrained, one bank and see everything, on the time-based split. The official GNN loaders sample future edges, so their see-everything scores are too high. With future edges removed, Multi-GNN's HI-Medium PR-AUC drops from 0.611 to 0.199. GFP therefore serves as the upper limit.
 
-\paragraph{Federated baselines.} DP-FedAvg ran with privacy per bank and per transaction, $\eps$ from 1 to 16 plus a no-noise version, three seeds each. The layer-wise exchange of Ceydeli et al.\ ran in eight versions. On HI-Small validation, the best layer-wise version beat one-bank GFP by a small margin (Brier 0.001116 vs.\ 0.001167). DP-FedAvg with real privacy did not reach one-bank GFP, and the per-transaction version fell to the base rate.
+\paragraph{Federated baselines.} DP-FedAvg (per bank and per transaction, $\eps$ 1 to 16, three seeds) did worse than one-bank GFP, and the per-transaction version learned nothing. The best layer-wise exchange of Ceydeli et al.\ beat one-bank GFP on HI-Small validation by a small margin (Brier 0.001116 vs.\ 0.001167).
 
-\paragraph{Backbone sweep (E18).} Seven open models were tried as planners on 160 validation alerts, and the best three on 460. Gemma~4 12B won (Brier 0.1741, against 0.1844 for Qwen3.8-27B and 0.1890 for Qwen3-14B). gpt-oss-20b gave invalid outputs, and a ``thinking'' version never answered.
+\paragraph{Backbone sweep (E18).} Of seven open models tried as planners (160, then 460 validation alerts), Gemma~4 12B won (Brier 0.1741, against 0.1844 for Qwen3.8-27B and 0.1890 for Qwen3-14B).
 
-\paragraph{Fine-tuning.} The planner's successful steps trained a smaller QLoRA~\cite{hu2022lora,dettmers2023} student (Qwen3-8B, three seeds), and a Qwen3-4B fast model handled routine decisions. The students learned the output format but planned worse than the 12B model (Brier 0.223--0.226 vs.\ 0.201 on 160 validation alerts). Used as an injection filter, the fast model cut ReAct's prompt-injection success from 5--8\% to 0\%.
+\paragraph{Fine-tuning.} The planner's successful steps trained a smaller QLoRA~\cite{hu2022lora,dettmers2023} student (Qwen3-8B, three seeds), and a Qwen3-4B fast model handled routine decisions. The students learned the output format but planned worse than the 12B model (Brier 0.223--0.226 vs.\ 0.201 on 160 validation alerts). The fast model was 86--96\% accurate on three of its four decisions (typology no better than guessing), kept every cascade error bound, and as an injection filter cut ReAct's prompt-injection success from 5--8\% to 0\%.
 
 \paragraph{The final run.} After the plan was locked, one script ran each system once on the test split: the system at $\eps\in\{1,2,4\}$, four ablations, five planners without an LLM, raw sharing, BED-LLM on all askable alerts, and Co-Investigator plus two adapted agents on the subset. A reduced plan, fixed in advance, was run because of the deadline; the full plan needed about 188 GPU-hours.
 
@@ -178,7 +180,7 @@ H7 & Formula vs.\ LLM deciding & $-0.000$ [$-0.004$, 0.004] & 1.00 & not support
 \label{tab:hyp}
 \end{table}
 
-\paragraph{What counts as a result.} Only the tests in Table~\ref{tab:hyp} are confirmatory. Everything else, including the ablations and the appendix, is exploratory and never changes a verdict.
+\paragraph{What counts as a result.} Only the tests in Table~\ref{tab:hyp} are confirmatory; everything else is exploratory.
 
 \paragraph{Detection models.} On all 3,873 main alerts, one-bank GFP has Brier 0.1585 (PR-AUC 0.602) and see-everything GFP 0.0854 (PR-AUC 0.848). This is the gap to close, and it is large: if reviewers check the top 10\% of alerts, the see-everything model is right on 98\% of them, against 72\% for one bank.
 
@@ -211,7 +213,7 @@ Published & BED-LLM (frozen pick) & 0.1956 & $-0.410$ [$-0.831$, $-0.176$] & 2.7
 
 \paragraph{Main result (H1, H2).} Table~\ref{tab:main} shows the headline. The system's Brier (0.1673) is the same, within noise, as the bank working alone (0.1668): it closes none of the gap. Raw, noise-free records from three partner banks close only 4\% of it, and that interval also covers zero. So privacy noise is not the main limit: what a partner bank knows about one account adds little to what GFP already computes from the home bank's graph. The flat privacy curve ($\eps=1$, 2 and 4 lie within 0.0013 Brier) fits that reading.
 
-\paragraph{Planners (H3).} The LLM planner beats every simple planner except the enumerator. Expected information gain and the learned policy ask many questions and do much worse. H3 required beating the enumerator too, so it is not supported.
+\paragraph{Planners (H3).} The LLM planner has a better Brier than every simple planner on the 771 alerts. Expected information gain and the learned policy ask many questions and do much worse. On the pre-registered subset, though, the interval against the enumerator was too wide to show the LLM at least as good, so H3 is not supported.
 
 \begin{table}[t]
 \centering\small
@@ -230,7 +232,7 @@ Co-Investigator & 0.2334 & $-0.878$ [$-1.709$, $-0.471$] & 7.6 & 38.7 & 0.71 \\
 \label{tab:ext}
 \end{table}
 
-\paragraph{Published agents (H9).} Here the system wins (Table~\ref{tab:ext}, Figure~\ref{fig:figs}). On all 771 askable alerts it beats BED-LLM, the strongest published agent on validation, by 0.27 in gap closed (Holm $p=0.004$). BED-LLM and Co-Investigator make the final call themselves and drift away from $p_0$; Co-Investigator gives no usable verdict on 71\% of alerts. The adapted agents, which use this system's formula, come much closer, so most of the advantage comes from the tested weights and the formula, not from a smarter loop. Scored on their questions alone, all systems fall far below zero, this one included.
+\paragraph{Published agents (H9).} Here the system holds up (Table~\ref{tab:ext}, Figure~\ref{fig:figs}). On all 771 askable alerts it is at least as good as BED-LLM, the strongest published agent on validation, with a gap closed 0.27 higher (Holm $p=0.004$). BED-LLM and Co-Investigator make the final call themselves and drift away from $p_0$; Co-Investigator gives no usable verdict on 71\% of alerts. The adapted agents, which use this system's formula, come much closer, so most of the advantage comes from the tested weights and the formula; the loop matters little. Scored on their questions alone, all systems fall far below zero, this one included.
 
 \begin{figure}[t]
 \centering
@@ -247,7 +249,7 @@ Co-Investigator & 0.2334 & $-0.878$ [$-1.709$, $-0.471$] & 7.6 & 38.7 & 0.71 \\
 
 Each part was switched off in turn, on the same 208 askable subset alerts (Table~\ref{tab:abl}).
 
-\begin{table}[h]
+\begin{table}[!htb]
 \centering\small
 \resizebox{\linewidth}{!}{\begin{tabular}{lrrrl}
 \toprule
@@ -270,37 +272,33 @@ Two parts earn their place. Letting the LLM \emph{write} new questions, instead 
 \section{Limitations}\label{sec:lim}
 
 \begin{itemize}
-\item \textbf{Synthetic data, simulated banks.} AMLworld is generated, and the partner banks, delays and set overlaps are simulated. Real requests between banks, and real laundering, are messier.
+\item \textbf{Synthetic data, simulated banks.} AMLworld is generated, and the partner banks, delays and set overlaps are simulated. Real requests and real laundering are messier.
 \item \textbf{Privacy unit.} The guarantee is per transaction, not per customer; the cap of $\eps=8$ per account is a partial fix.
 \item \textbf{Reduced final run.} For lack of time, a subset of systems fixed in advance was run. H5, H6, H8 and H10, the evidence-view versions, the fine-tuned students and $\eps=0.5$ and $\infty$ were not run on test, and only one published agent ran on all askable alerts.
-\item \textbf{Recorded deviations.} Two reruns did not exactly match their validation scores and were kept with a recorded deviation: see-everything GFP on HI-Medium, and layer-wise exchange on HI-Small (dropped on HI-Medium). FraudGT was scored once before the lock, the CPU planners were rerun once, and a few test-path bugs were fixed during the final run without changing any locked setting. The plan had no TA countersignature.
+\item \textbf{Recorded deviations.} Two reruns did not match their validation scores and were kept with a recorded deviation: see-everything GFP on HI-Medium, and layer-wise exchange on HI-Small (dropped on HI-Medium). FraudGT was scored once before the lock, and a few test-path bugs were fixed during the final run without changing any locked setting. The plan had no TA countersignature.
 \end{itemize}
 
 %=====================================================================
 \section{Conclusions: lessons from a system that did not work}
 
-The idea did not work. Under a locked plan, an LLM agent asking partner banks private questions did not improve on the bank's own GFP model (H1), and only one primary hypothesis held (H9, against other LLM agents).
+The system beat every planner and published agent on Brier but only tied the bank's own model (H1), so asking partner banks did not pay off; only H9 held.
 
-\paragraph{1. Partner banks had little to add.} Even raw, noise-free records from three partner banks closed only 4\% of the gap, with an interval covering zero. The see-everything model gains from patterns that span many hops across the whole network, while one partner can describe only one account one hop away. GFP's own features (money in and out, counts, local cycles) already capture most of that hop, so the questions re-measured much of what $p_0$ knew. The main lesson: measure how much a partner's view adds beyond the home bank's features before building the question machinery, and redesign if the answer is small.
+\paragraph{1. Partner banks had little to add.} Even raw, noise-free records from three partner banks closed only 4\% of the gap, with an interval covering zero. See-everything gains from many-hop patterns; one partner sees one account one hop away. GFP's own features already capture most of that hop, so the questions re-measured much of what $p_0$ knew. The main lesson: measure what a partner's view adds before building the question machinery.
 
-\paragraph{2. Evidence weights from past alerts did not carry over.} On validation, the summed evidence did not predict the labels (fitted slope $-0.03$, where 1 means the weights hold), and most question families pointed the right way only about half the time. The weights came from past training alerts, but the alerts that reach the agent are the hard, ambiguous ones the filter lets through, and the data change over time. Fitting the weights only shrank the damage to zero.
+\paragraph{2. Evidence weights from past alerts did not carry over.} On validation, the summed evidence did not predict the labels (fitted slope $-0.03$, where 1 means the weights hold), and most question families pointed the right way only about half the time. The weights came from past training alerts, but the alerts that reach the agent are the hard, ambiguous ones the filter lets through, and the data change over time.
 
-\paragraph{3. Too few alerts could be asked about.} With only 771 of 3,873 alerts askable, even a perfect system could move at most a fifth of the headline. With 241 laundering cases, the smallest detectable effect was larger than any effect seen.
+\paragraph{3. Too few alerts could be asked about.} Only 771 of 3,873 alerts were askable, so even a perfect system could move at most a fifth of the headline.
 
-\paragraph{4. Privacy caps what one answer can say.} With $\eps\le2$, a yes/no answer can shift the odds by at most $e^{\eps}$; the strongest accepted answer shifted them by a factor of 3.8. Privacy was not the limit here, but it would be if the answers were informative.
+\paragraph{4. Privacy caps what one answer can say.} With $\eps\le2$, a yes/no answer can shift the odds by at most $e^{\eps}$; the strongest accepted answer reached 3.8, and privacy was not the limit.
 
-\paragraph{5. LLMs judge probabilities poorly but can plan.} Every published agent that writes its own probability ranked alerts worse than $p_0$ on validation (AUC 0.29--0.72 against 0.76). On test, BED-LLM and Co-Investigator did worse than the bank alone. The same loops run inside this system (the adapted versions) matched $p_0$. Question testing and the formula kept the system from hurting the base model, which is why H9 holds. Writing and testing new questions both helped, so the LLM's planning had value, with little signal to work on. The QLoRA student, trained on 252 examples, learned the format but not the policy.
+\paragraph{5. LLMs judge probabilities poorly but can plan.} Every published agent that writes its own probability ranked alerts worse than $p_0$ on validation (AUC 0.29--0.72 against 0.76). The same loops run inside this system, with the formula deciding, matched $p_0$; that is where H9 comes from. Writing and testing new questions both helped on test, so the LLM's planning had value, with little signal to work on.
 
-\paragraph{6. Engineering.} Locking the plan and the test data kept the evaluation honest when the results disappointed. The time between the first full end-to-end number and the lock was too short: the key diagnostic (point 2) appeared late in validation. Reproducing every baseline first cost GPU days but exposed the future-edge leak in the official GNN loaders, which inflates see-everything scores.
+\paragraph{6. Engineering.} Locking the plan and the test data kept the evaluation honest, but the key diagnostic (point 2) appeared late in validation. Reproducing every baseline first exposed the future-edge leak in the official GNN loaders.
 
-\paragraph{Next steps.} Measure partner information first. Ask about what the home bank \emph{cannot} compute, such as cycles that cross several banks. Estimate evidence weights on the same hard alerts the agent sees, and add more partner banks to raise coverage.
+\paragraph{Next steps.} Measure partner information first, ask about what the home bank \emph{cannot} compute (cycles across banks), and estimate evidence weights on the hard alerts the agent sees.
 
 %=====================================================================
-\section*{Reproducibility}\sloppy
-\begin{itemize}
-\item \textbf{Code and data:} \url{https://github.com/BhavyaV05/Transaction-Thieves}; \texttt{README.md} lists every command. AMLworld is public on Kaggle.
-\item \textbf{Locked plan:} \texttt{prereg/}, with its hash in \texttt{prereg/FREEZE.json}; only \texttt{scripts/run\_final.py} reads the test split. Trained weights are not released, and FraudGT's patch stays outside the repository because its code has no licence.
-\end{itemize}
+\paragraph{Reproducibility.}\sloppy Code: \url{https://github.com/BhavyaV05/Transaction-Thieves} (\texttt{README.md} lists every command); AMLworld is public on Kaggle. The locked plan and its hash are in \texttt{prereg/}. Trained weights are not released, and FraudGT's unlicensed code stays outside the repository.
 
 \small
 \begin{thebibliography}{99}\setlength{\itemsep}{1pt}
